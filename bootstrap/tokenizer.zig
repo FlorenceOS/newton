@@ -298,8 +298,8 @@ pub fn tokenize(input: *[*:0]const u8) !Token {
         '"' => {
             var value = std.ArrayList(u8).init(gpa.allocator());
 
-            input.* += 1;
             const body_start = @ptrCast([*]const u8, input.*);
+            input.* += 1;
 
             while(input.*[0] != '"') {
                 try value.append(try parseLiteralChar(input));
@@ -314,9 +314,8 @@ pub fn tokenize(input: *[*:0]const u8) !Token {
         },
 
         '\'' => {
-            input.* += 1;
-
             const body_start = @ptrCast([*]const u8, input.*);
+            input.* += 1;
             const value = try parseLiteralChar(input);
 
             std.debug.assert(input.*[0] == '\'');
