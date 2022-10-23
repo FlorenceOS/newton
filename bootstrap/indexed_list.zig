@@ -138,6 +138,11 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
         pub fn get(self: *@This(), idx: Index) *T {
             return &self.elements.items[@enumToInt(idx)];
         }
+
+        /// Get an optional slot pointer by optional index
+        pub fn getOpt(self: *@This(), idx: OptIndex) ?*T {
+            return self.get(_Indices.unwrap(idx) orelse return null);
+        }
     };
 }
 
