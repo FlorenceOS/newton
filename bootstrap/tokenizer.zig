@@ -275,6 +275,48 @@ fn parseLiteralChar(input: *[*:0]const u8) !u8 {
     }
 }
 
+fn digitValue(ch: u8, radix: usize) ?usize {
+    const value = switch(ch) {
+        inline '0'...'9' => |val| val - '0',
+        inline 'a'...'z' => |val| val - 'a' + 10,
+        inline 'A'...'Z' => |val| val - 'A' + 10,
+        else => return null,
+    };
+
+    if(value >= radix) return null;
+    return value;
+}
+
+fn parseIntLiteralWithRadix(input: *[*:0]const u8, offset: usize, comptime radix: comptime_int) !Token {
+    var current_value: usize = 0;
+    var current_offset: usize = offset;
+
+    while(digitValue(input.*[current_offset], radix)) |digit| : (current_offset += 1) {
+        current_value *= radix;
+        current_value += digit;
+    }
+
+    const body = input.*[0..current_offset];
+    input.* += current_offset;
+    return .{ .int_literal = .{
+        .body = body,
+        .value = current_value,
+    }};
+}
+
+fn parseIntLiteral(input: *[*:0]const u8) !Token {
+    if(input.*[0] == '0') {
+        switch(input.*[1]) {
+            'x' => return parseIntLiteralWithRadix(input, 2, 16),
+            'o' => return parseIntLiteralWithRadix(input, 2, 8),
+            'b' => return parseIntLiteralWithRadix(input, 2, 2),
+            else => return parseIntLiteralWithRadix(input, 1, 8),
+        }
+    } else {
+        return parseIntLiteralWithRadix(input, 0, 10);
+    }
+}
+
 pub fn tokenize(input: *[*:0]const u8) !Token {
     skipWhitespace(input);
 
@@ -326,9 +368,7 @@ pub fn tokenize(input: *[*:0]const u8) !Token {
                 .value = value,
             } };
         },
-        '0'...'9' => {
-            @panic("int literal");
-        },
+        '0'...'9' => return parseIntLiteral(input),
         else => |ch| std.debug.panic("Unknown first chr '{c}' (0x{X})", .{ch, ch}),
     }
 }
