@@ -2,9 +2,9 @@ const usize = u64;
 //const pusize = *usize;
 
 const main = fn(argc: u64) void {
-	_ = argc + '\x00';
+    _ = argc + '\x00';
 };
 
 fn f(lmao: u64) void {
-	_ = lmao;
+    _ = lmao;
 }
