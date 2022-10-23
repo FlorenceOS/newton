@@ -94,9 +94,9 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
 
         /// Allocate a slot for a new object
         pub fn addOne(self: *@This()) !*T {
-            if(_Indices.unwrap(self.first_free)) |free_idx| {
-                self.first_free = @ptrCast(*OptIndex, self.get(free_idx)).*;
-                return self.get(free_idx);
+            if (self.getOpt(self.first_free)) |first_free| {
+                self.first_free = @ptrCast(*OptIndex, first_free).*;
+                return first_free;
             }
             return try self.elements.addOne();
         }

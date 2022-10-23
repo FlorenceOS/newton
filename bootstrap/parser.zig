@@ -124,8 +124,8 @@ fn parseFunctionExpr(self: *@This(),) ParseError!ast.FunctionIndex.Index {
         if(first_param == .none) {
             first_param = curr_param_idx;
         }
-        if(ast.FunctionParamIndex.unwrap(last_param)) |lp_idx| {
-            ast.function_params.get(lp_idx).next = curr_param_idx;
+        if(ast.function_params.getOpt(last_param)) |lp| {
+            lp.next = curr_param_idx;
         }
         last_param = curr_param_idx;
 
@@ -162,11 +162,7 @@ fn parseBlockStatementBody(self: *@This()) ParseError!ast.StmtIndex.Index {
     var last_statement = ast.StmtIndex.OptIndex.none;
     while(true) {
         if((try self.peekToken()) == .@"}_ch") {
-            if(ast.StmtIndex.unwrap(first_statement)) |fs| {
-                return fs;
-            } else {
-                return .empty_block;
-            }
+            return ast.StmtIndex.unwrap(first_statement) orelse .empty_block;
         }
 
         const stmt = try self.parseStatement();
@@ -175,8 +171,8 @@ fn parseBlockStatementBody(self: *@This()) ParseError!ast.StmtIndex.Index {
         if(first_statement == .none) {
             first_statement = ostmt;
         }
-        if(ast.StmtIndex.unwrap(last_statement)) |ls_idx| {
-            ast.statements.get(ls_idx).next = ostmt;
+        if (ast.statements.getOpt(last_statement)) |ls| {
+            ls.next = ostmt;
         }
         last_statement = ostmt;
     }
@@ -466,8 +462,8 @@ fn parseTypeBody(self: *@This()) !ast.UserStructIndex.Index {
                     first_decl = odecl;
                 }
 
-                if(ast.StmtIndex.unwrap(last_decl)) |ld_idx| {
-                    ast.statements.get(ld_idx).next = odecl;
+                if(ast.statements.getOpt(last_decl)) |ld| {
+                    ld.next = odecl;
                 }
 
                 last_decl = odecl;
@@ -543,8 +539,7 @@ pub fn dump(obj: anytype, indentation: usize) !void {
             std.debug.print("{s}struct {{\n", .{indent});
 
             var current_decl = obj.first_decl;
-            while(ast.StmtIndex.unwrap(current_decl)) |cidx| {
-                const decl = ast.statements.get(cidx);
+            while(ast.statements.getOpt(current_decl)) |decl| {
                 try dump(decl, indentation + 1);
                 current_decl = decl.next;
             }
@@ -557,9 +552,9 @@ pub fn dump(obj: anytype, indentation: usize) !void {
                 .declaration => |decl| {
                     std.debug.print("{s}{s} ", .{indent, if(decl.mutable) "var" else "const"});
                     try dump(decl.identifier, indentation);
-                    if(ast.ExprIndex.unwrap(decl.type)) |decl_t| {
+                    if(ast.expressions.getOpt(decl.type)) |type_decl| {
                         std.debug.print(": ", .{});
-                        try dump(ast.expressions.get(decl_t), indentation);
+                        try dump(type_decl, indentation);
                     }
                     std.debug.print(" = ", .{});
                     try dump(ast.expressions.get(decl.init_value), indentation);
