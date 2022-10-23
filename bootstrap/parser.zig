@@ -571,8 +571,27 @@ pub fn dump(obj: anytype, indentation: usize) !void {
 
         *ast.ExpressionNode => {
             switch(obj.*) {
-                .function_expression => {
-                    std.debug.print("fn(...)T{{...}}", .{});
+                .identifier => |source_ref| try dump(source_ref, indentation),
+                .function_expression => |index| {
+                    const function = ast.functions.get(index);
+
+                    std.debug.print("fn(", .{});
+
+                    var param_index = function.first_param;
+                    while (ast.function_params.getOpt(param_index)) |param| {
+                        const param_type = ast.expressions.get(param.type);
+                        try dump(param.identifier, indentation);
+                        std.debug.print(": ", .{});
+                        try dump(param_type, indentation);
+                        if (param.next != .none) {
+                            std.debug.print(", ", .{});
+                        }
+                        param_index = param.next;
+                    }
+
+                    std.debug.print(") ", .{});
+                    try dump(ast.expressions.get(function.return_type), indentation);
+                    std.debug.print(" {{}}", .{});
                 },
                 .type_expression => |T| {
                     try dump(values.all_types.get(T), indentation);
@@ -582,11 +601,6 @@ pub fn dump(obj: anytype, indentation: usize) !void {
         },
 
         *values.Type => {
-    // pointer_to_var: PointerType,
-    // pointer_to_volatile_var: PointerType,
-    // pointer_to_const: PointerType,
-    // pointer_to_volatile_const: PointerType,
-
             switch(obj.*) {
                 .bool, .void, .anyopaque, .type => {
                     std.debug.print("{s}", .{@tagName(obj.*)});
@@ -617,7 +631,7 @@ pub fn dump(obj: anytype, indentation: usize) !void {
         },
 
         ast.SourceRef => {
-            std.debug.print("'{s}'", .{std.fmt.fmtSliceEscapeUpper(try obj.toSlice())});
+            std.debug.print("{s}", .{std.fmt.fmtSliceEscapeUpper(try obj.toSlice())});
         },
 
         else => @compileError("Invalid type: " ++ @typeName(@TypeOf(obj))),
