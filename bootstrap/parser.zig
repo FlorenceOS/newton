@@ -309,12 +309,61 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) ParseError!ast.ExprInd
         },
     };
 
-    // TODO: Postfix operators
-    // while(true) {
-    //     switch(try self.peekToken()) {
-    //
-    //     }
-    // }
+    while(true) {
+        switch(try self.peekToken()) {
+            .@"._ch" => {
+                _ = try self.tokenize();
+                switch(try self.tokenize()) {
+                    .identifier => |token| {
+                        lhs = try ast.expressions.insert(.{ .member_access = .{
+                            .lhs = lhs,
+                            .rhs = try self.identToAstNode(token),
+                        }});
+                    },
+                    .@"&_ch" => {
+                        lhs = try ast.expressions.insert(.{ .addr_of = .{ .operand = lhs } });
+                    },
+                    .@"*_ch" => {
+                        lhs = try ast.expressions.insert(.{ .deref = .{ .operand = lhs } });
+                    },
+                    else => |token|  {
+                        std.debug.print("Unexpected postfix token: {s}\n", .{@tagName(token)});
+                        return error.UnexpectedToken;
+                    },
+                }
+            },
+            .@"(_ch" => {
+                _ = try self.tokenize();
+                var first_arg = ast.ExprIndex.OptIndex.none;
+                var last_arg = ast.ExprIndex.OptIndex.none;
+                while((try self.peekToken()) != .@")_ch") {
+                    const value = try self.parseExpression(null);
+                    const arg = try ast.expressions.insert(.{ .function_argument = .{
+                        .value = value,
+                        .next = .none,
+                    }});
+                    const oarg = ast.ExprIndex.toOpt(arg);
+                    if(first_arg == .none) {
+                        first_arg = oarg;
+                    }
+                    if (ast.expressions.getOpt(last_arg)) |la| {
+                        la.function_argument.next = oarg;
+                    }
+                    last_arg = oarg;
+                    if ((try self.tryConsume(.@",_ch")) == null) {
+                        break;
+                    }
+                }
+                _ = try self.expect(.@")_ch");
+                lhs = try ast.expressions.insert(.{ .function_call = .{
+                    .callee = lhs,
+                    .first_arg = first_arg,
+                }});
+            },
+            .@"[_ch" => @panic("TODO: Implement array subscript"),
+            else => break,
+        }
+    }
 
     while(true) {
         switch(try self.peekToken()) {
