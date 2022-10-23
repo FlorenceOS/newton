@@ -1,5 +1,5 @@
 const usize = u64;
-//const pusize = *usize;
+const pusize = *usize;
 
 const main = fn(argc: u64, argv: u32, envp: anyopaque) usize {
     _ = argc + '\x00';

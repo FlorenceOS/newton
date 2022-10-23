@@ -234,12 +234,8 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) ParseError!ast.ExprInd
 
     var lhs: ast.ExprIndex.Index = switch(try self.tokenize()) {
         // Literals
-        .int_literal => |lit| {
-            return ast.expressions.insert(.{.int_literal = self.toAstIdent(lit)});
-        },
-        .char_literal => |lit| {
-            return ast.expressions.insert(.{.char_literal = self.toAstIdent(lit)});
-        },
+        .int_literal => |lit| try ast.expressions.insert(.{.int_literal = self.toAstIdent(lit)}),
+        .char_literal => |lit| try ast.expressions.insert(.{.char_literal = self.toAstIdent(lit)}),
         .string_literal => |_| @panic("TODO: String literal expression"),
 
         // Atom keyword literal expressions
@@ -260,18 +256,36 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) ParseError!ast.ExprInd
         .enum_keyword => @panic("TODO: Enum type expression"),
         .struct_keyword => @panic("TODO: Struct type expression"),
 
-        .fn_keyword => {
+        .fn_keyword => blk: {
             const fidx = try self.parseFunctionExpr();
-            return ast.expressions.insert(.{ .function_expression = fidx });
+            break :blk try ast.expressions.insert(.{ .function_expression = fidx });
         },
 
-        .@"+_ch" => @panic("TODO: Unary plus expression"),
-        .@"-_ch" => @panic("TODO: Unary minus expression"),
-        .@"(_ch" => @panic("TODO: Paren expression"),
+        .@"(_ch" => blk: {
+            const expr = try self.parseExpression(null);
+            _ = try self.expect(.@")_ch");
+            break :blk expr;
+        },
+
+        inline
+        .@"+_ch", .@"-_ch", .@"~_ch", .@"!_ch", .@"*_ch",
+        => |_, uop| blk: {
+            const expr = try self.parseExpression(0);
+            const kind: std.meta.Tag(ast.ExpressionNode) = switch(uop) {
+                .@"+_ch" => .unary_plus,
+                .@"-_ch" => .unary_minus,
+                .@"~_ch" => .unary_bitnot,
+                .@"!_ch" => .unary_lognot,
+                .@"*_ch" => .pointer_type,
+                else => unreachable,
+            };
+
+            break :blk try ast.expressions.insert(@unionInit(ast.ExpressionNode, @tagName(kind), .{
+                .operand = expr,
+            }));
+        },
 
         .__keyword => .discard_underscore,
-
-        .@"*_ch" => @panic("TODO: Pointer type expressions"),
         .identifier => |ident| try self.identToAstNode(ident),
 
         inline
@@ -286,9 +300,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) ParseError!ast.ExprInd
         .@"<_ch", .@"<<_ch", .@"<=_ch", .@"<<=_ch",
         .@">_ch", .@">>_ch", .@">=_ch", .@">>=_ch",
         .@"|_ch", .@"|=_ch", .@"&_ch", .@"&=_ch",
-        .@"^_ch", .@"^=_ch", .@"~_ch", .@"!_ch",
-        .@"||_ch", .@"&&_ch",
-        .@"{_ch",
+        .@"^_ch", .@"^=_ch", .@"||_ch", .@"&&_ch", .@"{_ch",
         .case_keyword, .const_keyword, .var_keyword, .else_keyword,
         .end_of_file, .return_keyword,
         => |_, tag| {
