@@ -42,6 +42,7 @@ fn tryConsume(
     const tok = try self.peekToken();
     if(tok == token_tag) {
         //std.debug.assert(tok == try self.tokenize());
+        self.peeked_token = null;
         return @field(tok, @tagName(token_tag));
     } else {
         tok.deinit();
@@ -160,7 +161,7 @@ fn parseBlockStatementBody(self: *@This()) ParseError!ast.StmtIndex.Index {
     var first_statement = ast.StmtIndex.OptIndex.none;
     var last_statement = ast.StmtIndex.OptIndex.none;
     while(true) {
-        if(try self.tryConsume(.@"}_ch")) |_| {
+        if((try self.peekToken()) == .@"}_ch") {
             if(ast.StmtIndex.unwrap(first_statement)) |fs| {
                 return fs;
             } else {
@@ -387,7 +388,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) ParseError!ast.ExprInd
                     .@"!=_ch" => .not_equal,
                     .@"&&_ch" => .logical_and,
                     .@"||_ch" => .logical_or,
-                    .@"=_ch" => .logical_or,
+                    .@"=_ch" => .assign,
                     .@".._ch" => .range,
                     else => unreachable,
                 };
