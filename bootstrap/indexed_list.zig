@@ -78,6 +78,9 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
                 try result.elements.append(@field(_Indices.ExtraFieldTags, tag_field.name));
             }
 
+            _ = try result.elements.addOne();
+            std.debug.assert(result.elements.items.len == _Indices.alloc_base);
+
             return result;
         }
 
