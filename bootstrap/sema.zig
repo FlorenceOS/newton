@@ -70,6 +70,31 @@ pub fn init() !void {
     structs = try StructList.init(std.heap.page_allocator);
 }
 
+var ast_to_type = std.AutoHashMap(ast.ExprIndex.Index, TypeIndex.Index).init(std.heap.page_allocator);
+var ast_to_value = std.AutoHashMap(ast.ExprIndex.Index, ValueIndex.Index).init(std.heap.page_allocator);
+
+fn astNodeToType(idx: ast.ExprIndex.OptIndex) !TypeIndex.Index {
+    if(ast.ExprIndex.unwrap(idx)) |ast_idx| {
+        if(ast_to_type.get(ast_idx)) |type_idx| {
+            return type_idx;
+        }
+    }
+    const type_idx = try types.insert(.{ .unresolved = idx });
+    if(ast.ExprIndex.unwrap(idx)) |ast_idx| {
+        try ast_to_type.put(ast_idx, type_idx);
+    }
+    return type_idx;
+}
+
+fn astNodeToValue(idx: ast.ExprIndex.Index) !ValueIndex.Index {
+    if(ast_to_type.get(idx)) |value_idx| {
+        return value_idx;
+    }
+    const value_idx = try values.insert(.{ .unresolved = idx });
+    try ast_to_type.put(idx, value_idx);
+    return value_idx;
+}
+
 pub fn analyzeExpr(expr_idx: ast.ExprIndex.Index) !ValueIndex.Index {
     const expr = ast.expressions.get(expr_idx);
     switch(expr.*) {
@@ -86,8 +111,8 @@ pub fn analyzeExpr(expr_idx: ast.ExprIndex.Index) !ValueIndex.Index {
                         const static_decl_idx = try static_decls.insert(.{
                             .mutable = inner_decl.mutable,
                             .name = inner_decl.identifier,
-                            .type_idx = try types.insert(.{ .unresolved = inner_decl.type }),
-                            .init_value = try values.insert(.{ .unresolved = inner_decl.init_value }),
+                            .type_idx = try astNodeToType(inner_decl.type),
+                            .init_value = try astNodeToValue(inner_decl.init_value),
                             .next = .none,
                         });
                         const oidx = StaticDeclIndex.toOpt(static_decl_idx);
@@ -103,9 +128,9 @@ pub fn analyzeExpr(expr_idx: ast.ExprIndex.Index) !ValueIndex.Index {
                         std.debug.assert(field_decl.type != .none);
                         const field_decl_idx = try struct_fields.insert(.{
                             .name = field_decl.identifier,
-                            .type_idx = try types.insert(.{ .unresolved = field_decl.type }),
+                            .type_idx = try astNodeToType(field_decl.type),
                             .init_value = if(ast.ExprIndex.unwrap(field_decl.init_value)) |init_expr_idx| blk: {
-                                break :blk ValueIndex.toOpt(try values.insert(.{ .unresolved = init_expr_idx }));
+                                break :blk ValueIndex.toOpt(try astNodeToValue(init_expr_idx));
                             } else .none,
                             .next = .none,
                         });
