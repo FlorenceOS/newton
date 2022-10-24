@@ -98,12 +98,16 @@ fn genericChainLookup(
     return null;
 }
 
+fn _lookupStaticDecl(first: StaticDeclIndex.OptIndex, name: []const u8) !?*StaticDecl {
+    return genericChainLookup(StaticDeclIndex, StaticDecl, &static_decls, first, name);
+}
+
 pub const Struct = struct {
     first_static_decl: StaticDeclIndex.OptIndex,
     first_field: StructFieldIndex.OptIndex,
 
     pub fn lookupStaticDecl(self: *@This(), name: []const u8) !?*StaticDecl {
-        return genericChainLookup(StaticDeclIndex, StaticDecl, &static_decls, self.first_static_decl, name);
+        return _lookupStaticDecl(self.first_static_decl, name);
     }
 
     pub fn lookupField(self: *@This(), name: []const u8) !?*StructField {
