@@ -16,18 +16,20 @@ pub const ExprIndex = indexed_list.Indices(u32, .{
     .@"unreachable" = .{ .unreachable_expr = {}},
 
     // Commonly used types
-    .void = .{ .type_expression = values.TypeIndex.Index.void },
-    .anyopaque = .{ .type_expression = values.TypeIndex.Index.anyopaque },
-    .bool = .{ .type_expression = values.TypeIndex.Index.bool },
-    .type = .{ .type_expression = values.TypeIndex.Index.type },
-    .u8 = .{ .type_expression = values.TypeIndex.Index.u8 },
-    .u16 = .{ .type_expression = values.TypeIndex.Index.u16 },
-    .u32 = .{ .type_expression = values.TypeIndex.Index.u32 },
-    .u64 = .{ .type_expression = values.TypeIndex.Index.u64 },
-    .i8 = .{ .type_expression = values.TypeIndex.Index.i8 },
-    .i16 = .{ .type_expression = values.TypeIndex.Index.i16 },
-    .i32 = .{ .type_expression = values.TypeIndex.Index.i32 },
-    .i64 = .{ .type_expression = values.TypeIndex.Index.i64 },
+    .void = .{ .void = {} },
+    .anyopaque = .{ .anyopaque = {} },
+    .bool = .{ .bool = {} },
+    .type = .{ .type = {} },
+    .u8 = .{ .unsigned_int = 8 },
+    .u16 = .{ .unsigned_int = 16 },
+    .u32 = .{ .unsigned_int = 32 },
+    .u64 = .{ .unsigned_int = 64 },
+    .i8 = .{ .signed_int = 8 },
+    .i16 = .{ .signed_int = 16 },
+    .i32 = .{ .signed_int = 32 },
+    .i64 = .{ .signed_int = 64 },
+
+    .import = .{.import = {}},
 
     // _ = a;
     // ^ This thing
@@ -95,7 +97,13 @@ pub const ExpressionNode = union(enum) {
     undefined_expr,
     unreachable_expr,
     discard_underscore,
-    type_expression: values.TypeIndex.Index,
+
+    void,
+    anyopaque,
+    bool,
+    type,
+    unsigned_int: u32,
+    signed_int: u32,
 
     // Binary expressions, has lhs and rhs populated
     array_subscript: Bop,
