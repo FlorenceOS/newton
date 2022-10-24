@@ -108,7 +108,7 @@ fn parseFunctionExpr(self: *@This(),) ParseError!ast.FunctionIndex.Index {
     _ = try self.expect(.@"(_ch");
     var first_param = ast.FunctionParamIndex.OptIndex.none;
     var last_param = ast.FunctionParamIndex.OptIndex.none;
-    while(true) {
+    while((try self.peekToken()) != .@")_ch") {
         const ident = try self.expect(.identifier);
         defer ident.deinit();
         _ = try self.expect(.@":_ch");
