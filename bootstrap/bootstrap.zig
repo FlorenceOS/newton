@@ -34,8 +34,9 @@ pub fn main() !void {
         const root_value = sema.values.get(root_sema);
         const root_type = sema.types.get(root_value.type_idx);
         const root_struct = sema.structs.get(root_type.struct_idx);
-        const main_decl = try root_struct.lookupStaticDecl("main");
+        const main_decl = (try root_struct.lookupStaticDecl("main")).?;
 
+        try main_decl.analyze();
         std.debug.print("{any}\n", .{main_decl});
     } else {
         std.debug.print("Missing root file path!\n", .{});

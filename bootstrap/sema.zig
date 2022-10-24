@@ -24,6 +24,12 @@ pub const Type = union(enum) {
     unsigned_int: u32,
     signed_int: u32,
     struct_idx: StructIndex.Index,
+
+    fn inferTypeFromValue(self: *@This(), value_idx: ValueIndex.Index) !void {
+        _ = self;
+        _ = value_idx;
+        return error.NotImplemented;
+    }
 };
 
 pub const Value = union(enum) {
@@ -34,6 +40,12 @@ pub const Value = union(enum) {
     undefined,
     bool: bool,
     comptime_int: i65,
+
+    fn resolveWithType(self: *@This(), type_idx: TypeIndex.Index) !void {
+        _ = self;
+        _ = type_idx;
+        return error.NotImplemented;
+    }
 };
 
 pub const StaticDecl = struct {
@@ -42,6 +54,22 @@ pub const StaticDecl = struct {
     type_idx: TypeIndex.Index,
     init_value: ValueIndex.Index,
     next: StaticDeclIndex.OptIndex,
+
+    pub fn analyze(self: *@This()) !void {
+        const type_ptr = types.get(self.type_idx);
+        const value_ptr = values.get(self.init_value);
+
+        if(type_ptr.* != .unresolved and value_ptr.* != .unresolved) {
+            return;
+        }
+
+        if(value_ptr.* != .unresolved) {
+            try type_ptr.inferTypeFromValue(self.init_value);
+            return;
+        }
+
+        try value_ptr.resolveWithType(self.type_idx);
+    }
 };
 
 pub const StructField = struct {
