@@ -218,7 +218,7 @@ fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
         .@"||_ch", .@"&&_ch",
         .end_of_file, .else_keyword, .enum_keyword, .fn_keyword,
         .struct_keyword, .bool_keyword, .type_keyword, .void_keyword,
-        .anyopaque_keyword,
+        .anyopaque_keyword, .volatile_keyword,
         => |_, tag| {
             std.debug.print("Unexpected statement token: {s}\n", .{@tagName(tag)});
             return error.UnexpectedToken;
@@ -275,7 +275,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
         },
 
         inline
-        .@"+_ch", .@"-_ch", .@"~_ch", .@"!_ch", .@"*_ch",
+        .@"+_ch", .@"-_ch", .@"~_ch", .@"!_ch",
         => |_, uop| blk: {
             const expr = try self.parseExpression(0);
             const kind: std.meta.Tag(ast.ExpressionNode) = switch(uop) {
@@ -290,6 +290,24 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
             break :blk try ast.expressions.insert(@unionInit(ast.ExpressionNode, @tagName(kind), .{
                 .operand = expr,
             }));
+        },
+
+        .@"*_ch" => blk: {
+            var pointer_type: ast.PointerType = .{
+                .is_const = false,
+                .is_volatile = false,
+                .item = undefined,
+            };
+            while(true) {
+                switch(try self.peekToken()) {
+                    .const_keyword => pointer_type.is_const = true,
+                    .volatile_keyword => pointer_type.is_volatile = true,
+                    else => break,
+                }
+                _ = try self.tokenize();
+            }
+            pointer_type.item = try self.parseExpression(0);
+            break :blk try ast.expressions.insert(.{ .pointer_type = pointer_type });
         },
 
         .__keyword => .discard_underscore,
@@ -311,7 +329,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
         .@">_ch", .@">>_ch", .@">=_ch", .@">>=_ch",
         .@"|_ch", .@"|=_ch", .@"&_ch", .@"&=_ch",
         .@"^_ch", .@"^=_ch", .@"||_ch", .@"&&_ch", .@"{_ch",
-        .case_keyword, .const_keyword, .var_keyword, .else_keyword,
+        .case_keyword, .const_keyword, .var_keyword, .volatile_keyword, .else_keyword,
         .end_of_file, .return_keyword,
         => |_, tag| {
             std.debug.print("Unexpected primary-expression token: {s}\n", .{@tagName(tag)});
@@ -500,7 +518,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
             .break_keyword, .case_keyword, .const_keyword, .continue_keyword,
             .else_keyword, .endcase_keyword, .enum_keyword, .fn_keyword,
             .if_keyword, .loop_keyword, .return_keyword, .struct_keyword,
-            .switch_keyword, .var_keyword, .__keyword, .bool_keyword,
+            .switch_keyword, .var_keyword, .volatile_keyword, .__keyword, .bool_keyword,
             .type_keyword, .void_keyword, .anyopaque_keyword,
             .end_of_file,
             => |_, tag| {
@@ -683,7 +701,13 @@ fn dumpNode(index: anytype, node: anytype, indent_level: usize) anyerror!void {
             .signed_int => |bits| std.debug.print("i{d}", .{bits}),
             .pointer_type => |ptr_type| {
                 std.debug.print("*", .{});
-                try dumpNode(ptr_type.operand, ast.expressions.get(ptr_type.operand), indent_level);
+                if (ptr_type.is_const) {
+                    std.debug.print("const ", .{});
+                }
+                if (ptr_type.is_volatile) {
+                    std.debug.print("volatile ", .{});
+                }
+                try dumpNode(ptr_type.item, ast.expressions.get(ptr_type.item), indent_level);
             },
             .import_call => |file_index| {
                 std.debug.print("(", .{});

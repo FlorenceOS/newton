@@ -59,6 +59,12 @@ pub const Uop = struct {
     operand: ExprIndex.Index,
 };
 
+pub const PointerType = struct {
+    is_const: bool,
+    is_volatile: bool,
+    item: ExprIndex.Index,
+};
+
 pub const SourceRef = struct {
     source_file: sources.SourceIndex.Index,
     file_offset: u32,
@@ -102,7 +108,7 @@ pub const ExpressionNode = union(enum) {
     unary_minus: Uop,
     unary_bitnot: Uop,
     unary_lognot: Uop,
-    pointer_type: Uop,
+    pointer_type: PointerType,
 
     addr_of: Uop,
     deref: Uop,
