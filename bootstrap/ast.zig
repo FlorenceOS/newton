@@ -64,9 +64,15 @@ pub const SourceRef = struct {
     file_offset: u32,
 
     pub fn toSlice(self: @This()) ![]const u8 {
-        var source = sources.source_files.get(self.source_file).contents[self.file_offset..];
+        const source = sources.source_files.get(self.source_file).contents[self.file_offset..];
         const len = try tokenizer.tokenLength(source);
         return source[0..len];
+    }
+
+    pub fn retokenize(self: @This()) !tokenizer.Token {
+        const source = sources.source_files.get(self.source_file).contents[self.file_offset..];
+        var source_ptr = source.ptr;
+        return tokenizer.tokenize(&source_ptr);
     }
 };
 
@@ -84,6 +90,12 @@ pub const ExpressionNode = union(enum) {
     identifier: SourceRef,
     int_literal: SourceRef,
     char_literal: SourceRef,
+    string_literal: SourceRef,
+
+    // @import
+    import,
+    // @import("whatever")
+    import_call: sources.SourceIndex.Index,
 
     unary_plus: Uop,
     unary_minus: Uop,

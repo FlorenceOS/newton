@@ -15,14 +15,10 @@ source_file_index: sources.SourceIndex.Index,
 peeked_token: ?tokenizer.Token = null,
 current_content: [*:0]const u8,
 
-const ParseError = errorType(tokenizer.tokenize) || error{
-    UnexpectedToken,
-};
-
 fn expect(
     self: *@This(),
     comptime token_tag: std.meta.Tag(tokenizer.Token),
-) ParseError!std.meta.TagPayload(tokenizer.Token, token_tag) {
+) !std.meta.TagPayload(tokenizer.Token, token_tag) {
     const tok = try self.peekToken();
     errdefer tok.deinit();
     if(tok == token_tag) {
@@ -38,7 +34,7 @@ fn expect(
 fn tryConsume(
     self: *@This(),
     comptime token_tag: std.meta.Tag(tokenizer.Token),
-) ParseError!?std.meta.TagPayload(tokenizer.Token, token_tag) {
+) !?std.meta.TagPayload(tokenizer.Token, token_tag) {
     const tok = try self.peekToken();
     if(tok == token_tag) {
         //std.debug.assert(tok == try self.tokenize());
@@ -50,13 +46,13 @@ fn tryConsume(
     }
 }
 
-fn tokenize(self: *@This()) ParseError!tokenizer.Token {
+fn tokenize(self: *@This()) !tokenizer.Token {
     const retval = self.peekToken();
     self.peeked_token = null;
     return retval;
 }
 
-fn peekToken(self: *@This()) ParseError!tokenizer.Token {
+fn peekToken(self: *@This()) !tokenizer.Token {
     if(self.peeked_token == null) {
         self.peeked_token = try tokenizer.tokenize(&self.current_content);
     }
@@ -76,6 +72,7 @@ fn identToAstNode(self: *@This(), tok: anytype) !ast.ExprIndex.Index {
     if(std.mem.eql(u8, tok.body, "type")) return .type;
     if(std.mem.eql(u8, tok.body, "void")) return .void;
     if(std.mem.eql(u8, tok.body, "anyopaque")) return .anyopaque;
+    if(std.mem.eql(u8, tok.body, "@import")) return .import;
 
     return ast.expressions.insert(.{ .identifier = self.toAstIdent(tok) });
 }
@@ -104,7 +101,7 @@ fn toAstIdent(self: *@This(), tok: anytype) ast.SourceRef {
 // or
 //   fn(123) T {}
 //     ^ Here
-fn parseFunctionExpr(self: *@This(),) ParseError!ast.FunctionIndex.Index {
+fn parseFunctionExpr(self: *@This()) anyerror!ast.FunctionIndex.Index {
     _ = try self.expect(.@"(_ch");
     var first_param = ast.FunctionParamIndex.OptIndex.none;
     var last_param = ast.FunctionParamIndex.OptIndex.none;
@@ -157,7 +154,7 @@ fn parseFunctionExpr(self: *@This(),) ParseError!ast.FunctionIndex.Index {
 //   ^ Returns first statement in block
 //   Next chain contains rest of the statements
 // }
-fn parseBlockStatementBody(self: *@This()) ParseError!ast.StmtIndex.Index {
+fn parseBlockStatementBody(self: *@This()) anyerror!ast.StmtIndex.Index {
     var first_statement = ast.StmtIndex.OptIndex.none;
     var last_statement = ast.StmtIndex.OptIndex.none;
     while(true) {
@@ -178,7 +175,7 @@ fn parseBlockStatementBody(self: *@This()) ParseError!ast.StmtIndex.Index {
     }
 }
 
-fn parseStatement(self: *@This()) ParseError!ast.StmtIndex.Index {
+fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
     switch(try self.peekToken()) {
         .@"{_ch" => return self.parseBlockStatementBody(),
         .break_keyword => @panic("TODO: break statement"),
@@ -229,14 +226,14 @@ fn parseStatement(self: *@This()) ParseError!ast.StmtIndex.Index {
     }
 }
 
-fn parseExpression(self: *@This(), precedence_in: ?usize) ParseError!ast.ExprIndex.Index {
+fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex.Index {
     const precedence = precedence_in orelse 99999;
 
     var lhs: ast.ExprIndex.Index = switch(try self.tokenize()) {
         // Literals
         .int_literal => |lit| try ast.expressions.insert(.{.int_literal = self.toAstIdent(lit)}),
         .char_literal => |lit| try ast.expressions.insert(.{.char_literal = self.toAstIdent(lit)}),
-        .string_literal => |_| @panic("TODO: String literal expression"),
+        .string_literal => |lit| try ast.expressions.insert(.{.string_literal = self.toAstIdent(lit)}),
 
         // Atom keyword literal expressions
         .void_keyword => .void,
@@ -369,10 +366,26 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) ParseError!ast.ExprInd
                     }
                 }
                 _ = try self.expect(.@")_ch");
-                lhs = try ast.expressions.insert(.{ .function_call = .{
-                    .callee = lhs,
-                    .first_arg = first_arg,
-                }});
+
+                if(lhs == .import) {
+                    std.debug.assert(first_arg == last_arg);
+                    const arg = ast.expressions.getOpt(first_arg).?;
+                    const arg_expr = arg.function_argument.value;
+                    const strlit = ast.expressions.get(arg_expr).string_literal;
+                    const path_string = try strlit.retokenize();
+                    defer path_string.deinit();
+
+                    const dir = sources.source_files.get(self.source_file_index).dir;
+                    const parsed_file = try parseFileIn(path_string.string_literal.value, dir);
+                    arg.* = .{ .import_call = parsed_file };
+                    lhs = ast.expressions.getIndex(arg);
+                } else {
+                    lhs = try ast.expressions.insert(.{ .function_call = .{
+                        .callee = lhs,
+                        .first_arg = first_arg,
+                    }});
+                }
+
             },
             .@"[_ch" => @panic("TODO: Implement array subscript"),
             else => break,
@@ -589,12 +602,34 @@ fn parseFile(fidx: sources.SourceIndex.Index) !ast.ExprIndex.Index {
     }});
 }
 
-fn parseFileWithHandles(file: std.fs.File, dir: std.fs.Dir) !sources.SourceIndex.Index {
-    const file_size = try file.getEndPos();
+pub fn parseFileIn(path: [:0]u8, current_dir: std.fs.Dir) !sources.SourceIndex.Index {
+    var realpath_buf: [std.os.PATH_MAX]u8 = undefined;
+    const realpath_stack = try current_dir.realpathZ(path.ptr, &realpath_buf);
+    const realpath = try std.heap.page_allocator.dupe(u8, realpath_stack);
+
+    if(sources.path_map.get(realpath)) |parsed_file| {
+        return parsed_file;
+    }
+
+    const file_handle = try current_dir.openFileZ(path.ptr, .{});
+
+    const dir_handle = if(std.fs.path.dirname(path)) |dirname| blk: {
+        path[dirname.len] = 0;
+        // Split out into a local here because of compiler bug
+        const dir_path = path[0..dirname.len:0];
+        break :blk try current_dir.openDirZ(dir_path, .{
+            .access_sub_paths = true,
+        }, false);
+    }
+    else blk: {
+        break :blk current_dir;
+    };
+
+    const file_size = try file_handle.getEndPos();
     const fidx = try sources.source_files.insert(.{
-        .file = file,
-        .dir = dir,
-        .contents = try file.readToEndAllocOptions(
+        .file = file_handle,
+        .dir = dir_handle,
+        .contents = try file_handle.readToEndAllocOptions(
             std.heap.page_allocator,
             file_size,
             file_size,
@@ -604,25 +639,13 @@ fn parseFileWithHandles(file: std.fs.File, dir: std.fs.Dir) !sources.SourceIndex
         .top_level_struct = undefined,
     });
 
-    const top_level_struct = try parseFile(fidx);
-    sources.source_files.get(fidx).top_level_struct = top_level_struct;
+    try sources.path_map.put(realpath, fidx);
+
+    std.debug.print("Starting parse of file: {s}\n", .{realpath});
+
+    sources.source_files.get(fidx).top_level_struct = try parseFile(fidx);
+
     return fidx;
-}
-
-pub fn parseFileIn(path: [:0]u8, current_dir: std.fs.Dir) !sources.SourceIndex.Index {
-    const file_handle = try current_dir.openFileZ(path.ptr, .{});
-
-    if(std.fs.path.dirname(path)) |dirname| {
-        path[dirname.len] = 0;
-        // Split out into a local here because of compiler bug
-        const dir_path = path[0..dirname.len:0];
-        return parseFileWithHandles(file_handle, try current_dir.openDirZ(dir_path, .{
-            .access_sub_paths = true,
-        }, false));
-    }
-    else {
-        return parseFileWithHandles(file_handle, current_dir);
-    }
 }
 
 pub fn parseRootFile(path: [:0]u8) !ast.ExprIndex.Index {

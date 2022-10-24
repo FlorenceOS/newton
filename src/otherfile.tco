@@ -1,0 +1,2 @@
+const root = @import("lmao.tco");
+const self = @import("otherfile.tco");

@@ -36,7 +36,7 @@ pub const Token = union(enum) {
     },
     string_literal: struct {
         body: []const u8,
-        value: []const u8,
+        value: [:0]u8,
 
         pub fn deinit(self: @This()) void {
             gpa.allocator().free(self.value);
@@ -204,7 +204,7 @@ fn isIdentChar(value: u8) bool {
         'a'...'z',
         'A'...'Z',
         '0'...'9',
-        '_' => return true,
+        '_', '@' => return true,
         else => return false,
     }
 }
@@ -351,7 +351,7 @@ pub fn tokenize(input: *[*:0]const u8) !Token {
 
             return Token{ .string_literal = .{
                 .body = body_start[0..(@ptrToInt(input.*) - 1) - @ptrToInt(body_start)],
-                .value = value.toOwnedSlice(),
+                .value = try value.toOwnedSliceSentinel(0),
             } };
         },
 

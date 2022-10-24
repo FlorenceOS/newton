@@ -1,6 +1,8 @@
 const usize = u64;
 const pusize = *usize;
 
+const other_file = @import("otherfile.tco");
+
 const Thing = struct {
     just_name,
     name_and_type: T,
