@@ -29,8 +29,14 @@ pub fn main() !void {
     }
 
     if(root_path) |rp| {
-        const root_struct = try parser.parseRootFile(rp);
-        _ = try sema.analyzeExpr(root_struct);
+        const root_ast = try parser.parseRootFile(rp);
+        const root_sema = try sema.analyzeExpr(root_ast);
+        const root_value = sema.values.get(root_sema);
+        const root_type = sema.types.get(root_value.type_idx);
+        const root_struct = sema.structs.get(root_type.struct_idx);
+        const main_decl = try root_struct.lookupStaticDecl("main");
+
+        std.debug.print("{any}\n", .{main_decl});
     } else {
         std.debug.print("Missing root file path!\n", .{});
     }

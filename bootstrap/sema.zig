@@ -51,9 +51,36 @@ pub const StructField = struct {
     next: StructFieldIndex.OptIndex,
 };
 
+fn genericChainLookup(
+    comptime IndexType: type,
+    comptime NodeType: type,
+    container: *indexed_list.IndexedList(IndexType, NodeType),
+    list_head: IndexType.OptIndex,
+    name: []const u8,
+) !?*NodeType {
+    var current = list_head;
+    while(container.getOpt(current)) |node| {
+        const token = try node.name.retokenize();
+        defer token.deinit();
+        if (std.mem.eql(u8, name, token.identifier_value())) {
+            return node;
+        }
+        current = node.next;
+    }
+    return null;
+}
+
 pub const Struct = struct {
     first_static_decl: StaticDeclIndex.OptIndex,
     first_field: StructFieldIndex.OptIndex,
+
+    pub fn lookupStaticDecl(self: *@This(), name: []const u8) !?*StaticDecl {
+        return genericChainLookup(StaticDeclIndex, StaticDecl, &static_decls, self.first_static_decl, name);
+    }
+
+    pub fn lookupField(self: *@This(), name: []const u8) !?*StructField {
+        return genericChainLookup(StructFieldIndex, StructField, &struct_fields, self.first_field, name);
+    }
 };
 
 pub var types: TypeList = undefined;
