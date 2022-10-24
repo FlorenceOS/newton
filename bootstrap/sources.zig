@@ -10,7 +10,7 @@ pub const SourceFile = struct {
     file: std.fs.File,
     dir: std.fs.Dir,
     contents: [:0]const u8,
-    top_level_struct: ast.UserStructIndex.Index,
+    top_level_struct: ast.ExprIndex.Index,
 };
 
 pub var source_files: SourceFileList = undefined;

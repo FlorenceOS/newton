@@ -254,7 +254,17 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) ParseError!ast.ExprInd
 
         // Type expressions
         .enum_keyword => @panic("TODO: Enum type expression"),
-        .struct_keyword => @panic("TODO: Struct type expression"),
+        .struct_keyword => blk: {
+            _ = try self.expect(.@"{_ch");
+
+            const user_type = try ast.expressions.insert(.{ .struct_expression = .{
+                .first_decl = try self.parseTypeBody(),
+            }});
+
+            _ = try self.expect(.@"}_ch");
+
+            break :blk user_type;
+        },
 
         .fn_keyword => blk: {
             const fidx = try self.parseFunctionExpr();
@@ -286,7 +296,10 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) ParseError!ast.ExprInd
         },
 
         .__keyword => .discard_underscore,
-        .identifier => |ident| try self.identToAstNode(ident),
+        .identifier => |ident| blk: {
+            defer ident.deinit();
+            break :blk try self.identToAstNode(ident);
+        },
 
         inline
         .@".._ch", .@",_ch", .@"._ch", .@":_ch", .@";_ch",
@@ -319,6 +332,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) ParseError!ast.ExprInd
                             .lhs = lhs,
                             .rhs = try self.identToAstNode(token),
                         }});
+                        token.deinit();
                     },
                     .@"&_ch" => {
                         lhs = try ast.expressions.insert(.{ .addr_of = .{ .operand = lhs } });
@@ -477,21 +491,47 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) ParseError!ast.ExprInd
             .type_keyword, .void_keyword, .anyopaque_keyword,
             .end_of_file,
             => |_, tag| {
-                std.debug.print("Unexpected post-primary expression token: {s}\n", .{@tagName(tag)});
-                return error.UnexpectedToken;
+                std.debug.panic("Unexpected post-primary expression token: {s}\n", .{@tagName(tag)});
             },
         }
     }
 }
 
-fn parseTypeBody(self: *@This()) !ast.UserStructIndex.Index {
+fn parseTypeBody(self: *@This()) !ast.StmtIndex.OptIndex {
     var first_decl = ast.StmtIndex.OptIndex.none;
     var last_decl = ast.StmtIndex.OptIndex.none;
 
     while(true) {
-        const token = try self.tokenize();
-        switch(token) {
-            .const_keyword, .var_keyword, .fn_keyword => {
+        const token = try self.peekToken();
+        const odecl = switch(token) {
+            .identifier => |ident| blk: {
+                _ = try self.tokenize();
+                defer ident.deinit();
+
+                var type_expr = ast.ExprIndex.OptIndex.none;
+                if((try self.peekToken()) == .@":_ch") {
+                    _ = try self.tokenize();
+                    type_expr = ast.ExprIndex.toOpt(try self.parseExpression(null));
+                }
+
+                var init_expr = ast.ExprIndex.OptIndex.none;
+                if((try self.peekToken()) == .@"=_ch") {
+                    _ = try self.tokenize();
+                    init_expr = ast.ExprIndex.toOpt(try self.parseExpression(null));
+                }
+
+                _ = try self.expect(.@",_ch");
+
+                const curr_field_decl = try ast.statements.insert(.{ .next = .none, .value = .{ .field_decl = .{
+                    .identifier = self.toAstIdent(ident),
+                    .type = type_expr,
+                    .init_value = init_expr,
+                }}});
+
+                break :blk ast.StmtIndex.toOpt(curr_field_decl);
+            },
+            .const_keyword, .var_keyword, .fn_keyword => blk: {
+                _ = try self.tokenize();
                 const ident = try self.expect(.identifier);
                 defer ident.deinit();
 
@@ -516,39 +556,37 @@ fn parseTypeBody(self: *@This()) !ast.UserStructIndex.Index {
                     .type = type_expr,
                     .init_value = init_expr,
                     .mutable = token == .var_keyword,
-                } } });
-                const odecl = ast.StmtIndex.toOpt(curr_decl);
-
-                if(first_decl == .none) {
-                    first_decl = odecl;
-                }
-
-                if(ast.statements.getOpt(last_decl)) |ld| {
-                    ld.next = odecl;
-                }
-
-                last_decl = odecl;
+                }}});
+                break :blk ast.StmtIndex.toOpt(curr_decl);
             },
-            .end_of_file, .@"}_ch" => {
-                return ast.user_structs.insert(.{
-                    .first_decl = first_decl,
-                });
-            },
+            .end_of_file, .@"}_ch" => return first_decl,
             else => std.debug.panic("Unhandled top-level token {any}", .{token}),
+        };
+
+        if(first_decl == .none) {
+            first_decl = odecl;
         }
-        token.deinit();
+
+        if(ast.statements.getOpt(last_decl)) |ld| {
+            ld.next = odecl;
+        }
+
+        last_decl = odecl;
     }
 }
 
-
-
-fn parseFile(fidx: sources.SourceIndex.Index) !ast.UserStructIndex.Index {
+fn parseFile(fidx: sources.SourceIndex.Index) !ast.ExprIndex.Index {
     const file = sources.source_files.get(fidx);
     var parser = @This() {
         .source_file_index = fidx,
         .current_content = file.contents.ptr,
     };
-    return parser.parseTypeBody();
+
+    const first_decl = try parser.parseTypeBody();
+
+    return ast.expressions.insert(.{ .struct_expression = .{
+        .first_decl = first_decl,
+    }});
 }
 
 fn parseFileWithHandles(file: std.fs.File, dir: std.fs.Dir) !sources.SourceIndex.Index {
@@ -563,7 +601,7 @@ fn parseFileWithHandles(file: std.fs.File, dir: std.fs.Dir) !sources.SourceIndex
             @alignOf(u8),
             0,
         ),
-        .top_level_struct = .none,
+        .top_level_struct = undefined,
     });
 
     const top_level_struct = try parseFile(fidx);
@@ -587,7 +625,7 @@ pub fn parseFileIn(path: [:0]u8, current_dir: std.fs.Dir) !sources.SourceIndex.I
     }
 }
 
-pub fn parseRootFile(path: [:0]u8) !ast.UserStructIndex.Index {
+pub fn parseRootFile(path: [:0]u8) !ast.ExprIndex.Index {
     const fidx = try parseFileIn(path, std.fs.cwd());
     return sources.source_files.get(fidx).top_level_struct;
 }

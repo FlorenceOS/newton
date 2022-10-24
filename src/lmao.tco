@@ -1,6 +1,17 @@
 const usize = u64;
 const pusize = *usize;
 
+const Thing = struct {
+    just_name,
+    name_and_type: T,
+    just_value = blargh,
+    both: T = 5,
+
+    fn format() void {
+        nope();
+    }
+};
+
 const main = fn(argc: u64, argv: u32, envp: anyopaque) usize {
     _ = (argc + '\x00').&('\x00', envp.&, argv,);
 };

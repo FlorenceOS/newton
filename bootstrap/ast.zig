@@ -9,7 +9,6 @@ const ExpressionList = indexed_list.IndexedList(ExprIndex, ExpressionNode);
 const StatementList = indexed_list.IndexedList(StmtIndex, StatementNode);
 const FunctionList = indexed_list.IndexedList(FunctionIndex, FunctionExpression);
 const FunctionParamList = indexed_list.IndexedList(FunctionParamIndex, FunctionParameter);
-const UserStructList = indexed_list.IndexedList(UserStructIndex, UserDefinedStruct);
 
 pub const ExprIndex = indexed_list.Indices(u32, .{
     // Commonly used constants
@@ -44,9 +43,8 @@ pub const StmtIndex = indexed_list.Indices(u32, .{
 });
 pub const FunctionIndex = indexed_list.Indices(u32, .{});
 pub const FunctionParamIndex = indexed_list.Indices(u32, .{});
-pub const UserStructIndex = indexed_list.Indices(u32, .{});
 
-pub const UserDefinedStruct = struct {
+pub const TypeBody = struct {
     first_decl: StmtIndex.OptIndex,
 };
 
@@ -145,6 +143,8 @@ pub const ExpressionNode = union(enum) {
     // Function calls
     function_call: FunctionCall,
     function_argument: FunctionArgument,
+
+    struct_expression: TypeBody,
 };
 
 pub const StatementNode = struct {
@@ -156,6 +156,11 @@ pub const StatementNode = struct {
             type: ExprIndex.OptIndex,
             init_value: ExprIndex.Index,
             mutable: bool,
+        },
+        field_decl: struct {
+            identifier: SourceRef,
+            type: ExprIndex.OptIndex,
+            init_value: ExprIndex.OptIndex,
         },
         block_statement: struct {
             first_child: ExprIndex.OptIndex,
@@ -199,12 +204,10 @@ pub var expressions: ExpressionList = undefined;
 pub var statements: StatementList = undefined;
 pub var functions: FunctionList = undefined;
 pub var function_params: FunctionParamList = undefined;
-pub var user_structs: UserStructList = undefined;
 
 pub fn init() !void {
     expressions = try ExpressionList.init(std.heap.page_allocator);
     statements = try StatementList.init(std.heap.page_allocator);
     functions = try FunctionList.init(std.heap.page_allocator);
     function_params = try FunctionParamList.init(std.heap.page_allocator);
-    user_structs = try UserStructList.init(std.heap.page_allocator);
 }
