@@ -524,7 +524,7 @@ fn parseTypeBody(self: *@This()) !ast.StmtIndex.OptIndex {
                 var type_expr = ast.ExprIndex.OptIndex.none;
                 if((try self.peekToken()) == .@":_ch") {
                     _ = try self.tokenize();
-                    type_expr = ast.ExprIndex.toOpt(try self.parseExpression(null));
+                    type_expr = ast.ExprIndex.toOpt(try self.parseExpression(0));
                 }
 
                 var init_expr = ast.ExprIndex.OptIndex.none;
@@ -555,7 +555,7 @@ fn parseTypeBody(self: *@This()) !ast.StmtIndex.OptIndex {
                     init_expr = try ast.expressions.insert(.{ .function_expression = fidx });
                 } else {
                     if(try self.tryConsume(.@":_ch")) |_| {
-                        type_expr = ast.ExprIndex.toOpt(try self.parseExpression(null));
+                        type_expr = ast.ExprIndex.toOpt(try self.parseExpression(0));
                     }
                     _ = try self.expect(.@"=_ch");
 
