@@ -9,6 +9,7 @@ const SourceFileList = indexed_list.IndexedList(SourceIndex, SourceFile);
 pub const SourceFile = struct {
     file: std.fs.File,
     dir: std.fs.Dir,
+    realpath: []const u8,
     contents: [:0]const u8,
     top_level_struct: ast.ExprIndex.Index,
 };
