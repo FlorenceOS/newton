@@ -9,12 +9,6 @@ pub fn Indices(comptime IndexType: type, comptime extra_field_tags: anytype) typ
     comptime var extra_fields: []const std.builtin.Type.EnumField = &[_]std.builtin.Type.EnumField{};
     comptime var current_value = 0;
 
-    extra_fields = extra_fields ++ &[_]std.builtin.Type.EnumField{.{
-        .name = "none",
-        .value = current_value,
-    } };
-    current_value += 1;
-
     inline for(@typeInfo(@TypeOf(extra_field_tags)).Struct.fields) |tag_field| {
         extra_fields = extra_fields ++ &[_]std.builtin.Type.EnumField{.{
             .name = tag_field.name,
@@ -30,6 +24,12 @@ pub fn Indices(comptime IndexType: type, comptime extra_field_tags: anytype) typ
         .decls = &[_]std.builtin.Type.Declaration{},
         .is_exhaustive = false,
     }});
+
+    extra_fields = extra_fields ++ &[_]std.builtin.Type.EnumField{.{
+        .name = "none",
+        .value = current_value,
+    } };
+    current_value += 1;
 
     const _OptIndex = @Type(std.builtin.Type{ .Enum = .{
         .layout = .Auto,
@@ -73,8 +73,6 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
                 .first_free = .none,
             };
             errdefer result.deinit();
-
-            _ = try result.elements.addOne(); // .none
 
             inline for(@typeInfo(@TypeOf(_Indices.ExtraFieldTags)).Struct.fields) |tag_field| {
                 try result.elements.append(@field(_Indices.ExtraFieldTags, tag_field.name));
