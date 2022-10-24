@@ -97,6 +97,7 @@ pub const ExpressionNode = union(enum) {
     // @import("whatever")
     import_call: sources.SourceIndex.Index,
 
+    parenthesized: Uop,
     unary_plus: Uop,
     unary_minus: Uop,
     unary_bitnot: Uop,

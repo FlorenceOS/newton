@@ -271,7 +271,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
         .@"(_ch" => blk: {
             const expr = try self.parseExpression(null);
             _ = try self.expect(.@")_ch");
-            break :blk expr;
+            break :blk try ast.expressions.insert(.{ .parenthesized = .{ .operand = expr }});
         },
 
         inline
