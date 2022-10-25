@@ -12,17 +12,19 @@ pub const TypeIndex = indexed_list.Indices(u32, .{
 pub const ValueIndex = indexed_list.Indices(u32, .{
     .type = .{.type_idx = .type},
 });
-pub const StaticDeclIndex = indexed_list.Indices(u32, .{});
+pub const DeclIndex = indexed_list.Indices(u32, .{});
 pub const StructFieldIndex = indexed_list.Indices(u32, .{});
 pub const StructIndex = indexed_list.Indices(u32, .{});
 pub const FunctionParamIndex = indexed_list.Indices(u32, .{});
+pub const ScopeIndex = indexed_list.Indices(u32, .{});
 
 const TypeList = indexed_list.IndexedList(TypeIndex, Type);
 const ValueList = indexed_list.IndexedList(ValueIndex, Value);
-const StaticDeclList = indexed_list.IndexedList(StaticDeclIndex, StaticDecl);
+const DeclList = indexed_list.IndexedList(DeclIndex, Decl);
 const StructFieldList = indexed_list.IndexedList(StructFieldIndex, StructField);
 const StructList = indexed_list.IndexedList(StructIndex, Struct);
 const FunctionParamList = indexed_list.IndexedList(FunctionParamIndex, FunctionParam);
+const ScopeList = indexed_list.IndexedList(ScopeIndex, Scope);
 
 fn canFitNumber(value: i65, requested_type: TypeIndex.Index) bool {
     switch(types.get(requested_type).*) {
@@ -52,9 +54,18 @@ fn promoteInteger(value: i65, requested_type: TypeIndex.Index) ?Value {
     }
 }
 
-fn evaluateWithoutTypeHint(expr_idx: ast.ExprIndex.Index) anyerror!Value {
+fn evaluateWithoutTypeHint(scope_idx: ScopeIndex.Index, expr_idx: ast.ExprIndex.Index) anyerror!Value {
     switch(ast.expressions.get(expr_idx).*) {
-        .identifier => @panic("TODO: Sema idents"),
+        .identifier => |ident| {
+            const token = try ident.retokenize();
+            defer token.deinit();
+            const decl = (try scopes.get(scope_idx).lookupDecl(token.identifier_value())).?;
+            try decl.analyze();
+            std.debug.assert(decl.mutable == false);
+            const decl_value = values.get(decl.init_value);
+            std.debug.assert(decl_value.* != .runtime);
+            return decl_value.*;
+        },
         .int_literal => |lit| {
             const tok = try lit.retokenize();
             defer tok.deinit();
@@ -70,7 +81,7 @@ fn evaluateWithoutTypeHint(expr_idx: ast.ExprIndex.Index) anyerror!Value {
             while(ast.function_params.getOpt(curr_ast_param)) |ast_param| {
                 const param_idx = try function_params.insert(.{
                     .name = ast_param.identifier,
-                    .type_idx = try values.addDedupLinear(try evaluateWithTypeHint(ast_param.type, .type)),
+                    .type_idx = try values.addDedupLinear(try evaluateWithTypeHint(scope_idx, ast_param.type, .type)),
                     .next = .none,
                 });
                 const oparam_idx = FunctionParamIndex.toOpt(param_idx);
@@ -85,7 +96,7 @@ fn evaluateWithoutTypeHint(expr_idx: ast.ExprIndex.Index) anyerror!Value {
             }
 
             return .{.function = .{
-                .return_type = try values.addDedupLinear(try evaluateWithTypeHint(func.return_type, .type)),
+                .return_type = try values.addDedupLinear(try evaluateWithTypeHint(scope_idx, func.return_type, .type)),
                 .first_param = first_param,
             }};
         },
@@ -93,6 +104,7 @@ fn evaluateWithoutTypeHint(expr_idx: ast.ExprIndex.Index) anyerror!Value {
             const item_type_idx = try values.insert(.{.unresolved = .{
                 .expression = ptr.item,
                 .requested_type = .type,
+                .scope = scope_idx,
             }});
             return .{.type_idx = try types.insert(.{.pointer = .{
                 .is_const = ptr.is_const,
@@ -104,8 +116,12 @@ fn evaluateWithoutTypeHint(expr_idx: ast.ExprIndex.Index) anyerror!Value {
     }
 }
 
-fn evaluateWithTypeHint(expr_idx: ast.ExprIndex.Index, requested_type: TypeIndex.Index) !Value {
-    const evaluated = try evaluateWithoutTypeHint(expr_idx);
+fn evaluateWithTypeHint(
+    scope_idx: ScopeIndex.Index,
+    expr_idx: ast.ExprIndex.Index,
+    requested_type: TypeIndex.Index,
+) !Value {
+    const evaluated = try evaluateWithoutTypeHint(scope_idx, expr_idx);
     switch(evaluated) {
         .comptime_int => |value| if(promoteInteger(value, requested_type)) |promoted| return promoted,
         .unsigned_int, .signed_int => |int| if(promoteInteger(int.value, requested_type)) |promoted| return promoted,
@@ -119,13 +135,14 @@ fn evaluateWithTypeHint(expr_idx: ast.ExprIndex.Index, requested_type: TypeIndex
 const Unresolved = struct {
     expression: ast.ExprIndex.Index,
     requested_type: ValueIndex.OptIndex,
+    scope: ScopeIndex.Index,
 
     pub fn evaluate(self: @This()) !Value {
         if(values.getOpt(self.requested_type)) |request| {
             try request.analyze();
-            return evaluateWithTypeHint(self.expression, request.type_idx);
+            return evaluateWithTypeHint(self.scope, self.expression, request.type_idx);
         } else {
-            return evaluateWithoutTypeHint(self.expression);
+            return evaluateWithoutTypeHint(self.scope, self.expression);
         }
     }
 };
@@ -212,11 +229,11 @@ pub const Value = union(enum) {
     }
 };
 
-pub const StaticDecl = struct {
+pub const Decl = struct {
     mutable: bool,
     name: ast.SourceRef,
     init_value: ValueIndex.Index,
-    next: StaticDeclIndex.OptIndex,
+    next: DeclIndex.OptIndex,
 
     pub fn analyze(self: *@This()) !void {
         const value_ptr = values.get(self.init_value);
@@ -249,17 +266,9 @@ fn genericChainLookup(
     return null;
 }
 
-fn _lookupStaticDecl(first: StaticDeclIndex.OptIndex, name: []const u8) !?*StaticDecl {
-    return genericChainLookup(StaticDeclIndex, StaticDecl, &static_decls, first, name);
-}
-
 pub const Struct = struct {
-    first_static_decl: StaticDeclIndex.OptIndex,
     first_field: StructFieldIndex.OptIndex,
-
-    pub fn lookupStaticDecl(self: *@This(), name: []const u8) !?*StaticDecl {
-        return _lookupStaticDecl(self.first_static_decl, name);
-    }
+    scope: ScopeIndex.Index,
 
     pub fn lookupField(self: *@This(), name: []const u8) !?*StructField {
         return genericChainLookup(StructFieldIndex, StructField, &struct_fields, self.first_field, name);
@@ -278,23 +287,35 @@ pub const Function = struct {
     // first_stmt: StatmentIndex.OptIndex,
 };
 
+pub const Scope = struct {
+    outer_scope: ScopeIndex.OptIndex,
+    first_decl: DeclIndex.OptIndex,
+
+    pub fn lookupDecl(self: *@This(), name: []const u8) !?*Decl {
+        return genericChainLookup(DeclIndex, Decl, &decls, self.first_decl, name);
+    }
+};
+
 pub var types: TypeList = undefined;
 pub var values: ValueList = undefined;
-pub var static_decls: StaticDeclList = undefined;
+pub var decls: DeclList = undefined;
 pub var struct_fields: StructFieldList = undefined;
 pub var structs: StructList = undefined;
 pub var function_params: FunctionParamList = undefined;
+pub var scopes: ScopeList = undefined;
 
 pub fn init() !void {
     types = try TypeList.init(std.heap.page_allocator);
     values = try ValueList.init(std.heap.page_allocator);
-    static_decls = try StaticDeclList.init(std.heap.page_allocator);
+    decls = try DeclList.init(std.heap.page_allocator);
     struct_fields = try StructFieldList.init(std.heap.page_allocator);
     structs = try StructList.init(std.heap.page_allocator);
     function_params = try FunctionParamList.init(std.heap.page_allocator);
+    scopes = try ScopeList.init(std.heap.page_allocator);
 }
 
 fn astDeclToValue(
+    scope_idx: ScopeIndex.Index,
     value_idx: ast.ExprIndex.OptIndex,
     value_type_idx: ast.ExprIndex.OptIndex,
 ) !ValueIndex.Index {
@@ -302,6 +323,7 @@ fn astDeclToValue(
         break :blk ValueIndex.toOpt(try values.insert(.{.unresolved = .{
             .expression = value_type,
             .requested_type = .type,
+            .scope = scope_idx,
         }}));
     } else .none;
 
@@ -309,18 +331,21 @@ fn astDeclToValue(
         return values.insert(.{.unresolved = .{
             .expression = value,
             .requested_type = value_type,
+            .scope = scope_idx,
         }});
     } else {
         return values.insert(.{.runtime = ValueIndex.unwrap(value_type).?});
     }
 }
 
-pub fn analyzeExpr(expr_idx: ast.ExprIndex.Index) !ValueIndex.Index {
+pub fn analyzeExpr(scope: ScopeIndex.OptIndex, expr_idx: ast.ExprIndex.Index) !ValueIndex.Index {
     const expr = ast.expressions.get(expr_idx);
     switch(expr.*) {
         .struct_expression => |type_body| {
-            var first_static_decl = StaticDeclIndex.OptIndex.none;
-            var last_static_decl = StaticDeclIndex.OptIndex.none;
+            const scope_idx = try scopes.insert(.{.outer_scope = scope, .first_decl = .none});
+
+            var first_decl = DeclIndex.OptIndex.none;
+            var last_decl = DeclIndex.OptIndex.none;
             var first_field = StructFieldIndex.OptIndex.none;
             var last_field = StructFieldIndex.OptIndex.none;
 
@@ -328,29 +353,30 @@ pub fn analyzeExpr(expr_idx: ast.ExprIndex.Index) !ValueIndex.Index {
             while(ast.statements.getOpt(curr_decl)) |decl| {
                 switch(decl.value) {
                     .declaration => |inner_decl| {
-                        const static_decl_idx = try static_decls.insert(.{
+                        const decl_idx = try decls.insert(.{
                             .mutable = inner_decl.mutable,
                             .name = inner_decl.identifier,
                             .init_value = try astDeclToValue(
+                                scope_idx,
                                 ast.ExprIndex.toOpt(inner_decl.init_value),
                                 inner_decl.type,
                             ),
                             .next = .none,
                         });
-                        const oidx = StaticDeclIndex.toOpt(static_decl_idx);
-                        if(static_decls.getOpt(last_static_decl)) |ld| {
+                        const oidx = DeclIndex.toOpt(decl_idx);
+                        if(decls.getOpt(last_decl)) |ld| {
                             ld.next = oidx;
                         }
-                        if(first_static_decl == .none) {
-                            first_static_decl = oidx;
+                        if(first_decl == .none) {
+                            first_decl = oidx;
                         }
-                        last_static_decl = oidx;
+                        last_decl = oidx;
                     },
                     .field_decl => |field_decl| {
                         std.debug.assert(field_decl.type != .none);
                         const field_decl_idx = try struct_fields.insert(.{
                             .name = field_decl.identifier,
-                            .init_value = try astDeclToValue(field_decl.init_value, field_decl.type),
+                            .init_value = try astDeclToValue(scope_idx, field_decl.init_value, field_decl.type),
                             .next = .none,
                         });
                         const oidx = StructFieldIndex.toOpt(field_decl_idx);
@@ -369,9 +395,11 @@ pub fn analyzeExpr(expr_idx: ast.ExprIndex.Index) !ValueIndex.Index {
             }
 
             const struct_idx = try structs.insert(.{
-                .first_static_decl = first_static_decl,
                 .first_field = first_field,
+                .scope = scope_idx,
             });
+
+            scopes.get(scope_idx).first_decl = first_decl;
 
             return values.insert(.{
                 .type_idx = try types.insert(.{ .struct_idx = struct_idx }),

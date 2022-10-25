@@ -30,12 +30,13 @@ pub fn main() !void {
 
     if(root_path) |rp| {
         const root_ast = try parser.parseRootFile(rp);
-        const root_sema = try sema.analyzeExpr(root_ast);
+        const root_sema = try sema.analyzeExpr(.none, root_ast);
         const root_value = sema.values.get(root_sema);
         const root_type = sema.types.get(root_value.type_idx);
         const root_struct = sema.structs.get(root_type.struct_idx);
 
-        const main_decl = (try root_struct.lookupStaticDecl("main")).?;
+        const root_scope = sema.scopes.get(root_struct.scope);
+        const main_decl = (try root_scope.lookupDecl("main")).?;
         try main_decl.analyze();
         std.debug.print("{any}\n", .{main_decl});
         std.debug.print("{any}\n", .{sema.values.get(main_decl.init_value)});
