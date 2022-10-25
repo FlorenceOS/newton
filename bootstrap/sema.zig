@@ -15,16 +15,16 @@ pub const ValueIndex = indexed_list.Indices(u32, .{
 pub const DeclIndex = indexed_list.Indices(u32, .{});
 pub const StructFieldIndex = indexed_list.Indices(u32, .{});
 pub const StructIndex = indexed_list.Indices(u32, .{});
-pub const FunctionParamIndex = indexed_list.Indices(u32, .{});
 pub const ScopeIndex = indexed_list.Indices(u32, .{});
+pub const StatementIndex = indexed_list.Indices(u32, .{});
 
 const TypeList = indexed_list.IndexedList(TypeIndex, Type);
 const ValueList = indexed_list.IndexedList(ValueIndex, Value);
 const DeclList = indexed_list.IndexedList(DeclIndex, Decl);
 const StructFieldList = indexed_list.IndexedList(StructFieldIndex, StructField);
 const StructList = indexed_list.IndexedList(StructIndex, Struct);
-const FunctionParamList = indexed_list.IndexedList(FunctionParamIndex, FunctionParam);
 const ScopeList = indexed_list.IndexedList(ScopeIndex, Scope);
+const StatementList = indexed_list.IndexedList(StatementIndex, Statement);
 
 fn canFitNumber(value: i65, requested_type: TypeIndex.Index) bool {
     switch(types.get(requested_type).*) {
@@ -71,33 +71,41 @@ fn evaluateWithoutTypeHint(scope_idx: ScopeIndex.Index, expr_idx: ast.ExprIndex.
             defer tok.deinit();
             return .{.comptime_int = tok.int_literal.value};
         },
+        .void => return .{.type_idx = .void},
+        .anyopaque => return .{.type_idx = try types.addDedupLinear(.{.anyopaque = {}})},
+        .bool => return .{.type_idx = .bool},
+        .type => return .{.type_idx = .type},
         .unsigned_int => |bits| return .{.type_idx = try types.addDedupLinear(.{.unsigned_int = bits})},
         .signed_int => |bits| return .{.type_idx = try types.addDedupLinear(.{.signed_int = bits})},
         .function_expression => |func_idx| {
             const func = ast.functions.get(func_idx);
-            var first_param = FunctionParamIndex.OptIndex.none;
-            var last_param = FunctionParamIndex.OptIndex.none;
+            const param_scope_idx = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx), .first_decl = .none});
+            const param_scope = scopes.get(param_scope_idx);
+            var last_param_decl = DeclIndex.OptIndex.none;
             var curr_ast_param = func.first_param;
             while(ast.function_params.getOpt(curr_ast_param)) |ast_param| {
-                const param_idx = try function_params.insert(.{
+                const param_type = try values.addDedupLinear(try evaluateWithTypeHint(param_scope_idx, ast_param.type, .type));
+                const param_decl = try decls.insert(.{
+                    .mutable = true,
                     .name = ast_param.identifier,
-                    .type_idx = try values.addDedupLinear(try evaluateWithTypeHint(scope_idx, ast_param.type, .type)),
+                    .init_value = try values.addDedupLinear(.{.runtime = param_type}),
                     .next = .none,
                 });
-                const oparam_idx = FunctionParamIndex.toOpt(param_idx);
-                if(first_param == .none) {
-                    first_param = oparam_idx;
+                const oparam_decl = DeclIndex.toOpt(param_decl);
+                if(param_scope.first_decl == .none) {
+                    param_scope.first_decl = oparam_decl;
                 }
-                if(function_params.getOpt(last_param)) |lp| {
-                    lp.next = oparam_idx;
+                if(decls.getOpt(last_param_decl)) |lpd| {
+                    lpd.next = oparam_decl;
                 }
-                last_param = oparam_idx;
+                last_param_decl = oparam_decl;
                 curr_ast_param = ast_param.next;
             }
 
             return .{.function = .{
-                .return_type = try values.addDedupLinear(try evaluateWithTypeHint(scope_idx, func.return_type, .type)),
-                .first_param = first_param,
+                .return_type = try values.addDedupLinear(try evaluateWithTypeHint(param_scope_idx, func.return_type, .type)),
+                .param_scope = param_scope_idx,
+                .body = .none,
             }};
         },
         .pointer_type => |ptr| {
@@ -281,16 +289,10 @@ pub const Struct = struct {
     }
 };
 
-pub const FunctionParam = struct {
-    name: ast.SourceRef,
-    type_idx: ValueIndex.Index,
-    next: FunctionParamIndex.OptIndex,
-};
-
 pub const Function = struct {
     return_type: ValueIndex.Index,
-    first_param: FunctionParamIndex.OptIndex,
-    // first_stmt: StatmentIndex.OptIndex,
+    param_scope: ScopeIndex.Index,
+    body: StatementIndex.OptIndex,
 };
 
 pub const Scope = struct {
@@ -308,13 +310,25 @@ pub const Scope = struct {
     }
 };
 
+pub const Block = struct {
+    scope: ScopeIndex.Index,
+    first_stmt: StatementIndex.OptIndex,
+};
+
+pub const Statement = struct {
+    next: StatementIndex.OptIndex,
+    value: union(enum) {
+        block: Block,
+    },
+};
+
 pub var types: TypeList = undefined;
 pub var values: ValueList = undefined;
 pub var decls: DeclList = undefined;
 pub var struct_fields: StructFieldList = undefined;
 pub var structs: StructList = undefined;
-pub var function_params: FunctionParamList = undefined;
 pub var scopes: ScopeList = undefined;
+pub var statements: StatementList = undefined;
 
 pub fn init() !void {
     types = try TypeList.init(std.heap.page_allocator);
@@ -322,8 +336,8 @@ pub fn init() !void {
     decls = try DeclList.init(std.heap.page_allocator);
     struct_fields = try StructFieldList.init(std.heap.page_allocator);
     structs = try StructList.init(std.heap.page_allocator);
-    function_params = try FunctionParamList.init(std.heap.page_allocator);
     scopes = try ScopeList.init(std.heap.page_allocator);
+    statements = try StatementList.init(std.heap.page_allocator);
 }
 
 fn astDeclToValue(
