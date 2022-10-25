@@ -82,7 +82,6 @@ fn evaluateWithoutTypeHint(scope_idx: ScopeIndex.Index, expr_idx: ast.ExprIndex.
         },
         .int_literal => |lit| {
             const tok = try lit.retokenize();
-            defer tok.deinit();
             return .{.comptime_int = tok.int_literal.value};
         },
         .void => return .{.type_idx = .void},
@@ -107,6 +106,7 @@ fn evaluateWithoutTypeHint(scope_idx: ScopeIndex.Index, expr_idx: ast.ExprIndex.
                 });
                 curr_ast_param = ast_param.next;
             }
+
             param_scope.first_decl = param_builder.first;
             return .{.function = .{
                 .return_type = try values.addDedupLinear(try evaluateWithTypeHint(param_scope_idx, func.return_type, .type)),
@@ -356,6 +356,9 @@ pub const FunctionCall = struct {
 pub const Expression = union(enum) {
     value: ValueIndex.Index,
 
+    addr_of: ValueIndex.Index,
+    // deref: ValueIndex.Index,
+
     multiply: BinaryOp,
     multiply_eq: BinaryOp,
     multiply_mod: BinaryOp,
@@ -497,6 +500,14 @@ pub fn analyzeExpr(scope_idx: ScopeIndex.OptIndex, expr_idx: ast.ExprIndex.Index
             }
             return error.IdentifierNotFound;
         },
+        .int_literal => |lit| {
+            const tok = try lit.retokenize();
+            return values.insert(.{.comptime_int = tok.int_literal.value});
+        },
+        .char_literal => |lit| {
+            const tok = try lit.retokenize();
+            return values.insert(.{.comptime_int = tok.char_literal.value});
+        },
         .function_call => |call| {
             const callee_idx = try analyzeExpr(scope_idx, call.callee);
             const callee = values.get(callee_idx);
@@ -529,6 +540,7 @@ pub fn analyzeExpr(scope_idx: ScopeIndex.OptIndex, expr_idx: ast.ExprIndex.Index
                 .value_type = callee.function.return_type,
             }});
         },
+        .parenthesized => |uop| return analyzeExpr(scope_idx, uop.operand),
         .discard_underscore => return .discard_underscore,
         .struct_expression => |type_body| {
             const new_scope_idx = try scopes.insert(.{.outer_scope = scope_idx, .first_decl = .none});
@@ -608,6 +620,22 @@ pub fn analyzeExpr(scope_idx: ScopeIndex.OptIndex, expr_idx: ast.ExprIndex.Index
                     @unionInit(Expression, @tagName(tag), .{.lhs = lhs, .rhs = rhs}),
                 )),
                 .value_type = value_type,
+            }});
+        },
+        .addr_of => |uop| {
+            const operand_idx = try analyzeExpr(scope_idx, uop.operand);
+            const operand = values.get(operand_idx);
+            const result_type = try values.addDedupLinear(.{
+                .type_idx = try types.addDedupLinear(.{.pointer = .{
+                    .is_const = true,
+                    .is_volatile = false,
+                    .item = try values.addDedupLinear(.{.type_idx = TypeIndex.unwrap(try operand.getType()).?}),
+                }}),
+            });
+
+            return values.insert(.{.runtime = .{
+                .expr = ExpressionIndex.toOpt(try expressions.insert(.{.addr_of = operand_idx})),
+                .value_type = result_type,
             }});
         },
         else => std.debug.panic("Unhandled expression type {s}", .{@tagName(expr.*)}),
