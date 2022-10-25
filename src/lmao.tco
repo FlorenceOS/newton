@@ -15,6 +15,7 @@ const Thing = struct {
 };
 
 const main = fn(argc: u64, argv: u32, envp: *const volatile anyopaque) usize {
+    const lol = argc;
     _ = (argc + '\x00').&('\x00', envp.&, argv,);
 };
 

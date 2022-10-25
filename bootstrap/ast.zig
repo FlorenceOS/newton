@@ -190,7 +190,7 @@ pub const StatementNode = struct {
             init_value: ExprIndex.OptIndex,
         },
         block_statement: struct {
-            first_child: ExprIndex.OptIndex,
+            first_child: StmtIndex.OptIndex,
         },
         expression_statement: struct {
             expr: ExprIndex.Index,

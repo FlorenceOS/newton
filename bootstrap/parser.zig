@@ -132,7 +132,7 @@ fn parseFunctionExpr(self: *@This()) anyerror!ast.FunctionIndex.Index {
     }
 
     _ = try self.expect(.@")_ch");
-    
+
     const return_type = try self.parseExpression(null);
 
     _ = try self.expect(.@"{_ch");
@@ -176,14 +176,12 @@ fn parseBlockStatementBody(self: *@This()) anyerror!ast.StmtIndex.Index {
 }
 
 fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
-    switch(try self.peekToken()) {
+    const token = try self.peekToken();
+    switch(token) {
         .@"{_ch" => return self.parseBlockStatementBody(),
         .break_keyword => @panic("TODO: break statement"),
         .case_keyword => @panic("TODO: case statement"),
-        .const_keyword, .var_keyword => |tok| {
-            _ = tok;
-            @panic("TODO: decl statement");
-        },
+        .const_keyword, .var_keyword => return self.parseDeclaration(token),
         .continue_keyword => @panic("TODO: continue statement"),
         .endcase_keyword => @panic("TODO: endcase statement"),
         .if_keyword => @panic("TODO: if statement"),
@@ -194,7 +192,7 @@ fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
         => { // Expression statement
             const expr_idx = try self.parseExpression(null);
             _ = try self.expect(.@";_ch");
-            return ast.statements.insert(.{ .next = .none, 
+            return ast.statements.insert(.{ .next = .none,
                 .value = .{ .expression_statement = .{
                     .expr = expr_idx,
                 } },
@@ -528,6 +526,35 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
     }
 }
 
+fn parseDeclaration(self: *@This(), token: tokenizer.Token) !ast.StmtIndex.Index {
+    _ = try self.tokenize();
+    const ident = try self.expect(.identifier);
+    defer ident.deinit();
+
+    var type_expr = ast.ExprIndex.OptIndex.none;
+    var init_expr: ast.ExprIndex.Index = undefined;
+    if(token == .fn_keyword) {
+        const fidx = try self.parseFunctionExpr();
+        init_expr = try ast.expressions.insert(.{ .function_expression = fidx });
+    } else {
+        if(try self.tryConsume(.@":_ch")) |_| {
+            type_expr = ast.ExprIndex.toOpt(try self.parseExpression(0));
+        }
+        _ = try self.expect(.@"=_ch");
+
+        init_expr = try self.parseExpression(null);
+
+        _ = try self.expect(.@";_ch");
+    }
+
+    return ast.statements.insert(.{ .next = .none, .value = .{ .declaration = .{
+        .identifier = self.toAstIdent(ident),
+        .type = type_expr,
+        .init_value = init_expr,
+        .mutable = token == .var_keyword,
+    }}});
+}
+
 fn parseTypeBody(self: *@This()) !ast.StmtIndex.OptIndex {
     var first_decl = ast.StmtIndex.OptIndex.none;
     var last_decl = ast.StmtIndex.OptIndex.none;
@@ -561,35 +588,7 @@ fn parseTypeBody(self: *@This()) !ast.StmtIndex.OptIndex {
 
                 break :blk ast.StmtIndex.toOpt(curr_field_decl);
             },
-            .const_keyword, .var_keyword, .fn_keyword => blk: {
-                _ = try self.tokenize();
-                const ident = try self.expect(.identifier);
-                defer ident.deinit();
-
-                var type_expr = ast.ExprIndex.OptIndex.none;
-                var init_expr: ast.ExprIndex.Index = undefined;
-                if(token == .fn_keyword) {
-                    const fidx = try self.parseFunctionExpr();
-                    init_expr = try ast.expressions.insert(.{ .function_expression = fidx });
-                } else {
-                    if(try self.tryConsume(.@":_ch")) |_| {
-                        type_expr = ast.ExprIndex.toOpt(try self.parseExpression(0));
-                    }
-                    _ = try self.expect(.@"=_ch");
-
-                    init_expr = try self.parseExpression(null);
-
-                    _ = try self.expect(.@";_ch");
-                }
-                
-                const curr_decl = try ast.statements.insert(.{ .next = .none, .value = .{ .declaration = .{
-                    .identifier = self.toAstIdent(ident),
-                    .type = type_expr,
-                    .init_value = init_expr,
-                    .mutable = token == .var_keyword,
-                }}});
-                break :blk ast.StmtIndex.toOpt(curr_decl);
-            },
+            .const_keyword, .var_keyword, .fn_keyword => ast.StmtIndex.toOpt(try self.parseDeclaration(token)),
             .end_of_file, .@"}_ch" => return first_decl,
             else => std.debug.panic("Unhandled top-level token {any}", .{token}),
         };
