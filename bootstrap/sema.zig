@@ -42,9 +42,8 @@ fn evaluateWithTypeHint(
                 return .{.comptime_int = tok.int_literal.value};
             }
         },
-        // TODO: Deduplicate those!!!
-        .unsigned_int => |bits| return .{.type_idx = try types.insert(.{.unsigned_int = bits})},
-        .signed_int => |bits| return .{.type_idx = try types.insert(.{.signed_int = bits})},
+        .unsigned_int => |bits| return .{.type_idx = try types.addDedupLinear(.{.unsigned_int = bits})},
+        .signed_int => |bits| return .{.type_idx = try types.addDedupLinear(.{.signed_int = bits})},
         else => |expr| std.debug.panic("TODO: Sema {s} expression", .{@tagName(expr)}),
     }
 }
@@ -77,6 +76,16 @@ pub const Type = union(enum) {
     unsigned_int: u32,
     signed_int: u32,
     struct_idx: StructIndex.Index,
+
+    pub fn equals(self: *const @This(), other: *const @This()) bool {
+        if(@enumToInt(self.*) != @enumToInt(other.*)) return false;
+        return switch(self.*) {
+            .unsigned_int => |bits| other.unsigned_int == bits,
+            .signed_int => |bits| other.signed_int == bits,
+            .struct_idx => |idx| other.struct_idx == idx,
+            else => true,
+        };
+    }
 };
 
 pub const Value = union(enum) {
