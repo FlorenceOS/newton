@@ -54,6 +54,54 @@ fn promoteInteger(value: i65, requested_type: TypeIndex.Index) ?Value {
     }
 }
 
+fn analyzeStatementChain(scope_idx: ScopeIndex.Index, first_ast_stmt: ast.StmtIndex.OptIndex) !Block {
+    const block_scope_idx = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx), .first_decl = .none});
+    const block_scope = scopes.get(block_scope_idx);
+    var last_decl = DeclIndex.OptIndex.none;
+    var first_stmt = StatementIndex.OptIndex.none;
+    var last_stmt = StatementIndex.OptIndex.none;
+    var curr_ast_stmt = first_ast_stmt;
+    while(ast.statements.getOpt(curr_ast_stmt)) |ast_stmt| {
+        switch(ast_stmt.value) {
+            .declaration => |decl| {
+                const new_decl = try decls.insert(.{
+                    .mutable = decl.mutable,
+                    .name = decl.identifier,
+                    .init_value = try astDeclToValue(
+                        block_scope_idx,
+                        ast.ExprIndex.toOpt(decl.init_value),
+                        decl.type,
+                    ),
+                    .next = .none,
+                });
+                const stmt = try statements.insert(.{
+                    .next = .none,
+                    .value = .{.declaration = new_decl},
+                });
+                const odecl = DeclIndex.toOpt(new_decl);
+                const ostmt = StatementIndex.toOpt(stmt);
+                if(block_scope.first_decl == .none) {
+                    block_scope.first_decl = odecl;
+                }
+                if(decls.getOpt(last_decl)) |ld| {
+                    ld.next = odecl;
+                }
+                if(first_stmt == .none) {
+                    first_stmt = ostmt;
+                }
+                if(decls.getOpt(last_stmt)) |ls| {
+                    ls.next = ostmt;
+                }
+                last_decl = odecl;
+                last_stmt = ostmt;
+            },
+            else => |stmt| std.debug.panic("TODO: Sema {s} statement", .{@tagName(stmt)}),
+        }
+        curr_ast_stmt = ast_stmt.next;
+    }
+    return .{.scope = block_scope_idx, .first_stmt = first_stmt};
+}
+
 fn evaluateWithoutTypeHint(scope_idx: ScopeIndex.Index, expr_idx: ast.ExprIndex.Index) anyerror!Value {
     switch(ast.expressions.get(expr_idx).*) {
         .identifier => |ident| {
@@ -105,7 +153,7 @@ fn evaluateWithoutTypeHint(scope_idx: ScopeIndex.Index, expr_idx: ast.ExprIndex.
             return .{.function = .{
                 .return_type = try values.addDedupLinear(try evaluateWithTypeHint(param_scope_idx, func.return_type, .type)),
                 .param_scope = param_scope_idx,
-                .body = .none,
+                .body = try analyzeStatementChain(param_scope_idx, ast.StmtIndex.toOpt(func.first_statement)),
             }};
         },
         .pointer_type => |ptr| {
@@ -292,7 +340,7 @@ pub const Struct = struct {
 pub const Function = struct {
     return_type: ValueIndex.Index,
     param_scope: ScopeIndex.Index,
-    body: StatementIndex.OptIndex,
+    body: Block,
 };
 
 pub const Scope = struct {
@@ -318,6 +366,7 @@ pub const Block = struct {
 pub const Statement = struct {
     next: StatementIndex.OptIndex,
     value: union(enum) {
+        declaration: DeclIndex.Index,
         block: Block,
     },
 };
