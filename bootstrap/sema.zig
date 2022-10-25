@@ -22,27 +22,31 @@ const StaticDeclList = indexed_list.IndexedList(StaticDeclIndex, StaticDecl);
 const StructFieldList = indexed_list.IndexedList(StructFieldIndex, StructField);
 const StructList = indexed_list.IndexedList(StructIndex, Struct);
 
-fn evaluateWithoutTypeHint(
+fn evaluateWithTypeHint(
     expr_idx: ast.ExprIndex.Index,
+    requested_type: TypeIndex.OptIndex,
 ) !Value {
     switch(ast.expressions.get(expr_idx).*) {
         .identifier => @panic("TODO: Sema idents"),
         .int_literal => |lit| {
             const tok = try lit.retokenize();
             defer tok.deinit();
-            return .{.comptime_int = tok.int_literal.value};
+            if(types.getOpt(requested_type)) |request| {
+                return switch(request.*) {
+                    .comptime_int => .{.comptime_int = tok.int_literal.value},
+                    .unsigned_int => |bits| .{.unsigned_int = .{.bits = bits, .value = tok.int_literal.value}},
+                    .signed_int => |bits| .{.signed_int = .{.bits = bits, .value = tok.int_literal.value}},
+                    else => std.debug.panic("Requested non-integer type for a integer literal value", .{}),
+                };
+            } else {
+                return .{.comptime_int = tok.int_literal.value};
+            }
         },
+        // TODO: Deduplicate those!!!
+        .unsigned_int => |bits| return .{.type_idx = try types.insert(.{.unsigned_int = bits})},
+        .signed_int => |bits| return .{.type_idx = try types.insert(.{.signed_int = bits})},
         else => |expr| std.debug.panic("TODO: Sema {s} expression", .{@tagName(expr)}),
     }
-}
-
-fn evaluateWithTypeHint(
-    expr_idx: ast.ExprIndex.Index,
-    requested_type: ValueIndex.Index,
-) !Value {
-    _ = expr_idx;
-    _ = requested_type;
-    return error.NotImplemented;
 }
 
 const Unresolved = struct {
@@ -50,12 +54,18 @@ const Unresolved = struct {
     requested_type: ValueIndex.OptIndex,
 
     pub fn evaluate(self: @This()) !Value {
-        if(ValueIndex.unwrap(self.requested_type)) |request| {
-            return evaluateWithTypeHint(self.expression, request);
-        } else {
-            return evaluateWithoutTypeHint(self.expression);
+        var requested_type = TypeIndex.OptIndex.none;
+        if(values.getOpt(self.requested_type)) |request| {
+            try request.analyze();
+            requested_type = TypeIndex.toOpt(request.type_idx);
         }
+        return evaluateWithTypeHint(self.expression, requested_type);
     }
+};
+
+const SizedInt = struct {
+    bits: u32,
+    value: i65,
 };
 
 pub const Type = union(enum) {
@@ -80,11 +90,13 @@ pub const Value = union(enum) {
     undefined,
     bool: bool,
     comptime_int: i65,
+    unsigned_int: SizedInt,
+    signed_int: SizedInt,
 
     // Runtime known values
     runtime: ValueIndex.Index,
 
-    pub fn analyze(self: *@This()) !void {
+    pub fn analyze(self: *@This()) anyerror!void {
         switch(self.*) {
             .unresolved => |u| self.* = try u.evaluate(),
             .runtime => |r| try values.get(r).analyze(),
