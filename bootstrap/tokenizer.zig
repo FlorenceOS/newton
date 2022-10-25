@@ -151,7 +151,7 @@ fn skipWhitespace(input: *[*:0]const u8) void {
                         input.* += 1;
                     }
                     continue;
-                }
+                } else return;
             },
             else => return,
         }
