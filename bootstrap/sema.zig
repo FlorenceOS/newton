@@ -22,25 +22,41 @@ const StaticDeclList = indexed_list.IndexedList(StaticDeclIndex, StaticDecl);
 const StructFieldList = indexed_list.IndexedList(StructFieldIndex, StructField);
 const StructList = indexed_list.IndexedList(StructIndex, Struct);
 
-fn evaluateWithTypeHint(
-    expr_idx: ast.ExprIndex.Index,
-    requested_type: TypeIndex.OptIndex,
-) !Value {
+fn canFitNumber(value: i65, requested_type: TypeIndex.Index) bool {
+    switch(types.get(requested_type).*) {
+        .comptime_int => return true,
+        .unsigned_int => |bits| {
+            if(value < 0) return false;
+            if(value > std.math.pow(u65, 2, bits) - 1) return false;
+            return true;
+        },
+        .signed_int => |bits| {
+            if(value < -std.math.pow(i65, 2, bits - 1)) return false;
+            if(value > std.math.pow(u65, 2, bits - 1) - 1) return false;
+            return true;
+        },
+        else => return false,
+    }
+}
+
+fn promoteInteger(value: i65, requested_type: TypeIndex.Index) ?Value {
+    if(!canFitNumber(value, requested_type)) return null;
+
+    switch(types.get(requested_type).*) {
+        .comptime_int => return .{.comptime_int = value},
+        .unsigned_int => |bits| return .{.unsigned_int = .{.bits = bits, .value = value}},
+        .signed_int => |bits| return .{.signed_int = .{.bits = bits, .value = value}},
+        else => return null,
+    }
+}
+
+fn evaluateWithoutTypeHint(expr_idx: ast.ExprIndex.Index) !Value {
     switch(ast.expressions.get(expr_idx).*) {
         .identifier => @panic("TODO: Sema idents"),
         .int_literal => |lit| {
             const tok = try lit.retokenize();
             defer tok.deinit();
-            if(types.getOpt(requested_type)) |request| {
-                return switch(request.*) {
-                    .comptime_int => .{.comptime_int = tok.int_literal.value},
-                    .unsigned_int => |bits| .{.unsigned_int = .{.bits = bits, .value = tok.int_literal.value}},
-                    .signed_int => |bits| .{.signed_int = .{.bits = bits, .value = tok.int_literal.value}},
-                    else => std.debug.panic("Requested non-integer type for a integer literal value", .{}),
-                };
-            } else {
-                return .{.comptime_int = tok.int_literal.value};
-            }
+            return .{.comptime_int = tok.int_literal.value};
         },
         .unsigned_int => |bits| return .{.type_idx = try types.addDedupLinear(.{.unsigned_int = bits})},
         .signed_int => |bits| return .{.type_idx = try types.addDedupLinear(.{.signed_int = bits})},
@@ -48,17 +64,29 @@ fn evaluateWithTypeHint(
     }
 }
 
+fn evaluateWithTypeHint(expr_idx: ast.ExprIndex.Index, requested_type: TypeIndex.Index) !Value {
+    const evaluated = try evaluateWithoutTypeHint(expr_idx);
+    switch(evaluated) {
+        .comptime_int => |value| if(promoteInteger(value, requested_type)) |promoted| return promoted,
+        .unsigned_int, .signed_int => |int| if(promoteInteger(int.value, requested_type)) |promoted| return promoted,
+        .type_idx => if(requested_type == .type) return evaluated,
+        else => {},
+    }
+
+    std.debug.panic("Could not evaluate {any} with type {any}", .{evaluated, types.get(requested_type)});
+}
+
 const Unresolved = struct {
     expression: ast.ExprIndex.Index,
     requested_type: ValueIndex.OptIndex,
 
     pub fn evaluate(self: @This()) !Value {
-        var requested_type = TypeIndex.OptIndex.none;
         if(values.getOpt(self.requested_type)) |request| {
             try request.analyze();
-            requested_type = TypeIndex.toOpt(request.type_idx);
+            return evaluateWithTypeHint(self.expression, request.type_idx);
+        } else {
+            return evaluateWithoutTypeHint(self.expression);
         }
-        return evaluateWithTypeHint(self.expression, requested_type);
     }
 };
 
@@ -122,6 +150,8 @@ pub const Value = union(enum) {
             .undefined => .none,
             .bool => .bool,
             .comptime_int => .comptime_int,
+            .unsigned_int => |int| try types.insert(.{.unsigned_int = int.bits}),
+            .signed_int => |int| try types.insert(.{.signed_int = int.bits}),
             .runtime => |idx| TypeIndex.toOpt(values.get(idx).type_idx),
         };
     }
