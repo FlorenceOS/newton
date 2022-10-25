@@ -30,8 +30,15 @@ pub fn main() !void {
 
     if(root_path) |rp| {
         const root_ast = try parser.parseRootFile(rp);
-        const root_sema = try sema.analyzeExpr(.none, root_ast);
-        const root_value = sema.values.get(root_sema);
+        const root_value_idx = try sema.values.insert(.{
+            .unresolved = .{
+                .expression = root_ast,
+                .requested_type = .type,
+                .scope = .builtin_scope,
+            },
+        });
+        const root_value = sema.values.get(root_value_idx);
+        try root_value.analyze();
         const root_type = sema.types.get(root_value.type_idx);
         const root_struct = sema.structs.get(root_type.struct_idx);
 
