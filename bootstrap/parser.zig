@@ -103,48 +103,30 @@ fn toAstIdent(self: *@This(), tok: anytype) ast.SourceRef {
 //     ^ Here
 fn parseFunctionExpr(self: *@This()) anyerror!ast.FunctionIndex.Index {
     _ = try self.expect(.@"(_ch");
-    var first_param = ast.FunctionParamIndex.OptIndex.none;
-    var last_param = ast.FunctionParamIndex.OptIndex.none;
+
+    var param_builder = ast.function_params.builder();
     while((try self.peekToken()) != .@")_ch") {
         const ident = try self.expect(.identifier);
         defer ident.deinit();
+
         _ = try self.expect(.@":_ch");
-        const param_type = try self.parseExpression(null);
+        _ = try param_builder.insert(.{
+            .identifier = self.toAstIdent(ident),
+            .type = try self.parseExpression(null),
+            .next = .none,
+        });
 
-        const curr_param_idx = ast.FunctionParamIndex.toOpt(
-            try ast.function_params.insert(.{
-                .identifier = self.toAstIdent(ident),
-                .type = param_type,
-                .next = .none,
-            })
-        );
-        if(first_param == .none) {
-            first_param = curr_param_idx;
-        }
-        if(ast.function_params.getOpt(last_param)) |lp| {
-            lp.next = curr_param_idx;
-        }
-        last_param = curr_param_idx;
-
-        if((try self.tryConsume(.@",_ch")) == null) {
-            break;
-        }
+        if((try self.tryConsume(.@",_ch")) == null) break;
     }
 
     _ = try self.expect(.@")_ch");
 
     const return_type = try self.parseExpression(null);
 
-    _ = try self.expect(.@"{_ch");
-
-    const first_statement = try self.parseBlockStatementBody();
-
-    _ = try self.expect(.@"}_ch");
-
     return ast.functions.insert(.{
-        .first_param = first_param,
+        .first_param = param_builder.first,
         .return_type = return_type,
-        .first_statement = first_statement,
+        .body = try self.parseBlockStatement(),
     });
 }
 
@@ -154,31 +136,27 @@ fn parseFunctionExpr(self: *@This()) anyerror!ast.FunctionIndex.Index {
 //   ^ Returns first statement in block
 //   Next chain contains rest of the statements
 // }
-fn parseBlockStatementBody(self: *@This()) anyerror!ast.StmtIndex.Index {
-    var first_statement = ast.StmtIndex.OptIndex.none;
-    var last_statement = ast.StmtIndex.OptIndex.none;
-    while(true) {
-        if((try self.peekToken()) == .@"}_ch") {
-            return ast.StmtIndex.unwrap(first_statement) orelse .empty_block;
-        }
-
-        const stmt = try self.parseStatement();
-        const ostmt = ast.StmtIndex.toOpt(stmt);
-
-        if(first_statement == .none) {
-            first_statement = ostmt;
-        }
-        if (ast.statements.getOpt(last_statement)) |ls| {
-            ls.next = ostmt;
-        }
-        last_statement = ostmt;
+fn parseBlockStatementBody(self: *@This()) anyerror!ast.StmtIndex.OptIndex {
+    var stmt_builder = ast.statements.builder();
+    while((try self.peekToken()) != .@"}_ch") {
+        stmt_builder.insertIndex(try self.parseStatement());
     }
+    return stmt_builder.first;
+}
+
+fn parseBlockStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
+    _ = try self.expect(.@"{_ch");
+    const body = try self.parseBlockStatementBody();
+    _ = try self.expect(.@"}_ch");
+    return ast.statements.insert(.{.next = .none, .value = .{
+        .block_statement = .{.first_child = body},
+    }});
 }
 
 fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
     const token = try self.peekToken();
     switch(token) {
-        .@"{_ch" => return self.parseBlockStatementBody(),
+        .@"{_ch" => return self.parseBlockStatement(),
         .break_keyword => @panic("TODO: break statement"),
         .case_keyword => @panic("TODO: case statement"),
         .const_keyword, .var_keyword => return self.parseDeclaration(token),
@@ -361,22 +339,13 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
             },
             .@"(_ch" => {
                 _ = try self.tokenize();
-                var first_arg = ast.ExprIndex.OptIndex.none;
-                var last_arg = ast.ExprIndex.OptIndex.none;
+                var arg_builder = ast.expressions.builderWithPath("function_argument.next");
                 while((try self.peekToken()) != .@")_ch") {
-                    const value = try self.parseExpression(null);
-                    const arg = try ast.expressions.insert(.{ .function_argument = .{
-                        .value = value,
+                    _ = try arg_builder.insert(.{ .function_argument = .{
+                        .value = try self.parseExpression(null),
                         .next = .none,
                     }});
-                    const oarg = ast.ExprIndex.toOpt(arg);
-                    if(first_arg == .none) {
-                        first_arg = oarg;
-                    }
-                    if (ast.expressions.getOpt(last_arg)) |la| {
-                        la.function_argument.next = oarg;
-                    }
-                    last_arg = oarg;
+
                     if ((try self.tryConsume(.@",_ch")) == null) {
                         break;
                     }
@@ -384,8 +353,8 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
                 _ = try self.expect(.@")_ch");
 
                 if(lhs == .import) {
-                    std.debug.assert(first_arg == last_arg);
-                    const arg = ast.expressions.getOpt(first_arg).?;
+                    std.debug.assert(arg_builder.first == arg_builder.last);
+                    const arg = ast.expressions.getOpt(arg_builder.first).?;
                     const arg_expr = arg.function_argument.value;
                     const strlit = ast.expressions.get(arg_expr).string_literal;
                     const path_string = try strlit.retokenize();
@@ -398,7 +367,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
                 } else {
                     lhs = try ast.expressions.insert(.{ .function_call = .{
                         .callee = lhs,
-                        .first_arg = first_arg,
+                        .first_arg = arg_builder.first,
                     }});
                 }
 
@@ -556,13 +525,12 @@ fn parseDeclaration(self: *@This(), token: tokenizer.Token) !ast.StmtIndex.Index
 }
 
 fn parseTypeBody(self: *@This()) !ast.StmtIndex.OptIndex {
-    var first_decl = ast.StmtIndex.OptIndex.none;
-    var last_decl = ast.StmtIndex.OptIndex.none;
+    var decl_builder = ast.statements.builder();
 
     while(true) {
         const token = try self.peekToken();
-        const odecl = switch(token) {
-            .identifier => |ident| blk: {
+        switch(token) {
+            .identifier => |ident| {
                 _ = try self.tokenize();
                 defer ident.deinit();
 
@@ -579,44 +547,26 @@ fn parseTypeBody(self: *@This()) !ast.StmtIndex.OptIndex {
                 }
 
                 _ = try self.expect(.@",_ch");
-
-                const curr_field_decl = try ast.statements.insert(.{ .next = .none, .value = .{ .field_decl = .{
+                _ = try decl_builder.insert(.{ .next = .none, .value = .{ .field_decl = .{
                     .identifier = self.toAstIdent(ident),
                     .type = type_expr,
                     .init_value = init_expr,
                 }}});
-
-                break :blk ast.StmtIndex.toOpt(curr_field_decl);
             },
-            .const_keyword, .var_keyword, .fn_keyword => ast.StmtIndex.toOpt(try self.parseDeclaration(token)),
-            .end_of_file, .@"}_ch" => return first_decl,
+            .const_keyword, .var_keyword, .fn_keyword => decl_builder.insertIndex(try self.parseDeclaration(token)),
+            .end_of_file, .@"}_ch" => return decl_builder.first,
             else => std.debug.panic("Unhandled top-level token {any}", .{token}),
-        };
-
-        if(first_decl == .none) {
-            first_decl = odecl;
         }
-
-        if(ast.statements.getOpt(last_decl)) |ld| {
-            ld.next = odecl;
-        }
-
-        last_decl = odecl;
     }
 }
 
 fn parseFile(fidx: sources.SourceIndex.Index) !ast.ExprIndex.Index {
-    const file = sources.source_files.get(fidx);
     var parser = @This() {
         .source_file_index = fidx,
-        .current_content = file.contents.ptr,
+        .current_content = sources.source_files.get(fidx).contents.ptr,
     };
 
-    const first_decl = try parser.parseTypeBody();
-
-    return ast.expressions.insert(.{ .struct_expression = .{
-        .first_decl = first_decl,
-    }});
+    return ast.expressions.insert(.{ .struct_expression = .{.first_decl = try parser.parseTypeBody()}});
 }
 
 pub fn parseFileIn(path: [:0]u8, current_dir: std.fs.Dir) !sources.SourceIndex.Index {
@@ -811,6 +761,7 @@ fn dumpNode(index: anytype, node: anytype, indent_level: usize) anyerror!void {
                 try dumpNode(expr.expr, ast.expressions.get(expr.expr), indent_level);
                 std.debug.print(";", .{});
             },
+            .block_statement => |blk| try dumpStatementChain(blk.first_child, indent_level),
             .declaration => |decl| {
                 const decl_kw = if (decl.mutable) "var" else "const";
                 std.debug.print("{s} {s}", .{decl_kw, try decl.identifier.toSlice()});
@@ -850,7 +801,7 @@ fn dumpNode(index: anytype, node: anytype, indent_level: usize) anyerror!void {
             std.debug.print(") ", .{});
             try dumpNode(node.return_type, ast.expressions.get(node.return_type), indent_level);
             std.debug.print(" ", .{});
-            try dumpStatementChain(ast.StmtIndex.toOpt(node.first_statement), indent_level);
+            try dumpNode(ast.StmtIndex.toOpt(node.body), ast.statements.get(node.body), indent_level);
         },
         else => @compileError("Cannot dump type " ++ @typeName(@TypeOf(node))),
     }

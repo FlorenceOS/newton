@@ -124,7 +124,7 @@ fn evaluateWithoutTypeHint(scope_idx: ScopeIndex.Index, expr_idx: ast.ExprIndex.
             return .{.function = .{
                 .return_type = try values.addDedupLinear(try evaluateWithTypeHint(param_scope_idx, func.return_type, .type)),
                 .param_scope = param_scope_idx,
-                .body = try analyzeStatementChain(param_scope_idx, ast.StmtIndex.toOpt(func.first_statement)),
+                .body = try analyzeStatementChain(param_scope_idx, ast.StmtIndex.toOpt(func.body)),
             }};
         },
         .pointer_type => |ptr| {

@@ -218,7 +218,7 @@ pub const StatementNode = struct {
 pub const FunctionExpression = struct {
     first_param: FunctionParamIndex.OptIndex,
     return_type: ExprIndex.Index,
-    first_statement: StmtIndex.Index,
+    body: StmtIndex.Index,
 };
 
 pub const FunctionParameter = struct {
