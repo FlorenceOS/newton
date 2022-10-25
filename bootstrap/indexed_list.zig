@@ -64,20 +64,55 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
         pub const Index = _Indices.Index;
         pub const OptIndex = _Indices.OptIndex;
 
-        pub const Builder = struct {
-            list: *List,
-            first: OptIndex = .none,
-            last: OptIndex = .none,
+        pub fn Builder(comptime next_path: []const u8) type {
+            return struct {
+                list: *List,
+                first: OptIndex = .none,
+                last: OptIndex = .none,
 
-            pub fn insert(self: *@This(), value: T) !Index {
-                const idx = try self.list.insert(value);
-                const opt = _Indices.toOpt(idx);
-                if(self.first == .none) self.first = opt;
-                if(self.list.getOpt(self.last)) |last| last.next = opt;
-                self.last = opt;
-                return idx;
-            }
-        };
+                // This works.. somehow.
+                // Do not touch, it WILL break.
+                // You have been warned.
+                fn unionOffsetOf(comptime Ty: type, comptime field: []const u8) usize {
+                    const union_value = @unionInit(Ty, field, undefined);
+                    const field_ptr = &@field(union_value, field);
+                    return @ptrToInt(field_ptr) - @ptrToInt(&union_value);
+                }
+
+                fn betterOffsetOf(comptime Ty: type, comptime field: []const u8) usize {
+                    switch(@typeInfo(Ty)) {
+                        .Union => return unionOffsetOf(Ty, field),
+                        .Struct => return @offsetOf(Ty, field),
+                        else => @compileError("Cannot get the offset of " ++ field ++ " in " ++ @typeName(Ty)),
+                    }
+                }
+
+                pub fn insertIndex(self: *@This(), idx: Index) void {
+                    const opt = _Indices.toOpt(idx);
+                    if(self.first == .none) self.first = opt;
+                    if(self.list.getOpt(self.last)) |last| {
+                        comptime var iter = std.mem.split(u8, next_path, ".");
+                        comptime var field_type = T;
+                        var offset: usize = 0x0;
+                        inline while(comptime iter.next()) |component| {
+                            offset += betterOffsetOf(field_type, component);
+                            field_type = std.meta.fieldInfo(
+                                field_type,
+                                @field(std.meta.FieldEnum(field_type), component),
+                            ).field_type;
+                        }
+                        @intToPtr(*field_type, @ptrToInt(last) + offset).* = opt;
+                    }
+                    self.last = opt;
+                }
+
+                pub fn insert(self: *@This(), value: T) !Index {
+                    const idx = try self.list.insert(value);
+                    self.insertIndex(idx);
+                    return idx;
+                }
+            };
+        }
 
         elements: std.ArrayList(T),
         first_free: OptIndex,
@@ -99,7 +134,11 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
             return result;
         }
 
-        pub fn builder(self: *@This()) Builder {
+        pub fn builder(self: *@This()) Builder("next") {
+            return .{.list = self};
+        }
+
+        pub fn builderWithPath(self: *@This(), comptime next_path: []const u8) Builder(next_path) {
             return .{.list = self};
         }
 
