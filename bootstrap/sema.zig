@@ -133,11 +133,17 @@ fn evaluateWithTypeHint(
 }
 
 const Unresolved = struct {
+    analysis_started: bool = false,
     expression: ast.ExprIndex.Index,
     requested_type: ValueIndex.OptIndex,
     scope: ScopeIndex.Index,
 
-    pub fn evaluate(self: @This()) !Value {
+    pub fn evaluate(self: *@This()) !Value {
+        if(self.analysis_started) {
+            return error.CircularReference;
+        }
+
+        self.analysis_started = true;
         if(values.getOpt(self.requested_type)) |request| {
             try request.analyze();
             return evaluateWithTypeHint(self.scope, self.expression, request.type_idx);
@@ -207,7 +213,7 @@ pub const Value = union(enum) {
 
     pub fn analyze(self: *@This()) anyerror!void {
         switch(self.*) {
-            .unresolved => |u| self.* = try u.evaluate(),
+            .unresolved => |*u| self.* = try u.evaluate(),
             .runtime => |r| try values.get(r).analyze(),
             else => {},
         }
