@@ -14,7 +14,7 @@ const Thing = struct {
     }
 };
 
-const main = fn(argc: u64, argv: u32, envp: *const volatile anyopaque) usize {
+const main = fn(argc: u64, argv: u32, envp: *const volatile anyopaque) u64 {
     _ = (argc + '\x00').&('\x00', envp.&, argv,);
 };
 
@@ -22,10 +22,4 @@ fn f(lmao: u64) u64 {
     _ = lmao;
 }
 
-fn cock(asdasd: u32) u32 {
-
-}
-
-fn ball(asdasd: u32) void {
-
-}
+const test: u64 = 0xffffffffffffffff;

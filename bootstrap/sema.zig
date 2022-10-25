@@ -15,12 +15,14 @@ pub const ValueIndex = indexed_list.Indices(u32, .{
 pub const StaticDeclIndex = indexed_list.Indices(u32, .{});
 pub const StructFieldIndex = indexed_list.Indices(u32, .{});
 pub const StructIndex = indexed_list.Indices(u32, .{});
+pub const FunctionParamIndex = indexed_list.Indices(u32, .{});
 
 const TypeList = indexed_list.IndexedList(TypeIndex, Type);
 const ValueList = indexed_list.IndexedList(ValueIndex, Value);
 const StaticDeclList = indexed_list.IndexedList(StaticDeclIndex, StaticDecl);
 const StructFieldList = indexed_list.IndexedList(StructFieldIndex, StructField);
 const StructList = indexed_list.IndexedList(StructIndex, Struct);
+const FunctionParamList = indexed_list.IndexedList(FunctionParamIndex, FunctionParam);
 
 fn canFitNumber(value: i65, requested_type: TypeIndex.Index) bool {
     switch(types.get(requested_type).*) {
@@ -50,7 +52,7 @@ fn promoteInteger(value: i65, requested_type: TypeIndex.Index) ?Value {
     }
 }
 
-fn evaluateWithoutTypeHint(expr_idx: ast.ExprIndex.Index) !Value {
+fn evaluateWithoutTypeHint(expr_idx: ast.ExprIndex.Index) anyerror!Value {
     switch(ast.expressions.get(expr_idx).*) {
         .identifier => @panic("TODO: Sema idents"),
         .int_literal => |lit| {
@@ -60,6 +62,44 @@ fn evaluateWithoutTypeHint(expr_idx: ast.ExprIndex.Index) !Value {
         },
         .unsigned_int => |bits| return .{.type_idx = try types.addDedupLinear(.{.unsigned_int = bits})},
         .signed_int => |bits| return .{.type_idx = try types.addDedupLinear(.{.signed_int = bits})},
+        .function_expression => |func_idx| {
+            const func = ast.functions.get(func_idx);
+            var first_param = FunctionParamIndex.OptIndex.none;
+            var last_param = FunctionParamIndex.OptIndex.none;
+            var curr_ast_param = func.first_param;
+            while(ast.function_params.getOpt(curr_ast_param)) |ast_param| {
+                const param_idx = try function_params.insert(.{
+                    .name = ast_param.identifier,
+                    .type_idx = try values.addDedupLinear(try evaluateWithTypeHint(ast_param.type, .type)),
+                    .next = .none,
+                });
+                const oparam_idx = FunctionParamIndex.toOpt(param_idx);
+                if(first_param == .none) {
+                    first_param = oparam_idx;
+                }
+                if(function_params.getOpt(last_param)) |lp| {
+                    lp.next = oparam_idx;
+                }
+                last_param = oparam_idx;
+                curr_ast_param = ast_param.next;
+            }
+
+            return .{.function = .{
+                .return_type = try values.addDedupLinear(try evaluateWithTypeHint(func.return_type, .type)),
+                .first_param = first_param,
+            }};
+        },
+        .pointer_type => |ptr| {
+            const item_type_idx = try values.insert(.{.unresolved = .{
+                .expression = ptr.item,
+                .requested_type = .type,
+            }});
+            return .{.type_idx = try types.insert(.{.pointer = .{
+                .is_const = ptr.is_const,
+                .is_volatile = ptr.is_volatile,
+                .item = item_type_idx,
+            }})};
+        },
         else => |expr| std.debug.panic("TODO: Sema {s} expression", .{@tagName(expr)}),
     }
 }
@@ -95,6 +135,12 @@ const SizedInt = struct {
     value: i65,
 };
 
+const PointerType = struct {
+    is_const: bool,
+    is_volatile: bool,
+    item: ValueIndex.Index,
+};
+
 pub const Type = union(enum) {
     void,
     anyopaque,
@@ -104,6 +150,7 @@ pub const Type = union(enum) {
     unsigned_int: u32,
     signed_int: u32,
     struct_idx: StructIndex.Index,
+    pointer: PointerType,
 
     pub fn equals(self: *const @This(), other: *const @This()) bool {
         if(@enumToInt(self.*) != @enumToInt(other.*)) return false;
@@ -129,9 +176,17 @@ pub const Value = union(enum) {
     comptime_int: i65,
     unsigned_int: SizedInt,
     signed_int: SizedInt,
+    function: Function,
 
     // Runtime known values
     runtime: ValueIndex.Index,
+
+    // TODO: Implement this so we can dedup values :)
+    pub fn equals(self: *const @This(), other: *const @This()) bool {
+        _ = self;
+        _ = other;
+        return false;
+    }
 
     pub fn analyze(self: *@This()) anyerror!void {
         switch(self.*) {
@@ -211,11 +266,24 @@ pub const Struct = struct {
     }
 };
 
+pub const FunctionParam = struct {
+    name: ast.SourceRef,
+    type_idx: ValueIndex.Index,
+    next: FunctionParamIndex.OptIndex,
+};
+
+pub const Function = struct {
+    return_type: ValueIndex.Index,
+    first_param: FunctionParamIndex.OptIndex,
+    // first_stmt: StatmentIndex.OptIndex,
+};
+
 pub var types: TypeList = undefined;
 pub var values: ValueList = undefined;
 pub var static_decls: StaticDeclList = undefined;
 pub var struct_fields: StructFieldList = undefined;
 pub var structs: StructList = undefined;
+pub var function_params: FunctionParamList = undefined;
 
 pub fn init() !void {
     types = try TypeList.init(std.heap.page_allocator);
@@ -223,6 +291,7 @@ pub fn init() !void {
     static_decls = try StaticDeclList.init(std.heap.page_allocator);
     struct_fields = try StructFieldList.init(std.heap.page_allocator);
     structs = try StructList.init(std.heap.page_allocator);
+    function_params = try FunctionParamList.init(std.heap.page_allocator);
 }
 
 fn astDeclToValue(
