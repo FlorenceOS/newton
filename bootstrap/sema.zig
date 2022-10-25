@@ -298,7 +298,13 @@ pub const Scope = struct {
     first_decl: DeclIndex.OptIndex,
 
     pub fn lookupDecl(self: *@This(), name: []const u8) !?*Decl {
-        return genericChainLookup(DeclIndex, Decl, &decls, self.first_decl, name);
+        if(try genericChainLookup(DeclIndex, Decl, &decls, self.first_decl, name)) |result| {
+            return result;
+        }
+        if(scopes.getOpt(self.outer_scope)) |outer_scope| {
+            return @call(.{.modifier = .always_tail}, outer_scope.lookupDecl, .{name});
+        }
+        return null;
     }
 };
 
