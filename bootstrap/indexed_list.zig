@@ -64,6 +64,21 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
         pub const Index = _Indices.Index;
         pub const OptIndex = _Indices.OptIndex;
 
+        pub const Builder = struct {
+            list: *List,
+            first: OptIndex = .none,
+            last: OptIndex = .none,
+
+            pub fn insert(self: *@This(), value: T) !Index {
+                const idx = try self.list.insert(value);
+                const opt = _Indices.toOpt(idx);
+                if(self.first == .none) self.first = opt;
+                if(self.list.getOpt(self.last)) |last| last.next = opt;
+                self.last = opt;
+                return idx;
+            }
+        };
+
         elements: std.ArrayList(T),
         first_free: OptIndex,
 
@@ -82,6 +97,10 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
             std.debug.assert(result.elements.items.len == _Indices.alloc_base);
 
             return result;
+        }
+
+        pub fn builder(self: *@This()) Builder {
+            return .{.list = self};
         }
 
         pub fn deinit(self: *@This()) void {

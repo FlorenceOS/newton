@@ -56,50 +56,29 @@ fn promoteInteger(value: i65, requested_type: TypeIndex.Index) ?Value {
 
 fn analyzeStatementChain(scope_idx: ScopeIndex.Index, first_ast_stmt: ast.StmtIndex.OptIndex) !Block {
     const block_scope_idx = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx), .first_decl = .none});
-    const block_scope = scopes.get(block_scope_idx);
-    var last_decl = DeclIndex.OptIndex.none;
-    var first_stmt = StatementIndex.OptIndex.none;
-    var last_stmt = StatementIndex.OptIndex.none;
+    var decl_builder = decls.builder();
+    var stmt_builder = statements.builder();
     var curr_ast_stmt = first_ast_stmt;
     while(ast.statements.getOpt(curr_ast_stmt)) |ast_stmt| {
         switch(ast_stmt.value) {
             .declaration => |decl| {
-                const new_decl = try decls.insert(.{
+                const new_decl = try decl_builder.insert(.{
                     .mutable = decl.mutable,
                     .name = decl.identifier,
-                    .init_value = try astDeclToValue(
-                        block_scope_idx,
-                        ast.ExprIndex.toOpt(decl.init_value),
-                        decl.type,
-                    ),
+                    .init_value = try astDeclToValue(block_scope_idx, ast.ExprIndex.toOpt(decl.init_value), decl.type),
                     .next = .none,
                 });
-                const stmt = try statements.insert(.{
+                _ = try stmt_builder.insert(.{
                     .next = .none,
                     .value = .{.declaration = new_decl},
                 });
-                const odecl = DeclIndex.toOpt(new_decl);
-                const ostmt = StatementIndex.toOpt(stmt);
-                if(block_scope.first_decl == .none) {
-                    block_scope.first_decl = odecl;
-                }
-                if(decls.getOpt(last_decl)) |ld| {
-                    ld.next = odecl;
-                }
-                if(first_stmt == .none) {
-                    first_stmt = ostmt;
-                }
-                if(decls.getOpt(last_stmt)) |ls| {
-                    ls.next = ostmt;
-                }
-                last_decl = odecl;
-                last_stmt = ostmt;
             },
             else => |stmt| std.debug.panic("TODO: Sema {s} statement", .{@tagName(stmt)}),
         }
         curr_ast_stmt = ast_stmt.next;
     }
-    return .{.scope = block_scope_idx, .first_stmt = first_stmt};
+    scopes.get(block_scope_idx).first_decl = decl_builder.first;
+    return .{.scope = block_scope_idx, .first_stmt = stmt_builder.first};
 }
 
 fn evaluateWithoutTypeHint(scope_idx: ScopeIndex.Index, expr_idx: ast.ExprIndex.Index) anyerror!Value {
@@ -129,27 +108,19 @@ fn evaluateWithoutTypeHint(scope_idx: ScopeIndex.Index, expr_idx: ast.ExprIndex.
             const func = ast.functions.get(func_idx);
             const param_scope_idx = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx), .first_decl = .none});
             const param_scope = scopes.get(param_scope_idx);
-            var last_param_decl = DeclIndex.OptIndex.none;
+            var param_builder = decls.builder();
             var curr_ast_param = func.first_param;
             while(ast.function_params.getOpt(curr_ast_param)) |ast_param| {
                 const param_type = try values.addDedupLinear(try evaluateWithTypeHint(param_scope_idx, ast_param.type, .type));
-                const param_decl = try decls.insert(.{
+                _ = try param_builder.insert(.{
                     .mutable = true,
                     .name = ast_param.identifier,
                     .init_value = try values.addDedupLinear(.{.runtime = param_type}),
                     .next = .none,
                 });
-                const oparam_decl = DeclIndex.toOpt(param_decl);
-                if(param_scope.first_decl == .none) {
-                    param_scope.first_decl = oparam_decl;
-                }
-                if(decls.getOpt(last_param_decl)) |lpd| {
-                    lpd.next = oparam_decl;
-                }
-                last_param_decl = oparam_decl;
                 curr_ast_param = ast_param.next;
             }
-
+            param_scope.first_decl = param_builder.first;
             return .{.function = .{
                 .return_type = try values.addDedupLinear(try evaluateWithTypeHint(param_scope_idx, func.return_type, .type)),
                 .param_scope = param_scope_idx,
@@ -419,16 +390,13 @@ pub fn analyzeExpr(scope: ScopeIndex.OptIndex, expr_idx: ast.ExprIndex.Index) !V
         .struct_expression => |type_body| {
             const scope_idx = try scopes.insert(.{.outer_scope = scope, .first_decl = .none});
 
-            var first_decl = DeclIndex.OptIndex.none;
-            var last_decl = DeclIndex.OptIndex.none;
-            var first_field = StructFieldIndex.OptIndex.none;
-            var last_field = StructFieldIndex.OptIndex.none;
-
+            var decl_builder = decls.builder();
+            var field_builder = struct_fields.builder();
             var curr_decl = type_body.first_decl;
             while(ast.statements.getOpt(curr_decl)) |decl| {
                 switch(decl.value) {
                     .declaration => |inner_decl| {
-                        const decl_idx = try decls.insert(.{
+                        _ = try decl_builder.insert(.{
                             .mutable = inner_decl.mutable,
                             .name = inner_decl.identifier,
                             .init_value = try astDeclToValue(
@@ -438,30 +406,14 @@ pub fn analyzeExpr(scope: ScopeIndex.OptIndex, expr_idx: ast.ExprIndex.Index) !V
                             ),
                             .next = .none,
                         });
-                        const oidx = DeclIndex.toOpt(decl_idx);
-                        if(decls.getOpt(last_decl)) |ld| {
-                            ld.next = oidx;
-                        }
-                        if(first_decl == .none) {
-                            first_decl = oidx;
-                        }
-                        last_decl = oidx;
                     },
                     .field_decl => |field_decl| {
                         std.debug.assert(field_decl.type != .none);
-                        const field_decl_idx = try struct_fields.insert(.{
+                        _ = try field_builder.insert(.{
                             .name = field_decl.identifier,
                             .init_value = try astDeclToValue(scope_idx, field_decl.init_value, field_decl.type),
                             .next = .none,
                         });
-                        const oidx = StructFieldIndex.toOpt(field_decl_idx);
-                        if(struct_fields.getOpt(last_field)) |lf| {
-                            lf.next = oidx;
-                        }
-                        if(first_field == .none) {
-                            first_field = oidx;
-                        }
-                        last_field = oidx;
                     },
                     else => unreachable,
                 }
@@ -470,11 +422,11 @@ pub fn analyzeExpr(scope: ScopeIndex.OptIndex, expr_idx: ast.ExprIndex.Index) !V
             }
 
             const struct_idx = try structs.insert(.{
-                .first_field = first_field,
+                .first_field = field_builder.first,
                 .scope = scope_idx,
             });
 
-            scopes.get(scope_idx).first_decl = first_decl;
+            scopes.get(scope_idx).first_decl = decl_builder.first;
 
             return values.insert(.{
                 .type_idx = try types.insert(.{ .struct_idx = struct_idx }),
