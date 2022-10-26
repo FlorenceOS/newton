@@ -513,11 +513,12 @@ pub const Scope = struct {
     first_decl: DeclIndex.OptIndex,
 
     pub fn lookupDecl(self: *@This(), name: []const u8) !?*Decl {
-        if(try genericChainLookup(DeclIndex, Decl, &decls, self.first_decl, name)) |result| {
-            return result;
-        }
-        if(scopes.getOpt(self.outer_scope)) |outer_scope| {
-            return @call(.{.modifier = .always_tail}, outer_scope.lookupDecl, .{name});
+        var scope_idx = ScopeIndex.toOpt(scopes.getIndex(self));
+        while(scopes.getOpt(scope_idx)) |scope| {
+            if(try genericChainLookup(DeclIndex, Decl, &decls, scope.first_decl, name)) |result| {
+                return result;
+            }
+            scope_idx = scope.outer_scope;
         }
         return null;
     }
