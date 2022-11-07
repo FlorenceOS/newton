@@ -91,6 +91,7 @@ fn analyzeStatementChain(scope_idx: ScopeIndex.Index, first_ast_stmt: ast.StmtIn
                 try values.get(init_value).analyze();
                 const new_decl = try decl_builder.insert(.{
                     .mutable = decl.mutable,
+                    .static = false,
                     .name = decl.identifier,
                     .init_value = init_value,
                     .next = .none,
@@ -146,6 +147,7 @@ fn evaluateWithoutTypeHint(
                 const param_type = try evaluateWithTypeHint(param_scope_idx, .none, ast_param.type, .type);
                 _ = try param_builder.insert(.{
                     .mutable = true,
+                    .static = false,
                     .name = ast_param.identifier,
                     .init_value = try values.addDedupLinear(.{.runtime = .{.expr = .none, .value_type = param_type}}),
                     .next = .none,
@@ -186,6 +188,7 @@ fn evaluateWithoutTypeHint(
                     .declaration => |inner_decl| {
                         _ = try decl_builder.insert(.{
                             .mutable = inner_decl.mutable,
+                            .static = true,
                             .name = inner_decl.identifier,
                             .init_value = try astDeclToValue(
                                 struct_scope,
@@ -458,6 +461,7 @@ pub const Value = union(enum) {
 
 pub const Decl = struct {
     mutable: bool,
+    static: bool,
     name: ast.SourceRef,
     init_value: ValueIndex.Index,
     next: DeclIndex.OptIndex,
