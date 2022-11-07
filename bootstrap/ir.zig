@@ -68,9 +68,7 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index) !D
 }
 
 // pub fn memes(thing: *sema.Value) !void {
-//     const block_statement = sema.statements.getOpt(thing.function.body.first_stmt).?;
-//     std.debug.print("--{}\n", .{block_statement});
-//     const assign_statement = sema.statements.getOpt(block_statement.value.block.first_stmt).?;
+//     const assign_statement = sema.statements.getOpt(thing.function.body.first_stmt).?;
 //     std.debug.print("--{}\n", .{assign_statement});
 //     const assign_value_idx = sema.expressions.get(assign_statement.value.expression).value;
 //     const assign_value = sema.values.get(assign_value_idx);
