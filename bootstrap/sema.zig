@@ -92,6 +92,7 @@ fn analyzeStatementChain(scope_idx: ScopeIndex.Index, first_ast_stmt: ast.StmtIn
                 const new_decl = try decl_builder.insert(.{
                     .mutable = decl.mutable,
                     .static = false,
+                    .function_param_idx = null,
                     .name = decl.identifier,
                     .init_value = init_value,
                     .next = .none,
@@ -143,15 +144,18 @@ fn evaluateWithoutTypeHint(
             const param_scope = scopes.get(param_scope_idx);
             var param_builder = decls.builder();
             var curr_ast_param = func.first_param;
+            var function_param_idx: u8 = 0;
             while(ast.function_params.getOpt(curr_ast_param)) |ast_param| {
                 const param_type = try evaluateWithTypeHint(param_scope_idx, .none, ast_param.type, .type);
                 _ = try param_builder.insert(.{
                     .mutable = true,
                     .static = false,
+                    .function_param_idx = function_param_idx,
                     .name = ast_param.identifier,
                     .init_value = try values.addDedupLinear(.{.runtime = .{.expr = .none, .value_type = param_type}}),
                     .next = .none,
                 });
+                function_param_idx += 1;
                 curr_ast_param = ast_param.next;
             }
 
@@ -189,6 +193,7 @@ fn evaluateWithoutTypeHint(
                         _ = try decl_builder.insert(.{
                             .mutable = inner_decl.mutable,
                             .static = true,
+                            .function_param_idx = null,
                             .name = inner_decl.identifier,
                             .init_value = try astDeclToValue(
                                 struct_scope,
@@ -462,6 +467,7 @@ pub const Value = union(enum) {
 pub const Decl = struct {
     mutable: bool,
     static: bool,
+    function_param_idx: ?u8,
     name: ast.SourceRef,
     init_value: ValueIndex.Index,
     next: DeclIndex.OptIndex,
