@@ -233,8 +233,12 @@ fn evaluateWithoutTypeHint(
             const token = try ident.retokenize();
             defer token.deinit();
             if(try scope.lookupDecl(token.identifier_value())) |decl| {
-                try values.get(decl.init_value).analyze();
-                return decl.init_value;
+                const init_value = values.get(decl.init_value);
+                try init_value.analyze();
+                if(init_value.* != .runtime and !decl.mutable) {
+                    return decl.init_value;
+                }
+                return putValueIn(value_out, .{.decl_ref = decls.getIndex(decl)});
             }
             return error.IdentifierNotFound;
         },
@@ -416,6 +420,8 @@ pub const RuntimeValue = struct {
 pub const Value = union(enum) {
     unresolved: Unresolved,
 
+    decl_ref: DeclIndex.Index,
+
     // Values of type `type`
     type_idx: TypeIndex.Index,
 
@@ -459,6 +465,7 @@ pub const Value = union(enum) {
             .unsigned_int => |int| TypeIndex.toOpt(try types.addDedupLinear(.{.unsigned_int = int.bits})),
             .signed_int => |int| TypeIndex.toOpt(try types.addDedupLinear(.{.signed_int = int.bits})),
             .runtime => |rt| TypeIndex.toOpt(values.get(rt.value_type).type_idx),
+            .decl_ref => |dr| return TypeIndex.toOpt(values.get(values.get(decls.get(dr).init_value).runtime.value_type).type_idx),
             else => |other| std.debug.panic("TODO: Get type of {s}", .{@tagName(other)}),
         };
     }
