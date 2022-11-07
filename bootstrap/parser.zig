@@ -163,7 +163,31 @@ fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
         .const_keyword, .var_keyword => return self.parseDeclaration(token),
         .continue_keyword => @panic("TODO: continue statement"),
         .endcase_keyword => @panic("TODO: endcase statement"),
-        .if_keyword => @panic("TODO: if statement"),
+        .if_keyword => {
+            _ = try self.tokenize();
+            _ = try self.expect(.@"(_ch");
+            const condition = try self.parseExpression(null);
+            _ = try self.expect(.@")_ch");
+            const first_taken = try self.parseBlockStatement();
+            const first_not_taken = if((try self.peekToken()) == .else_keyword) blk: {
+                _ = try self.tokenize();
+                break :blk switch(try self.peekToken()) {
+                    .@"{_ch" => try self.parseBlockStatement(),
+                    .if_keyword => ast.StmtIndex.toOpt(try self.parseStatement()),
+                    else => |inner_tok| {
+                        std.debug.print("Expected `{{` or `if` after `else`, got {s}\n", .{@tagName(inner_tok)});
+                        return error.UnexpectedToken;
+                    },
+                };
+            } else .none;
+            return ast.statements.insert(.{.next = .none, .value = .{
+                .if_statement = .{
+                    .condition = condition,
+                    .first_taken = first_taken,
+                    .first_not_taken = first_not_taken,
+                },
+            }});
+        },
         .loop_keyword => @panic("TODO: loop statement"),
         .return_keyword => @panic("TODO: return statement"),
         .switch_keyword => @panic("TODO: switch statement"),
@@ -799,6 +823,14 @@ fn dumpNode(index: anytype, node: anytype, indent_level: usize) anyerror!void {
                     try dumpNode(init_idx, ast.expressions.get(init_idx), indent_level);
                 }
                 std.debug.print(",", .{});
+            },
+            .if_statement => |stmt| {
+                std.debug.print("if (", .{});
+                try dumpNode(stmt.condition, ast.expressions.get(stmt.condition), indent_level);
+                std.debug.print(") ", .{});
+                try dumpStatementChain(stmt.first_taken, indent_level);
+                std.debug.print(" else ", .{});
+                try dumpStatementChain(stmt.first_not_taken, indent_level);
             },
             else => |stmt| std.debug.panic("Cannot dump statement of type {s}", .{@tagName(stmt)}),
         },
