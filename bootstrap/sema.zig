@@ -161,7 +161,7 @@ fn evaluateWithoutTypeHint(
                 .return_type = try evaluateWithTypeHint(param_scope_idx, .none, func.return_type, .type),
             }});
 
-            values.get(retval).function.body = try analyzeStatementChain(param_scope_idx, ast.StmtIndex.toOpt(func.body));
+            values.get(retval).function.body = try analyzeStatementChain(param_scope_idx, func.body);
             return retval;
         },
         .pointer_type => |ptr| {

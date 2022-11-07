@@ -120,7 +120,6 @@ fn parseFunctionExpr(self: *@This()) anyerror!ast.FunctionIndex.Index {
     }
 
     _ = try self.expect(.@")_ch");
-
     const return_type = try self.parseExpression(null);
 
     return ast.functions.insert(.{
@@ -144,19 +143,21 @@ fn parseBlockStatementBody(self: *@This()) anyerror!ast.StmtIndex.OptIndex {
     return stmt_builder.first;
 }
 
-fn parseBlockStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
+fn parseBlockStatement(self: *@This()) anyerror!ast.StmtIndex.OptIndex {
     _ = try self.expect(.@"{_ch");
     const body = try self.parseBlockStatementBody();
     _ = try self.expect(.@"}_ch");
-    return ast.statements.insert(.{.next = .none, .value = .{
-        .block_statement = .{.first_child = body},
-    }});
+    return body;
 }
 
 fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
     const token = try self.peekToken();
     switch(token) {
-        .@"{_ch" => return self.parseBlockStatement(),
+        .@"{_ch" => {
+            return ast.statements.insert(.{.next = .none, .value = .{
+                .block_statement = .{.first_child = try self.parseBlockStatement()},
+            }});
+        },
         .break_keyword => @panic("TODO: break statement"),
         .case_keyword => @panic("TODO: case statement"),
         .const_keyword, .var_keyword => return self.parseDeclaration(token),
@@ -801,7 +802,7 @@ fn dumpNode(index: anytype, node: anytype, indent_level: usize) anyerror!void {
             std.debug.print(") ", .{});
             try dumpNode(node.return_type, ast.expressions.get(node.return_type), indent_level);
             std.debug.print(" ", .{});
-            try dumpNode(ast.StmtIndex.toOpt(node.body), ast.statements.get(node.body), indent_level);
+            try dumpStatementChain(node.body, indent_level);
         },
         else => @compileError("Cannot dump type " ++ @typeName(@TypeOf(node))),
     }
