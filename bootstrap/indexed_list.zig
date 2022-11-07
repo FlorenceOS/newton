@@ -45,6 +45,10 @@ pub fn Indices(comptime IndexType: type, comptime extra_field_tags: anytype) typ
         pub const ExtraFieldTags = extra_field_tags;
         pub const alloc_base = current_value;
 
+        pub fn List(comptime T: type) type {
+            return IndexedList(@This(), T);
+        }
+
         pub fn unwrap(oi: _OptIndex) ?_Index {
             if(oi == .none) return null;
             return @intToEnum(_Index, @enumToInt(oi));

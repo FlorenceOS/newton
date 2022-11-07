@@ -5,12 +5,14 @@ const parser = @import("parser.zig");
 const sema = @import("sema.zig");
 const sources = @import("sources.zig");
 const values = @import("values.zig");
+const ir = @import("ir.zig");
 
 pub fn main() !void {
     try ast.init();
     try sema.init();
     try sources.init();
     try values.init();
+    try ir.init();
 
     var output_path: [:0]const u8 = "a.out";
     var root_path: ?[:0]u8 = null;
