@@ -73,10 +73,7 @@ pub fn unsigned(num_bits: u32) TypeIndex.Index {
         16 => .u16,
         32 => .u32,
         64 => .u64,
-        else => // @TODO: Cache this
-            all_types.addDedupLinear(.{
-                .unsigned_int = .{.num_bits = num_bits},
-            }),
+        else => all_types.addDedupLinear(.{.unsigned_int = .{.num_bits = num_bits}}),
     };
 }
 
@@ -86,10 +83,7 @@ pub fn signed(num_bits: u32) TypeIndex.Index {
         16 => .i16,
         32 => .i32,
         64 => .i64,
-        else => // @TODO: Cache this
-            all_types.addDedupLinear(.{
-                .signed_int = .{.num_bits = num_bits},
-            }),
+        else => all_types.addDedupLinear(.{.signed_int = .{.num_bits = num_bits}}),
     };
 }
 

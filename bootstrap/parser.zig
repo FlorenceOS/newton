@@ -373,7 +373,15 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
                 }
 
             },
-            .@"[_ch" => @panic("TODO: Implement array subscript"),
+            .@"[_ch" => {
+                _ = try self.tokenize();
+                const index = try self.parseExpression(null);
+                _ = try self.expect(.@"]_ch");
+                lhs = try ast.expressions.insert(.{.array_subscript = .{
+                    .lhs = lhs,
+                    .rhs = index,
+                }});
+            },
             else => break,
         }
     }
@@ -754,6 +762,12 @@ fn dumpNode(index: anytype, node: anytype, indent_level: usize) anyerror!void {
             .struct_expression => |expr| {
                 std.debug.print("struct ", .{});
                 try dumpStatementChain(expr.first_decl, indent_level);
+            },
+            .array_subscript => |bop| {
+                try dumpNode(bop.lhs, ast.expressions.get(bop.lhs), indent_level);
+                std.debug.print("[", .{});
+                try dumpNode(bop.rhs, ast.expressions.get(bop.rhs), indent_level);
+                std.debug.print("]", .{});
             },
             else => |expr| std.debug.panic("Cannot dump expression of type {s}", .{@tagName(expr)}),
         },
