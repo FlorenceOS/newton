@@ -36,7 +36,7 @@ fn appendToBlock(block_idx: BlockIndex.Index, instr: DeclInstr) !DeclIndex.Index
     const block = blocks.get(block_idx);
     var curr_instr = block.first_decl;
     while(decls.getOpt(curr_instr)) |inst| {
-        //if(inst.instr == instr) return DeclIndex.unwrap(curr_instr).?;
+        if(std.meta.eql(inst.instr, instr)) return DeclIndex.unwrap(curr_instr).?;
         curr_instr = inst.next;
     }
 
