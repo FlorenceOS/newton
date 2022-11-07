@@ -47,8 +47,8 @@ pub fn main() !void {
         const root_scope = sema.scopes.get(root_struct.scope);
         const main_decl = (try root_scope.lookupDecl("main")).?;
         try main_decl.analyze();
-        std.debug.print("{any}\n", .{main_decl});
         std.debug.print("{any}\n", .{sema.values.get(main_decl.init_value)});
+        try ir.memes(sema.values.get(main_decl.init_value));
     } else {
         std.debug.print("Missing root file path!\n", .{});
     }

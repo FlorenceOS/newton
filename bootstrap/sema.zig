@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const ast = @import("ast.zig");
+const ir = @import("ir.zig");
 const indexed_list = @import("indexed_list.zig");
 
 pub const TypeIndex = indexed_list.Indices(u32, .{
@@ -478,6 +479,7 @@ pub const Decl = struct {
     name: ast.SourceRef,
     init_value: ValueIndex.Index,
     next: DeclIndex.OptIndex,
+    ir_context: ir.DeclContext = .{},
 
     pub fn analyze(self: *@This()) !void {
         const value_ptr = values.get(self.init_value);

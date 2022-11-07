@@ -13,6 +13,7 @@ pub const Bop = struct {
 };
 
 const DeclInstr = union(enum) {
+    param_ref: u8,
     add: Bop,
 };
 
@@ -25,8 +26,8 @@ pub const Decl = struct {
 };
 
 pub const BasicBlock = struct {
-    first_decl: DeclIndex.OptIndex,
-    last_decl: DeclIndex.OptIndex,
+    first_decl: DeclIndex.OptIndex = .none,
+    last_decl: DeclIndex.OptIndex = .none,
 };
 
 pub var decls: DeclIndex.List(Decl) = undefined;
@@ -60,30 +61,148 @@ fn appendToBlock(block_idx: BlockIndex.Index, instr: DeclInstr) !DeclIndex.Index
     return retval;
 }
 
-fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index) !DeclIndex.Index {
+pub const DeclContext = struct {
+    const SSADecl = struct {
+        ssa_id: DeclIndex.Index,
+        ssa_block: BlockIndex.Index,
+    };
+
+    ssa_id_stack: std.ArrayListUnmanaged(SSADecl) = .{},
+};
+
+var stack_gpa = std.heap.GeneralPurposeAllocator(.{}){.backing_allocator = std.heap.page_allocator};
+
+fn ssaBlockStatementIntoBasicBlock(
+    first_stmt: sema.StatementIndex.OptIndex,
+    scope: sema.ScopeIndex.Index,
+    basic_block_out: *BlockIndex.OptIndex,
+) !void {
+    _ = scope;
+    var current_statement = first_stmt;
+
+    while(sema.statements.getOpt(current_statement)) |stmt| {
+        switch(stmt.value) {
+            .block => |b| {
+                // A freestanding block statement is part of the same basic block but with a different scope
+                try ssaBlockStatementIntoBasicBlock(b.first_stmt, b.scope, basic_block_out);
+            },
+            .declaration, .expression => {
+                // Now we have to make a basic block because there is none yet
+                if(basic_block_out.* == .none) {
+                    basic_block_out.* = BlockIndex.toOpt(try blocks.insert(.{}));
+                }
+                const bb = BlockIndex.unwrap(basic_block_out.*).?;
+
+                switch(stmt.value) {
+                    .declaration => |decl_idx| {
+                        const decl = sema.decls.get(decl_idx);
+                        const init_value = sema.values.get(decl.init_value);
+                        if(init_value.* == .runtime) {
+                            const expr = init_value.runtime.expr;
+                            try decl.ir_context.ssa_id_stack.append(stack_gpa.allocator(), .{
+                                .ssa_id = DeclIndex.unwrap(try ssaExpr(bb, sema.ExpressionIndex.unwrap(expr).?)).?,
+                                .ssa_block = bb,
+                            });
+                        }
+                    },
+                    .expression => |expr_idx| {
+                        _ = try ssaExpr(bb, expr_idx);
+                    },
+                    else => unreachable,
+                }
+            },
+        }
+        current_statement = stmt.next;
+    }
+}
+
+// Returns the first basic block in the block statement
+fn ssaBlockStatement(first_stmt: sema.StatementIndex.OptIndex, scope: sema.ScopeIndex.Index) !BlockIndex.OptIndex {
+    var first_basic_block: BlockIndex.OptIndex = .none;
+    _ = try ssaBlockStatementIntoBasicBlock(first_stmt, scope, &first_basic_block);
+    return first_basic_block;
+}
+
+fn ssaValue(
+    block_idx: BlockIndex.Index,
+    value_idx: sema.ValueIndex.Index,
+    update_with_value: DeclIndex.OptIndex,
+) !DeclIndex.OptIndex {
+    switch(sema.values.get(value_idx).*) {
+        .runtime => |rt| return ssaExpr(block_idx, sema.ExpressionIndex.unwrap(rt.expr).?),
+        .decl_ref => |decl_idx| {
+            const decl = sema.decls.get(decl_idx);
+            if(DeclIndex.unwrap(update_with_value)) |new_value| {
+                try decl.ir_context.ssa_id_stack.append(stack_gpa.allocator(), .{
+                    .ssa_block = block_idx,
+                    .ssa_id = new_value,
+                });
+                return .none;
+            } else {
+                return DeclIndex.toOpt(decl.ir_context.ssa_id_stack.items[decl.ir_context.ssa_id_stack.items.len - 1].ssa_id);
+            }
+        },
+        else => |val| std.debug.panic("Unhandled ssaing of value {s}", .{@tagName(val)}),
+    }
+}
+
+fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index) anyerror!DeclIndex.OptIndex {
     switch(sema.expressions.get(expr_idx).*) {
-        .plus => return appendToBlock(block_idx, .{.add = undefined}),
+        .value => |val_idx| return ssaValue(block_idx, val_idx, .none),
+        .assign => |ass| {
+            // Evaluate rhs first because it makes more lifetime sense for assignment ops
+            const rhs = try ssaValue(block_idx, ass.rhs, .none);
+
+            if(ass.lhs != .discard_underscore) {
+                _ = try ssaValue(block_idx, ass.lhs, rhs);
+
+                // TODO: Handle reference types on lhs
+                return .none;
+            }
+
+            return .none;
+        },
+        .plus => |bop| {
+            return DeclIndex.toOpt(try appendToBlock(block_idx, .{.add = .{
+                .lhs = DeclIndex.unwrap(try ssaValue(block_idx, bop.lhs, .none)).?,
+                .rhs = DeclIndex.unwrap(try ssaValue(block_idx, bop.rhs, .none)).?,
+            }}));
+        },
         else => |expr| std.debug.panic("Unhandled ssaing of expr {s}", .{@tagName(expr)}),
     }
 }
 
-// pub fn memes(thing: *sema.Value) !void {
-//     const assign_statement = sema.statements.getOpt(thing.function.body.first_stmt).?;
-//     std.debug.print("--{}\n", .{assign_statement});
-//     const assign_value_idx = sema.expressions.get(assign_statement.value.expression).value;
-//     const assign_value = sema.values.get(assign_value_idx);
-//     const assign_expr = sema.expressions.getOpt(assign_value.runtime.expr).?.assign;
-//     const addition_expr = sema.ExpressionIndex.unwrap(sema.values.get(assign_expr.rhs).runtime.expr).?;
-//     std.debug.print("--{}\n", .{addition_expr});
-//     const bidx = try blocks.insert(.{
-//         .first_decl = .none,
-//         .last_decl = .none,
-//     });
-//     const decl_idx = try ssaExpr(bidx, addition_expr);
-//     _ = decl_idx;
+fn ssaFunction(func: *sema.Function) !BlockIndex.OptIndex {
+    var first_basic_block: BlockIndex.OptIndex = BlockIndex.toOpt(try blocks.insert(.{}));
 
-//     std.debug.print("--{}\n", .{blocks.get(bidx)});
-// }
+    // Loop over function params and add references to them
+    var curr_param = sema.scopes.get(func.param_scope).first_decl;
+    while(sema.decls.getOpt(curr_param)) |decl| {
+        try decl.ir_context.ssa_id_stack.append(
+            stack_gpa.allocator(),
+            .{
+                .ssa_id = try appendToBlock(BlockIndex.unwrap(first_basic_block).?, .{
+                    .param_ref = decl.function_param_idx.?,
+                }),
+                .ssa_block = BlockIndex.unwrap(first_basic_block).?,
+            },
+        );
+
+        curr_param = decl.next;
+    }
+
+    _ = try ssaBlockStatementIntoBasicBlock(func.body.first_stmt, func.body.scope, &first_basic_block);
+    return first_basic_block;
+}
+
+pub fn memes(thing: *sema.Value) !void {
+    _ = try ssaFunction(&thing.function);
+    for(decls.elements.items) |decl, i| {
+        if(i != 0) {
+            std.debug.print("Decl #{d}: {}\n", .{i, decl});
+        }
+    }
+}
 
 pub fn init() !void {
     decls = try DeclIndex.List(Decl).init(std.heap.page_allocator);
