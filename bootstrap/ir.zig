@@ -15,6 +15,21 @@ pub const Bop = struct {
 const DeclInstr = union(enum) {
     param_ref: u8,
     add: Bop,
+
+    pub fn format(
+        self: @This(),
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = options;
+        _ = fmt;
+
+        try switch(self) {
+            .param_ref => |p| writer.print("@param({d})", .{p}),
+            .add => |a| writer.print("${d} + ${d}", .{@enumToInt(a.lhs), @enumToInt(a.rhs)}),
+        };
+    }
 };
 
 pub const Decl = struct {
@@ -196,11 +211,12 @@ fn ssaFunction(func: *sema.Function) !BlockIndex.OptIndex {
 }
 
 pub fn memes(thing: *sema.Value) !void {
-    _ = try ssaFunction(&thing.function);
-    for(decls.elements.items) |decl, i| {
-        if(i != 0) {
-            std.debug.print("Decl #{d}: {}\n", .{i, decl});
-        }
+    const bbidx = try ssaFunction(&thing.function);
+    std.debug.print("SSA dump:\n", .{});
+    var current_decl = blocks.getOpt(bbidx).?.first_decl;
+    while(decls.getOpt(current_decl)) |decl| {
+        std.debug.print(" ${d} = {}\n", .{@enumToInt(current_decl), decl.instr});
+        current_decl = decl.next;
     }
 }
 
