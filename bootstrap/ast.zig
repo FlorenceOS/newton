@@ -204,7 +204,8 @@ pub const StatementNode = struct {
             first_not_taken: StmtIndex.OptIndex,
         },
         loop_statement: struct {
-            first_child: ExprIndex.OptIndex,
+            condition: ExprIndex.OptIndex,
+            first_child: StmtIndex.OptIndex,
         },
         switch_statement: struct {
             first_child: ExprIndex.OptIndex,

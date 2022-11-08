@@ -188,7 +188,22 @@ fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
                 },
             }});
         },
-        .loop_keyword => @panic("TODO: loop statement"),
+        .loop_keyword => {
+            _ = try self.tokenize();
+            const condition = if ((try self.peekToken()) == .@"(_ch") blk: {
+                _ = try self.tokenize();
+                const res = try self.parseExpression(null);
+                _ = try self.expect(.@")_ch");
+                break :blk ast.ExprIndex.toOpt(res);
+            } else .none;
+            const body = try self.parseBlockStatement();
+            return ast.statements.insert(.{.next = .none, .value = .{
+                .loop_statement = .{
+                    .condition = condition,
+                    .first_child = body,
+                },
+            }});
+        },
         .return_keyword => @panic("TODO: return statement"),
         .switch_keyword => @panic("TODO: switch statement"),
         .identifier, .__keyword, .@"(_ch",
@@ -831,6 +846,15 @@ fn dumpNode(index: anytype, node: anytype, indent_level: usize) anyerror!void {
                 try dumpStatementChain(stmt.first_taken, indent_level);
                 std.debug.print(" else ", .{});
                 try dumpStatementChain(stmt.first_not_taken, indent_level);
+            },
+            .loop_statement => |stmt| {
+                std.debug.print("loop ", .{});
+                if(ast.ExprIndex.unwrap(stmt.condition)) |cond_idx| {
+                    std.debug.print("(", .{});
+                    try dumpNode(stmt.condition, ast.expressions.get(cond_idx), indent_level);
+                    std.debug.print(") ", .{});
+                }
+                try dumpStatementChain(stmt.first_child, indent_level);
             },
             else => |stmt| std.debug.panic("Cannot dump statement of type {s}", .{@tagName(stmt)}),
         },
