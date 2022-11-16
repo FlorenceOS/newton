@@ -19,12 +19,14 @@ const main = fn(argc: u64, argv: u32, envp: *const volatile anyopaque) usize {
     //const lol = f(69);
     //_ = lol;
     // _ = (argc + '\x00').&('\x00', envp.&, argv,);
-    if(true) {
-        lmao = lmao + argc;
-    } else {
-        lmao = lmao + argv;
+    loop {
+        if(true) {
+            lmao = lmao + argc;
+        } else {
+            lmao = lmao + argv;
+        }
+        argc = lmao;
     }
-    argc = lmao;
 };
 
 fn f(lmao: u64) u64 {

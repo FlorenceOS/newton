@@ -23,6 +23,7 @@ pub const Bop = struct {
 const DeclInstr = union(enum) {
     param_ref: u8,
     load_bool_constant: bool,
+    @"undefined",
     add: Bop,
     incomplete_phi: DeclIndex.OptIndex, // Holds the next incomplete phi node in the same block
     copy: DeclIndex.Index, // Should be eliminated during optimization
@@ -33,12 +34,83 @@ const DeclInstr = union(enum) {
     },
     goto: BlockEdgeIndex.Index,
     phi: PhiOperandIndex.Index,
+
+    const OperandIterator = struct {
+        value: union(enum) {
+            bounded_iterator: std.BoundedArray(*DeclIndex.Index, 2),
+            phi_iterator: ?*PhiOperand,
+        },
+
+        fn next(self: *@This()) ?*DeclIndex.Index {
+            switch(self.value) {
+                .bounded_iterator => |*list| return list.popOrNull(),
+                .phi_iterator => |*curr_opt| {
+                    if(curr_opt.*) |curr| {
+                        curr_opt.* = phi_operands.getOpt(curr.next);
+                        return &curr.decl;
+                    } else {
+                        return null;
+                    }
+                },
+            }
+        }
+    };
+
+    fn operands(self: *@This()) OperandIterator {
+        var bounded_result = OperandIterator{.value = .{.bounded_iterator = .{}}};
+
+        switch(self.*) {
+            .incomplete_phi => unreachable,
+
+            .phi => |p| return OperandIterator{.value = .{.phi_iterator = phi_operands.get(p)}},
+
+            .add => |*a| {
+                bounded_result.value.bounded_iterator.appendAssumeCapacity(&a.lhs);
+                bounded_result.value.bounded_iterator.appendAssumeCapacity(&a.rhs);
+            },
+            .copy => |*c| bounded_result.value.bounded_iterator.appendAssumeCapacity(c),
+            .@"if" => |*instr| bounded_result.value.bounded_iterator.appendAssumeCapacity(&instr.condition),
+
+            .param_ref, .load_bool_constant, .@"undefined", .goto,
+            => {}, // No operands
+        }
+
+        return bounded_result;
+    }
+
+    fn isVolatile(self: *@This()) bool {
+        switch(self.*) {
+            .incomplete_phi => unreachable,
+
+            .@"if", .goto => return true,
+
+            .param_ref, .load_bool_constant, .@"undefined", .add,
+            .copy, .phi,
+            => return false,
+        }
+    }
+
+    fn outEdges(self: *@This()) std.BoundedArray(*BlockEdgeIndex.Index, 2) {
+        var result = std.BoundedArray(*BlockEdgeIndex.Index, 2){};
+        switch(self.*) {
+            .incomplete_phi => unreachable,
+            .@"if" => |*instr| {
+                result.appendAssumeCapacity(&instr.taken);
+                result.appendAssumeCapacity(&instr.not_taken);
+            },
+            .goto => |*out| result.appendAssumeCapacity(out),
+            .param_ref, .load_bool_constant, .@"undefined", .add, .copy,
+            .phi
+            => {}, // No out edges
+        }
+        return result;
+    }
 };
 
 pub const Decl = struct {
     next: DeclIndex.OptIndex = .none,
     prev: DeclIndex.OptIndex = .none,
-    //block: BlockIndex.Index,
+    block: BlockIndex.Index,
 
     sema_decl: sema.DeclIndex.OptIndex,
     instr: DeclInstr,
@@ -127,7 +199,7 @@ fn readVariableRecursive(block_idx: BlockIndex.Index, decl: sema.DeclIndex.Index
 }
 
 // Name from paper
-fn addPhiOperands(sema_decl: sema.DeclIndex.Index, block_idx: BlockIndex.Index, decl_idx: DeclIndex.Index, delete: bool) !DeclIndex.Index {
+fn addPhiOperands(sema_decl: sema.DeclIndex.Index, block_idx: BlockIndex.Index, phi_idx: DeclIndex.Index, delete: bool) !DeclIndex.Index {
     const block = blocks.get(block_idx);
     var current_pred_edge = block.first_predecessor;
     var init_operand = PhiOperandIndex.OptIndex.none;
@@ -145,18 +217,245 @@ fn addPhiOperands(sema_decl: sema.DeclIndex.Index, block_idx: BlockIndex.Index, 
         current_pred_edge = edge.next;
     }
 
-    decls.get(decl_idx).instr = .{
+    decls.get(phi_idx).instr = .{
         .phi = PhiOperandIndex.unwrap(init_operand).?,
     };
+    
+    return tryRemoveTrivialPhi(phi_idx, delete);
+}
 
-    _ = delete;
+fn removeDecl(decl_idx: DeclIndex.Index) void {
+    const decl = decls.get(decl_idx);
+    const block = blocks.get(decl.block);
+
+    if(decls.getOpt(decl.prev)) |prev| {
+        prev.next = decl.next;
+    } else {
+        block.first_decl = decl.next;
+    }
+    if(decls.getOpt(decl.next)) |next| {
+        next.prev = decl.prev;
+    } else {
+        block.last_decl = decl.prev;
+    }
+    decls.free(decl_idx);
+}
+
+/// Name from paper
+fn tryRemoveTrivialPhi(phi_decl: DeclIndex.Index, delete: bool) DeclIndex.Index {
+    if(checkTrivialPhi(phi_decl)) |trivial_decl| {
+        if(trivial_decl) |trivial_idx| {
+            if(delete) {
+                removeDecl(phi_decl);
+                return trivial_idx;
+            } else {
+                decls.get(phi_decl).instr = .{.copy = trivial_idx};
+            }
+        } else {
+            // This is zero operand phi node. What does it meme?
+            decls.get(phi_decl).instr = .{.@"undefined" = {}};
+        }
+    }
+
+    return phi_decl;
+}
+
+// Name from paper
+fn checkTrivialPhi(phi_decl: DeclIndex.Index) ??DeclIndex.Index {
+    var current_operand = PhiOperandIndex.toOpt(decls.get(phi_decl).instr.phi);
+    var only_decl: ?DeclIndex.Index = null;
+
+    while(phi_operands.getOpt(current_operand)) |op| {
+        if(only_decl) |only| {
+            if(only != op.decl) return null;
+        } else {
+            only_decl = op.decl;
+        }
+        current_operand = op.next;
+    }
+
+    return only_decl;
+}
+
+// Assumes an arena allocator is passed
+const DiscoverContext = struct {
+    to_visit: std.ArrayList(BlockIndex.Index),
+    visited: std.AutoArrayHashMap(BlockIndex.Index, void),
+
+    fn init(allocator: std.mem.Allocator, first_block: BlockIndex.Index) !@This() {
+        var result: @This() = undefined;
+        result.to_visit = std.ArrayList(BlockIndex.Index).init(allocator);
+        try result.to_visit.append(first_block);
+        result.visited = std.AutoArrayHashMap(BlockIndex.Index, void).init(allocator);
+        try result.visited.put(first_block, {});
+        return result;
+    }
+
+    fn nextBlock(self: *@This()) ?*BasicBlock {
+        if(self.to_visit.items.len > 0) {
+            return blocks.get(self.to_visit.swapRemove(0));
+        } else {
+            return null;
+        }
+    }
+
+    fn edge(self: *@This(), eidx: BlockEdgeIndex.Index) !void {
+        const target_idx = edges.get(eidx).target_block;
+        if(self.visited.get(target_idx) == null) {
+            try self.to_visit.append(target_idx);
+            try self.visited.put(target_idx, {});
+        }
+    }
+
+    fn finalize(self: *@This()) []BlockIndex.Index {
+        return self.visited.keys();
+    }
+};
+
+const BlockList = std.ArrayListUnmanaged(BlockIndex.Index);
+
+// Assumes an arena allocator is passed
+fn allBlocksReachableFrom(allocator: std.mem.Allocator, head_block: BlockIndex.Index) !BlockList {
+    var context = try DiscoverContext.init(allocator, head_block);
+
+    while(context.nextBlock()) |block| {
+        var current_decl = block.first_decl;
+        while(decls.getOpt(current_decl)) |decl| {
+            const decl_block_edges = decl.instr.outEdges();
+            for(decl_block_edges.slice()) |edge| {
+                try context.edge(edge.*);
+            }
+            current_decl = decl.next;
+        }
+    }
+
+    const elements = context.finalize();
+    return BlockList{.items = elements, .capacity = elements.len};
+}
+
+const function_optimizations = .{
+    eliminateCopies,
+    eliminateUnreferenced,
+};
+
+const peephole_optimizations = .{
+    eliminateTrivialPhis,
+};
+
+var optimization_allocator = std.heap.GeneralPurposeAllocator(.{}){.backing_allocator = std.heap.page_allocator};
+
+fn optimizeFunction(head_block: BlockIndex.Index) !void {
+    var arena = std.heap.ArenaAllocator.init(optimization_allocator.allocator());
+    defer arena.deinit();
+    var fn_blocks = try allBlocksReachableFrom(arena.allocator(), head_block);
+
+    while(true) {
+        var did_something = false;
+        for(fn_blocks.items) |block| {
+            var current_decl = blocks.get(block).first_decl;
+            while(decls.getOpt(current_decl)) |decl| {
+                current_decl = decl.next;
+                inline for(peephole_optimizations) |pass| {
+                    if(try pass(decls.getIndex(decl))) did_something = true;
+                }
+            }
+        }
+        inline for(function_optimizations) |pass| {
+            var pass_allocator = std.heap.ArenaAllocator.init(optimization_allocator.allocator());
+            defer pass_allocator.deinit();
+            if(try pass(pass_allocator.allocator(), &fn_blocks)) did_something = true;
+        }
+        if(!did_something) return;
+    }
+}
+
+fn eliminateCopyChain(
+    decl_idx: DeclIndex.Index,
+    copy_dict: *std.AutoHashMap(DeclIndex.Index, DeclIndex.Index)
+) !DeclIndex.Index {
+    if(copy_dict.get(decl_idx)) |retval| { // Copy decl has already been removed
+        return retval;
+    }
+    const decl = decls.get(decl_idx);
+    if(decl.instr == .copy) {
+        const retval = try eliminateCopyChain(decl.instr.copy, copy_dict);
+        try copy_dict.put(decl_idx, retval);
+        removeDecl(decl_idx);
+        return retval;
+    }
     return decl_idx;
+}
+
+fn eliminateCopyOperands(
+    operand: *DeclIndex.Index,
+    copy_dict: *std.AutoHashMap(DeclIndex.Index, DeclIndex.Index)
+) !void {
+    operand.* = try eliminateCopyChain(operand.*, copy_dict);
+}
+
+fn eliminateCopies(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
+    var copy_dict = std.AutoHashMap(DeclIndex.Index, DeclIndex.Index).init(alloc);
+    var did_something = false;
+
+    for(fn_blocks.items) |block| {
+        var current_decl = blocks.get(block).first_decl;
+        while(decls.getOpt(current_decl)) |decl| {
+            current_decl = decl.next;
+            var ops = decl.instr.operands();
+            while(ops.next()) |op| {
+                try eliminateCopyOperands(op, &copy_dict);
+            }
+            if(decls.getIndex(decl) != try eliminateCopyChain(decls.getIndex(decl), &copy_dict)) {
+                did_something = true;
+            }
+        }
+    }
+
+    return did_something;
+}
+
+fn eliminateUnreferenced(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
+    var unreferenced = std.AutoHashMap(DeclIndex.Index, void).init(alloc);
+    var referenced_undiscovered = std.AutoHashMap(DeclIndex.Index, void).init(alloc);
+
+    for(fn_blocks.items) |block| {
+        var current_decl = blocks.get(block).first_decl;
+        while(decls.getOpt(current_decl)) |decl| {
+            const idx = decls.getIndex(decl);
+            current_decl = decl.next;
+            if(!referenced_undiscovered.remove(idx) and !decl.instr.isVolatile()) {
+                try unreferenced.put(idx, {});
+            }
+
+            var ops = decl.instr.operands();
+            while(ops.next()) |op| {
+                if(!unreferenced.remove(op.*)) {
+                    try referenced_undiscovered.put(op.*, {});
+                }
+            }
+        }
+    }
+
+    var it = unreferenced.keyIterator();
+    var did_something = false;
+    while(it.next()) |key| {
+        removeDecl(key.*);
+        did_something = true;
+    }
+    return did_something;
+}
+
+fn eliminateTrivialPhis(decl_idx: DeclIndex.Index) !bool {
+    const decl = decls.get(decl_idx);
+    if(decl.instr == .phi) {
+        _ = tryRemoveTrivialPhi(decl_idx, false);
+        return decl.instr != .phi;
+    }
+    return false;
 }
 
 fn appendToBlock(block_idx: BlockIndex.Index, sema_decl: sema.DeclIndex.OptIndex, instr: DeclInstr) !DeclIndex.Index {
     const block = blocks.get(block_idx);
-
-    std.debug.assert(!block.is_filled);
 
     var curr_instr = block.first_decl;
     while(decls.getOpt(curr_instr)) |inst| {
@@ -167,6 +466,7 @@ fn appendToBlock(block_idx: BlockIndex.Index, sema_decl: sema.DeclIndex.OptIndex
     const retval = try decls.insert(.{
         .next = .none,
         .prev = .none,
+        .block = block_idx,
         .instr = instr,
         .sema_decl = sema_decl,
     });
@@ -277,6 +577,26 @@ fn ssaBlockStatementIntoBasicBlock(
 
                 current_basic_block = if_exit;
             },
+            .loop_statement => |loop| {
+                const loop_enter_branch = try appendToBlock(current_basic_block, .none, .{.goto = undefined});
+                const loop_body_entry = try blocks.insert(.{});
+                decls.get(loop_enter_branch).instr.goto = try addEdge(current_basic_block, loop_body_entry);
+                try blocks.get(current_basic_block).filled();
+
+                const exit_block = try blocks.insert(.{});
+                const loop_body_end = try ssaBlockStatementIntoBasicBlock(
+                    loop.body.first_stmt,
+                    loop.body.scope,
+                    loop_body_entry,
+                );
+                try blocks.get(exit_block).seal();
+                const loop_instr = try appendToBlock(loop_body_end, .none, .{.goto = undefined});
+                try blocks.get(loop_body_end).filled();
+                decls.get(loop_instr).instr.goto = try addEdge(loop_body_end, loop_body_entry);
+                try blocks.get(loop_body_entry).seal();
+
+                current_basic_block = exit_block;
+            },
         }
         current_statement = stmt.next;
     }
@@ -360,14 +680,12 @@ fn ssaFunction(func: *sema.Function) !BlockIndex.Index {
 pub fn memes(thing: *sema.Value) !void {
     const bbidx = try ssaFunction(&thing.function);
 
-    var blocks_to_dump = try std.ArrayList(BlockIndex.Index).initCapacity(std.heap.page_allocator, 1024);
-    var blocks_visited = std.AutoHashMap(BlockIndex.Index, void).init(std.heap.page_allocator);
-    defer blocks_to_dump.deinit();
-    defer blocks_visited.deinit();
-    try blocks_to_dump.append(bbidx);
+    try optimizeFunction(bbidx);
 
-    while(blocks_to_dump.items.len > 0) {
-        const bb = blocks_to_dump.swapRemove(0);
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const blocks_to_dump = try allBlocksReachableFrom(arena.allocator(), bbidx);
+
+    for(blocks_to_dump.items) |bb| {
         std.debug.print("Block#{d}:\n", .{@enumToInt(bb)});
         var current_decl = blocks.get(bb).first_decl;
         while(decls.getOpt(current_decl)) |decl| {
@@ -375,33 +693,19 @@ pub fn memes(thing: *sema.Value) !void {
             switch(decl.instr) {
                 .param_ref => |p| std.debug.print("@param({d})\n", .{p}),
                 .load_bool_constant => |b| std.debug.print("{}\n", .{b}),
+                .@"undefined" => std.debug.print("undefined", .{}),
                 .add => |a| std.debug.print("${d} + ${d}\n", .{@enumToInt(a.lhs), @enumToInt(a.rhs)}),
                 .incomplete_phi => std.debug.print("<incomplete phi node>\n", .{}),
                 .copy => |c| std.debug.print("@copy(${d})\n", .{@enumToInt(c)}),
                 .@"if" => |if_instr| {
-                    const taken_edge = edges.get(if_instr.taken);
-                    const not_taken_edge = edges.get(if_instr.not_taken);
-                    if(!blocks_visited.contains(taken_edge.target_block)) {
-                        try blocks_to_dump.append(taken_edge.target_block);
-                        try blocks_visited.put(taken_edge.target_block, {});
-                    }
-                    if(!blocks_visited.contains(not_taken_edge.target_block)) {
-                        try blocks_to_dump.append(not_taken_edge.target_block);
-                        try blocks_visited.put(not_taken_edge.target_block, {});
-                    }
                     std.debug.print("if(${d}, Block#{d}, Block#{d})\n", .{
                         @enumToInt(if_instr.condition),
-                        @enumToInt(taken_edge.target_block),
-                        @enumToInt(not_taken_edge.target_block),
+                        @enumToInt(edges.get(if_instr.taken).target_block),
+                        @enumToInt(edges.get(if_instr.not_taken).target_block),
                     });
                 },
                 .goto => |goto_edge| {
-                    const edge = edges.get(goto_edge);
-                    if(!blocks_visited.contains(edge.target_block)) {
-                        try blocks_to_dump.append(edge.target_block);
-                        try blocks_visited.put(edge.target_block, {});
-                    }
-                    std.debug.print("goto(Block#{d})\n", .{@enumToInt(edge.target_block)});
+                    std.debug.print("goto(Block#{d})\n", .{@enumToInt(edges.get(goto_edge).target_block)});
                 },
                 .phi => |phi_index| {
                     var current_phi = PhiOperandIndex.toOpt(phi_index);

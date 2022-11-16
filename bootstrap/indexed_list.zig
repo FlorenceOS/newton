@@ -187,7 +187,7 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
         /// Free a slot by index
         pub fn free(self: *@This(), idx: Index) void {
             @ptrCast(*OptIndex, self.get(idx)).* = self.first_free;
-            self.first_free = idx.toOpt();
+            self.first_free = _Indices.toOpt(idx);
         }
 
         /// Free a slot by pointer
