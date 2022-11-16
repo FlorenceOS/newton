@@ -79,8 +79,8 @@ fn promoteToBiggest(lhs_idx: *ValueIndex.Index, rhs_idx: *ValueIndex.Index) !voi
     }
 }
 
-fn analyzeStatementChain(scope_idx: ScopeIndex.Index, first_ast_stmt: ast.StmtIndex.OptIndex) !Block {
-    const block_scope_idx = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx), .first_decl = .none});
+fn analyzeStatementChain(parent_scope_idx: ScopeIndex.Index, first_ast_stmt: ast.StmtIndex.OptIndex) !Block {
+    const block_scope_idx = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(parent_scope_idx)});
     const block_scope = scopes.get(block_scope_idx);
     var decl_builder = decls.builder();
     var stmt_builder = statements.builder();
@@ -98,18 +98,33 @@ fn analyzeStatementChain(scope_idx: ScopeIndex.Index, first_ast_stmt: ast.StmtIn
                     .init_value = init_value,
                     .next = .none,
                 });
-                _ = try stmt_builder.insert(.{.value = .{.declaration = new_decl}, .next = .none});
+                _ = try stmt_builder.insert(.{.value = .{.declaration = new_decl}});
                 if(block_scope.first_decl == .none) block_scope.first_decl = decl_builder.first;
             },
             .block_statement => |blk| {
-                const new_scope = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(block_scope_idx), .first_decl = .none});
+                const new_scope = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(block_scope_idx)});
                 const block = try analyzeStatementChain(new_scope, blk.first_child);
-                _ = try stmt_builder.insert(.{.value = .{.block = block}, .next = .none});
+                _ = try stmt_builder.insert(.{.value = .{.block = block}});
             },
             .expression_statement => |ast_expr| {
                 const value = try evaluateWithoutTypeHint(block_scope_idx, .none, ast_expr.expr);
                 const expr = try expressions.insert(.{.value = value});
-                _ = try stmt_builder.insert(.{.value = .{.expression = expr}, .next = .none});
+                _ = try stmt_builder.insert(.{.value = .{.expression = expr}});
+            },
+            .if_statement => |if_stmt| {
+                const condition = try evaluateWithTypeHint(block_scope_idx, .none, if_stmt.condition, .bool);
+
+                const taken_scope = try scopes.insert(.{
+                    .outer_scope = ScopeIndex.toOpt(block_scope_idx),
+                });
+                const not_taken_scope = try scopes.insert(.{
+                    .outer_scope = ScopeIndex.toOpt(block_scope_idx),
+                });
+                _ = try stmt_builder.insert(.{.value = .{.if_statement = .{
+                    .condition = condition,
+                    .taken = try analyzeStatementChain(taken_scope, if_stmt.first_taken),
+                    .not_taken = try analyzeStatementChain(not_taken_scope, if_stmt.first_not_taken),
+                }}});
             },
             else => |stmt| std.debug.panic("TODO: Sema {s} statement", .{@tagName(stmt)}),
         }
@@ -141,7 +156,7 @@ fn evaluateWithoutTypeHint(
         .signed_int => |bits| return putValueIn(value_out, .{.type_idx = try types.addDedupLinear(.{.signed_int = bits})}),
         .function_expression => |func_idx| {
             const func = ast.functions.get(func_idx);
-            const param_scope_idx = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx), .first_decl = .none});
+            const param_scope_idx = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx)});
             const param_scope = scopes.get(param_scope_idx);
             var param_builder = decls.builder();
             var curr_ast_param = func.first_param;
@@ -184,7 +199,7 @@ fn evaluateWithoutTypeHint(
             }})});
         },
         .struct_expression => |type_body| {
-            const struct_scope = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx), .first_decl = .none});
+            const struct_scope = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx)});
             var decl_builder = decls.builder();
             var field_builder = struct_fields.builder();
             var curr_decl = type_body.first_decl;
@@ -532,7 +547,7 @@ pub const Function = struct {
 
 pub const Scope = struct {
     outer_scope: ScopeIndex.OptIndex,
-    first_decl: DeclIndex.OptIndex,
+    first_decl: DeclIndex.OptIndex = .none,
 
     pub fn lookupDecl(self: *@This(), name: []const u8) !?*Decl {
         var scope_idx = ScopeIndex.toOpt(scopes.getIndex(self));
@@ -552,10 +567,15 @@ pub const Block = struct {
 };
 
 pub const Statement = struct {
-    next: StatementIndex.OptIndex,
+    next: StatementIndex.OptIndex = .none,
     value: union(enum) {
         expression: ExpressionIndex.Index,
         declaration: DeclIndex.Index,
+        if_statement: struct {
+            condition: ValueIndex.Index,
+            taken: Block,
+            not_taken: Block,
+        },
         block: Block,
     },
 };
