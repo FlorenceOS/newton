@@ -126,6 +126,15 @@ fn analyzeStatementChain(parent_scope_idx: ScopeIndex.Index, first_ast_stmt: ast
                     .not_taken = try analyzeStatementChain(not_taken_scope, if_stmt.first_not_taken),
                 }}});
             },
+            .loop_statement => |loop| {
+                std.debug.assert(loop.condition == .none);
+                const body_scope = try scopes.insert(.{
+                    .outer_scope = ScopeIndex.toOpt(block_scope_idx),
+                });
+                _ = try stmt_builder.insert(.{.value = .{.loop_statement = .{
+                    .body = try analyzeStatementChain(body_scope, loop.first_child),
+                }}});
+            },
             else => |stmt| std.debug.panic("TODO: Sema {s} statement", .{@tagName(stmt)}),
         }
         curr_ast_stmt = ast_stmt.next;
@@ -575,6 +584,9 @@ pub const Statement = struct {
             condition: ValueIndex.Index,
             taken: Block,
             not_taken: Block,
+        },
+        loop_statement: struct {
+            body: Block,
         },
         block: Block,
     },
