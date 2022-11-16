@@ -479,7 +479,6 @@ pub const Decl = struct {
     name: ast.SourceRef,
     init_value: ValueIndex.Index,
     next: DeclIndex.OptIndex,
-    ir_context: ir.DeclContext = .{},
 
     pub fn analyze(self: *@This()) !void {
         const value_ptr = values.get(self.init_value);
