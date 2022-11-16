@@ -97,6 +97,7 @@ pub const ExpressionNode = union(enum) {
     int_literal: SourceRef,
     char_literal: SourceRef,
     string_literal: SourceRef,
+    bool_literal: bool,
 
     // @import
     import,

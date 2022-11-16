@@ -234,7 +234,7 @@ fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
         .@"||_ch", .@"&&_ch",
         .end_of_file, .else_keyword, .enum_keyword, .fn_keyword,
         .struct_keyword, .bool_keyword, .type_keyword, .void_keyword,
-        .anyopaque_keyword, .volatile_keyword,
+        .anyopaque_keyword, .volatile_keyword, .true_keyword, .false_keyword,
         => |_, tag| {
             std.debug.print("Unexpected statement token: {s}\n", .{@tagName(tag)});
             return error.UnexpectedToken;
@@ -250,6 +250,8 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
         .int_literal => |lit| try ast.expressions.insert(.{.int_literal = self.toAstIdent(lit)}),
         .char_literal => |lit| try ast.expressions.insert(.{.char_literal = self.toAstIdent(lit)}),
         .string_literal => |lit| try ast.expressions.insert(.{.string_literal = self.toAstIdent(lit)}),
+        .true_keyword => try ast.expressions.insert(.{.bool_literal = true}),
+        .false_keyword => try ast.expressions.insert(.{.bool_literal = false}),
 
         // Atom keyword literal expressions
         .void_keyword => .void,
@@ -535,7 +537,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
             .if_keyword, .loop_keyword, .return_keyword, .struct_keyword,
             .switch_keyword, .var_keyword, .volatile_keyword, .__keyword, .bool_keyword,
             .type_keyword, .void_keyword, .anyopaque_keyword,
-            .end_of_file,
+            .end_of_file, .true_keyword, .false_keyword,
             => |_, tag| {
                 std.debug.panic("Unexpected post-primary expression token: {s}\n", .{@tagName(tag)});
             },
@@ -693,6 +695,7 @@ fn dumpNode(index: anytype, node: anytype, indent_level: usize) anyerror!void {
         },
         *ast.ExpressionNode => switch(node.*) {
             .identifier, .int_literal, .char_literal, .string_literal => |ident| std.debug.print("{s}", .{try ident.toSlice()}),
+            .bool_literal => |value| std.debug.print("{}", .{value}),
             .void, .anyopaque, .bool, .type => std.debug.print("{s}", .{@tagName(node.*)}),
             .unsigned_int => |bits| std.debug.print("u{d}", .{bits}),
             .signed_int => |bits| std.debug.print("i{d}", .{bits}),

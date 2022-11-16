@@ -251,6 +251,9 @@ fn evaluateWithoutTypeHint(
             const tok = try lit.retokenize();
             return putValueIn(value_out, .{.comptime_int = tok.char_literal.value});
         },
+        .bool_literal => |lit| {
+            return putValueIn(value_out, .{.bool = lit});
+        },
         .function_call => |call| {
             const callee_idx = try evaluateWithoutTypeHint(scope_idx, .none, call.callee);
             const callee = values.get(callee_idx);
@@ -352,6 +355,7 @@ fn evaluateWithTypeHint(
     switch(values.get(evaluated).*) {
         .comptime_int => |value| return promoteInteger(value, value_out, requested_type),
         .unsigned_int, .signed_int => |int| return promoteInteger(int.value, value_out, requested_type),
+        .bool => if(requested_type == .bool) return evaluated,
         .type_idx => if(requested_type == .type) return evaluated,
         else => {},
     }
