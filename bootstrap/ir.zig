@@ -33,27 +33,6 @@ const DeclInstr = union(enum) {
     },
     goto: BlockEdgeIndex.Index,
     phi: PhiOperandIndex.Index,
-
-    pub fn format(
-        self: @This(),
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = options;
-        _ = fmt;
-
-        try switch(self) {
-            .param_ref => |p| writer.print("@param({d})", .{p}),
-            .load_bool_constant => |b| writer.print("{}", .{b}),
-            .add => |a| writer.print("${d} + ${d}", .{@enumToInt(a.lhs), @enumToInt(a.rhs)}),
-            .incomplete_phi => writer.print("<incomplete phi node>", .{}),
-            .copy => |c| writer.print("@copy(${d})", .{c}),
-            .@"if" => |if_instr| writer.print("if(${d}) {{ ... }} else {{ ... }}", .{@enumToInt(if_instr.condition)}),
-            .goto => writer.print("<goto>", .{}),
-            .phi => writer.print("φ(...)", .{}),
-        };
-    }
 };
 
 pub const Decl = struct {
@@ -380,11 +359,67 @@ fn ssaFunction(func: *sema.Function) !BlockIndex.Index {
 
 pub fn memes(thing: *sema.Value) !void {
     const bbidx = try ssaFunction(&thing.function);
-    std.debug.print("SSA dump:\n", .{});
-    var current_decl = blocks.get(bbidx).first_decl;
-    while(decls.getOpt(current_decl)) |decl| {
-        std.debug.print(" ${d} (decl #{d}) = {}\n", .{@enumToInt(current_decl), @enumToInt(decl.sema_decl), decl.instr});
-        current_decl = decl.next;
+
+    var blocks_to_dump = try std.ArrayList(BlockIndex.Index).initCapacity(std.heap.page_allocator, 1024);
+    var blocks_visited = std.AutoHashMap(BlockIndex.Index, void).init(std.heap.page_allocator);
+    defer blocks_to_dump.deinit();
+    defer blocks_visited.deinit();
+    try blocks_to_dump.append(bbidx);
+
+    while(blocks_to_dump.items.len > 0) {
+        const bb = blocks_to_dump.swapRemove(0);
+        std.debug.print("Block#{d}:\n", .{@enumToInt(bb)});
+        var current_decl = blocks.get(bb).first_decl;
+        while(decls.getOpt(current_decl)) |decl| {
+            std.debug.print("  ${d} (decl #{d}) = ", .{@enumToInt(current_decl), @enumToInt(decl.sema_decl)});
+            switch(decl.instr) {
+                .param_ref => |p| std.debug.print("@param({d})\n", .{p}),
+                .load_bool_constant => |b| std.debug.print("{}\n", .{b}),
+                .add => |a| std.debug.print("${d} + ${d}\n", .{@enumToInt(a.lhs), @enumToInt(a.rhs)}),
+                .incomplete_phi => std.debug.print("<incomplete phi node>\n", .{}),
+                .copy => |c| std.debug.print("@copy(${d})\n", .{@enumToInt(c)}),
+                .@"if" => |if_instr| {
+                    const taken_edge = edges.get(if_instr.taken);
+                    const not_taken_edge = edges.get(if_instr.not_taken);
+                    if(!blocks_visited.contains(taken_edge.target_block)) {
+                        try blocks_to_dump.append(taken_edge.target_block);
+                        try blocks_visited.put(taken_edge.target_block, {});
+                    }
+                    if(!blocks_visited.contains(not_taken_edge.target_block)) {
+                        try blocks_to_dump.append(not_taken_edge.target_block);
+                        try blocks_visited.put(not_taken_edge.target_block, {});
+                    }
+                    std.debug.print("if(${d}, Block#{d}, Block#{d})\n", .{
+                        @enumToInt(if_instr.condition),
+                        @enumToInt(taken_edge.target_block),
+                        @enumToInt(not_taken_edge.target_block),
+                    });
+                },
+                .goto => |goto_edge| {
+                    const edge = edges.get(goto_edge);
+                    if(!blocks_visited.contains(edge.target_block)) {
+                        try blocks_to_dump.append(edge.target_block);
+                        try blocks_visited.put(edge.target_block, {});
+                    }
+                    std.debug.print("goto(Block#{d})\n", .{@enumToInt(edge.target_block)});
+                },
+                .phi => |phi_index| {
+                    var current_phi = PhiOperandIndex.toOpt(phi_index);
+                    std.debug.print("φ(", .{});
+                    while(phi_operands.getOpt(current_phi)) |phi| {
+                        const edge = edges.get(phi.edge);
+                        std.debug.print("[${d}, Block#{d}]", .{@enumToInt(phi.decl), @enumToInt(edge.source_block)});
+                        if(phi.next != .none) {
+                            std.debug.print(", ", .{});
+                        }
+                        current_phi = phi.next;
+                    }
+                    std.debug.print(")\n", .{});
+                },
+            }
+            current_decl = decl.next;
+        }
+        std.debug.print("\n", .{});
     }
 }
 
