@@ -220,7 +220,7 @@ fn addPhiOperands(sema_decl: sema.DeclIndex.Index, block_idx: BlockIndex.Index, 
     decls.get(phi_idx).instr = .{
         .phi = PhiOperandIndex.unwrap(init_operand).?,
     };
-    
+
     return tryRemoveTrivialPhi(phi_idx, delete);
 }
 
@@ -340,6 +340,7 @@ const function_optimizations = .{
 
 const peephole_optimizations = .{
     eliminateTrivialPhis,
+    eliminateTrivialIfs,
 };
 
 var optimization_allocator = std.heap.GeneralPurposeAllocator(.{}){.backing_allocator = std.heap.page_allocator};
@@ -450,6 +451,23 @@ fn eliminateTrivialPhis(decl_idx: DeclIndex.Index) !bool {
     if(decl.instr == .phi) {
         _ = tryRemoveTrivialPhi(decl_idx, false);
         return decl.instr != .phi;
+    }
+    return false;
+}
+
+fn eliminateTrivialIfs(decl_idx: DeclIndex.Index) !bool {
+    const decl = decls.get(decl_idx);
+    if(decl.instr == .@"if") {
+        const if_instr = decl.instr.@"if";
+        const cond_decl = decls.get(if_instr.condition);
+
+        switch(cond_decl.instr) {
+            .load_bool_constant => |value| {
+                decl.instr = .{.goto = if(value) if_instr.taken else if_instr.not_taken};
+                return true;
+            },
+            else => {},
+        }
     }
     return false;
 }
