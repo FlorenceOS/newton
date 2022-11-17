@@ -413,11 +413,12 @@ const function_optimizations = .{
 
 const peephole_optimizations = .{
     eliminateTrivialPhis,
-    eliminateContantIfs,
+    eliminateConstantIfs,
     eliminateRedundantIfs,
     eliminateIndirectBranches,
     inlineConstants,
     eliminateTrivialArithmetic,
+    eliminateConstantExpressions,
 };
 
 var optimization_allocator = std.heap.GeneralPurposeAllocator(.{}){.backing_allocator = std.heap.page_allocator};
@@ -540,7 +541,7 @@ fn eliminateTrivialPhis(decl_idx: DeclIndex.Index) !bool {
     return false;
 }
 
-fn eliminateContantIfs(decl_idx: DeclIndex.Index) !bool {
+fn eliminateConstantIfs(decl_idx: DeclIndex.Index) !bool {
     const decl = decls.get(decl_idx);
     if(decl.instr == .@"if") {
         const if_instr = decl.instr.@"if";
@@ -661,7 +662,6 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
                 return true;
             }
         },
-
         .multiply_constant, .multiply_mod_constant,
         => |bop| {
             if(bop.rhs == 1) {
@@ -675,7 +675,6 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
                 }
             }
         },
-
         .divide_constant => |bop| {
             if(bop.rhs == 0) {
                 decl.instr = .{.@"undefined" = {}};
@@ -688,7 +687,6 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
                 }
             }
         },
-
         .modulus_constant => |bop| {
             // TODO: check value against type size to optimize more
             if(bop.rhs == 0) {
@@ -702,8 +700,6 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
                 }
             }
         },
-
-
         .bit_and_constant => |bop| {
             // TODO: check value against type size to optimize more
             if(bop.rhs == 0) {
@@ -711,10 +707,61 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
                 return true;
             }
         },
-
         else => {},
     }
 
+    return false;
+}
+
+fn eliminateConstantExpressions(decl_idx: DeclIndex.Index) !bool {
+    const decl = decls.get(decl_idx);
+    switch(decl.instr) {
+        inline
+        .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
+        .multiply_constant, .multiply_mod_constant, .divide_constant, .modulus_constant,
+        .shift_left_constant, .shift_right_constant, .bit_and_constant, .bit_or_constant, .bit_xor_constant,
+        => |bop, tag| {
+            const lhs = decls.get(bop.lhs);
+            if(lhs.instr == .load_int_constant) {
+                decl.instr = .{.load_int_constant = switch(tag) {
+                    .add_constant => lhs.instr.load_int_constant + bop.rhs,
+                    .add_mod_constant => lhs.instr.load_int_constant +% bop.rhs,
+                    .sub_constant => lhs.instr.load_int_constant - bop.rhs,
+                    .sub_mod_constant => lhs.instr.load_int_constant -% bop.rhs,
+                    .multiply_constant => lhs.instr.load_int_constant * bop.rhs,
+                    .multiply_mod_constant => lhs.instr.load_int_constant *% bop.rhs,
+                    .divide_constant => lhs.instr.load_int_constant / bop.rhs,
+                    .modulus_constant => lhs.instr.load_int_constant % bop.rhs,
+                    .shift_left_constant => lhs.instr.load_int_constant << @intCast(u6, bop.rhs),
+                    .shift_right_constant => lhs.instr.load_int_constant >> @intCast(u6, bop.rhs),
+                    .bit_and_constant => lhs.instr.load_int_constant & bop.rhs,
+                    .bit_or_constant => lhs.instr.load_int_constant | bop.rhs,
+                    .bit_xor_constant => lhs.instr.load_int_constant ^ bop.rhs,
+                    else => unreachable,
+                }};
+                return true;
+            }
+        },
+        inline
+        .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant,
+        .equals_constant, .not_equal_constant,
+        => |bop, tag| {
+            const lhs = decls.get(bop.lhs);
+            if(lhs.instr == .load_int_constant) {
+                decl.instr = .{.load_bool_constant = switch(tag) {
+                    .less_constant => lhs.instr.load_int_constant < bop.rhs,
+                    .less_equal_constant => lhs.instr.load_int_constant <= bop.rhs,
+                    .greater_constant => lhs.instr.load_int_constant > bop.rhs,
+                    .greater_equal_constant => lhs.instr.load_int_constant >= bop.rhs,
+                    .equals_constant => lhs.instr.load_int_constant == bop.rhs,
+                    .not_equal_constant => lhs.instr.load_int_constant != bop.rhs,
+                    else => unreachable,
+                }};
+                return true;
+            }
+        },
+        else => {},
+    }
     return false;
 }
 
