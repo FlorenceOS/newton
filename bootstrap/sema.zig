@@ -79,13 +79,22 @@ fn promoteToBiggest(lhs_idx: *ValueIndex.Index, rhs_idx: *ValueIndex.Index) !voi
     }
 }
 
-fn analyzeStatementChain(parent_scope_idx: ScopeIndex.Index, first_ast_stmt: ast.StmtIndex.OptIndex) !Block {
+fn analyzeStatementChain(
+    parent_scope_idx: ScopeIndex.Index,
+    first_ast_stmt: ast.StmtIndex.OptIndex,
+    current_function: ValueIndex.OptIndex,
+    current_break_block: StatementIndex.OptIndex,
+) !Block {
     const block_scope_idx = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(parent_scope_idx)});
     const block_scope = scopes.get(block_scope_idx);
     var decl_builder = decls.builder();
     var stmt_builder = statements.builder();
     var curr_ast_stmt = first_ast_stmt;
+    var reaches_end = true;
     while(ast.statements.getOpt(curr_ast_stmt)) |ast_stmt| {
+        if(!reaches_end) {
+            return error.StatementUnreachable;
+        }
         switch(ast_stmt.value) {
             .declaration => |decl| {
                 const init_value = try astDeclToValue(block_scope_idx, ast.ExprIndex.toOpt(decl.init_value), decl.type);
@@ -103,7 +112,7 @@ fn analyzeStatementChain(parent_scope_idx: ScopeIndex.Index, first_ast_stmt: ast
             },
             .block_statement => |blk| {
                 const new_scope = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(block_scope_idx)});
-                const block = try analyzeStatementChain(new_scope, blk.first_child);
+                const block = try analyzeStatementChain(new_scope, blk.first_child, current_function, current_break_block);
                 _ = try stmt_builder.insert(.{.value = .{.block = block}});
             },
             .expression_statement => |ast_expr| {
@@ -120,26 +129,50 @@ fn analyzeStatementChain(parent_scope_idx: ScopeIndex.Index, first_ast_stmt: ast
                 const not_taken_scope = try scopes.insert(.{
                     .outer_scope = ScopeIndex.toOpt(block_scope_idx),
                 });
+                const taken_block = try analyzeStatementChain(taken_scope, if_stmt.first_taken, current_function, current_break_block);
+                const not_taken_block = try analyzeStatementChain(not_taken_scope, if_stmt.first_not_taken, current_function, current_break_block);
                 _ = try stmt_builder.insert(.{.value = .{.if_statement = .{
                     .condition = condition,
-                    .taken = try analyzeStatementChain(taken_scope, if_stmt.first_taken),
-                    .not_taken = try analyzeStatementChain(not_taken_scope, if_stmt.first_not_taken),
+                    .taken = taken_block,
+                    .not_taken = not_taken_block,
                 }}});
+                reaches_end = taken_block.reaches_end or not_taken_block.reaches_end;
             },
             .loop_statement => |loop| {
                 std.debug.assert(loop.condition == .none);
                 const body_scope = try scopes.insert(.{
                     .outer_scope = ScopeIndex.toOpt(block_scope_idx),
                 });
-                _ = try stmt_builder.insert(.{.value = .{.loop_statement = .{
-                    .body = try analyzeStatementChain(body_scope, loop.first_child),
-                }}});
+                const loop_stmt = try stmt_builder.insert(.{.value = .{.loop_statement = .{.body = undefined}}});
+                const body = try analyzeStatementChain(body_scope, loop.first_child, current_function, StatementIndex.toOpt(loop_stmt));
+                statements.get(loop_stmt).value.loop_statement.body = body;
+            },
+            .break_statement => {
+                if(StatementIndex.unwrap(current_break_block)) |break_block| {
+                    reaches_end = false;
+                    _ = try stmt_builder.insert(.{.value = .{.break_statement = break_block}});
+                } else {
+                    return error.BreakOutsideLoop;
+                }
+            },
+
+            .return_statement => |ret_stmt| {
+                const func_idx = ValueIndex.unwrap(current_function).?;
+                const func = values.get(func_idx).function;
+                const return_type = values.get(func.return_type);
+                var expr = ValueIndex.OptIndex.none;
+                if(ast.ExprIndex.unwrap(ret_stmt.expr)) |ret_expr| {
+                    expr = ValueIndex.toOpt(try evaluateWithTypeHint(block_scope_idx, .none, ret_expr, return_type.type_idx));
+                } else {
+                    std.debug.assert(func.return_type == .void);
+                }
+                _ = try stmt_builder.insert(.{.value = .{.return_statement = .{.function = func_idx, .value = expr}}});
             },
             else => |stmt| std.debug.panic("TODO: Sema {s} statement", .{@tagName(stmt)}),
         }
         curr_ast_stmt = ast_stmt.next;
     }
-    return .{.scope = block_scope_idx, .first_stmt = stmt_builder.first};
+    return .{.scope = block_scope_idx, .first_stmt = stmt_builder.first, .reaches_end = reaches_end};
 }
 
 fn putValueIn(
@@ -192,7 +225,7 @@ fn evaluateWithoutTypeHint(
                 .return_type = try evaluateWithTypeHint(param_scope_idx, .none, func.return_type, .type),
             }});
 
-            values.get(retval).function.body = try analyzeStatementChain(param_scope_idx, func.body);
+            values.get(retval).function.body = try analyzeStatementChain(param_scope_idx, func.body, ValueIndex.toOpt(retval), .none);
             return retval;
         },
         .pointer_type => |ptr| {
@@ -314,10 +347,10 @@ fn evaluateWithoutTypeHint(
         .parenthesized => |uop| return evaluateWithoutTypeHint(scope_idx, .none, uop.operand),
         .discard_underscore => return .discard_underscore,
         inline
-        .multiply, .multiply_eq, .multiply_mod, .multiply_mod_eq,
-        .divide, .divide_eq, .modulus, .modulus_eq,
         .plus, .plus_eq, .plus_mod, .plus_mod_eq,
         .minus, .minus_eq, .minus_mod, .minus_mod_eq,
+        .multiply, .multiply_eq, .multiply_mod, .multiply_mod_eq,
+        .divide, .divide_eq, .modulus, .modulus_eq,
         .shift_left, .shift_left_eq, .shift_right, .shift_right_eq,
         .bitand, .bitand_eq, .bitor, .bitxor_eq, .bitxor, .bitor_eq,
         .less, .less_equal, .greater, .greater_equal,
@@ -341,10 +374,16 @@ fn evaluateWithoutTypeHint(
                 },
                 else => std.debug.panic("TODO: {s}", .{@tagName(tag)}),
             };
+            const sema_tag = switch(tag) {
+                inline .plus, .plus_eq, .plus_mod, .plus_mod_eq => |a| "add" ++ @tagName(a)[4..],
+                inline .minus, .minus_eq, .minus_mod, .minus_mod_eq => |a| "sub" ++ @tagName(a)[5..],
+                inline .bitand, .bitand_eq, .bitor, .bitxor_eq, .bitxor, .bitor_eq => |a| "bit_" ++ @tagName(a)[3..],
+                else => |a| @tagName(a),
+            };
 
             return putValueIn(value_out, .{.runtime = .{
                 .expr = ExpressionIndex.toOpt(try expressions.insert(
-                    @unionInit(Expression, @tagName(tag), .{.lhs = lhs, .rhs = rhs}),
+                    @unionInit(Expression, sema_tag, .{.lhs = lhs, .rhs = rhs}),
                 )),
                 .value_type = value_type,
             }});
@@ -375,12 +414,18 @@ fn evaluateWithTypeHint(
     expr_idx: ast.ExprIndex.Index,
     requested_type: TypeIndex.Index,
 ) !ValueIndex.Index {
-    const evaluated = try evaluateWithoutTypeHint(scope_idx, value_out, expr_idx);
-    switch(values.get(evaluated).*) {
+    const evaluated_idx = try evaluateWithoutTypeHint(scope_idx, value_out, expr_idx);
+    const evaluated = values.get(evaluated_idx);
+    switch(evaluated.*) {
         .comptime_int => |value| return promoteInteger(value, value_out, requested_type),
         .unsigned_int, .signed_int => |int| return promoteInteger(int.value, value_out, requested_type),
-        .bool => if(requested_type == .bool) return evaluated,
-        .type_idx => if(requested_type == .type) return evaluated,
+        .bool => if(requested_type == .bool) return evaluated_idx,
+        .type_idx => if(requested_type == .type) return evaluated_idx,
+        .runtime => |rt| if(values.get(rt.value_type).type_idx == requested_type) return evaluated_idx,
+        .decl_ref => |dr| {
+            const decl_type = try values.get(decls.get(dr).init_value).getType();
+            if(TypeIndex.unwrap(decl_type).? == requested_type) return evaluated_idx;
+        },
         else => {},
     }
 
@@ -494,7 +539,7 @@ pub const Value = union(enum) {
             .unsigned_int => |int| TypeIndex.toOpt(try types.addDedupLinear(.{.unsigned_int = int.bits})),
             .signed_int => |int| TypeIndex.toOpt(try types.addDedupLinear(.{.signed_int = int.bits})),
             .runtime => |rt| TypeIndex.toOpt(values.get(rt.value_type).type_idx),
-            .decl_ref => |dr| return TypeIndex.toOpt(values.get(values.get(decls.get(dr).init_value).runtime.value_type).type_idx),
+            .decl_ref => |dr| return values.get(decls.get(dr).init_value).getType(),
             else => |other| std.debug.panic("TODO: Get type of {s}", .{@tagName(other)}),
         };
     }
@@ -573,10 +618,12 @@ pub const Scope = struct {
 pub const Block = struct {
     scope: ScopeIndex.Index,
     first_stmt: StatementIndex.OptIndex,
+    reaches_end: bool,
 };
 
 pub const Statement = struct {
     next: StatementIndex.OptIndex = .none,
+    ir_block: ir.BlockIndex.OptIndex = .none,
     value: union(enum) {
         expression: ExpressionIndex.Index,
         declaration: DeclIndex.Index,
@@ -587,6 +634,11 @@ pub const Statement = struct {
         },
         loop_statement: struct {
             body: Block,
+        },
+        break_statement: StatementIndex.Index,
+        return_statement: struct {
+            function: ValueIndex.Index,
+            value: ValueIndex.OptIndex,
         },
         block: Block,
     },
@@ -613,6 +665,14 @@ pub const Expression = union(enum) {
     addr_of: ValueIndex.Index,
     // deref: ValueIndex.Index,
 
+    add: BinaryOp,
+    add_eq: BinaryOp,
+    add_mod: BinaryOp,
+    add_mod_eq: BinaryOp,
+    sub: BinaryOp,
+    sub_eq: BinaryOp,
+    sub_mod: BinaryOp,
+    sub_mod_eq: BinaryOp,
     multiply: BinaryOp,
     multiply_eq: BinaryOp,
     multiply_mod: BinaryOp,
@@ -621,24 +681,16 @@ pub const Expression = union(enum) {
     divide_eq: BinaryOp,
     modulus: BinaryOp,
     modulus_eq: BinaryOp,
-    plus: BinaryOp,
-    plus_eq: BinaryOp,
-    plus_mod: BinaryOp,
-    plus_mod_eq: BinaryOp,
-    minus: BinaryOp,
-    minus_eq: BinaryOp,
-    minus_mod: BinaryOp,
-    minus_mod_eq: BinaryOp,
     shift_left: BinaryOp,
     shift_left_eq: BinaryOp,
     shift_right: BinaryOp,
     shift_right_eq: BinaryOp,
-    bitand: BinaryOp,
-    bitand_eq: BinaryOp,
-    bitor: BinaryOp,
-    bitxor_eq: BinaryOp,
-    bitxor: BinaryOp,
-    bitor_eq: BinaryOp,
+    bit_and: BinaryOp,
+    bit_and_eq: BinaryOp,
+    bit_or: BinaryOp,
+    bit_or_eq: BinaryOp,
+    bit_xor: BinaryOp,
+    bit_xor_eq: BinaryOp,
     less: BinaryOp,
     less_equal: BinaryOp,
     greater: BinaryOp,

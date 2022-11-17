@@ -1,36 +1,10 @@
-const usize = u64;
-const pusize = *const usize;
-
-const other_file = @import("otherfile.tco");
-
-const Thing = struct {
-    just_name,
-    name_and_type: T,
-    just_value = blargh,
-    both: T = 5,
-
-    fn format() void {
-        nope();
-    }
-};
-
-const main = fn(argc: u64, argv: u32, envp: *const volatile anyopaque) usize {
-    var lmao = argc + argv;
-    //const lol = f(69);
-    //_ = lol;
-    // _ = (argc + '\x00').&('\x00', envp.&, argv,);
+const main = fn() u32 {
+    var i: u32 = 0;
     loop {
-        if(true) {
-            lmao = lmao + argc;
-        } else {
-            lmao = lmao + argv;
+        i = i + 1;
+        if (i > 10) {
+            break;
         }
-        argc = lmao;
     }
+    return i;
 };
-
-fn f(lmao: u64) u64 {
-    _ = lmao;
-}
-
-const test: u64 = 0xffffffffffffffff;

@@ -158,7 +158,11 @@ fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
                 .block_statement = .{.first_child = try self.parseBlockStatement()},
             }});
         },
-        .break_keyword => @panic("TODO: break statement"),
+        .break_keyword => {
+            _ = try self.tokenize();
+            _ = try self.expect(.@";_ch");
+            return ast.statements.insert(.{.next = .none, .value = .break_statement});
+        },
         .case_keyword => @panic("TODO: case statement"),
         .const_keyword, .var_keyword => return self.parseDeclaration(token),
         .continue_keyword => @panic("TODO: continue statement"),
@@ -204,7 +208,15 @@ fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
                 },
             }});
         },
-        .return_keyword => @panic("TODO: return statement"),
+        .return_keyword => {
+            var expr = ast.ExprIndex.OptIndex.none;
+            _ = try self.tokenize();
+            if((try self.peekToken()) != .@";_ch") {
+                expr = ast.ExprIndex.toOpt(try self.parseExpression(null));
+            }
+            _ = try self.expect(.@";_ch");
+            return ast.statements.insert(.{.next = .none, .value = .{.return_statement = .{.expr = expr}}});
+        },
         .switch_keyword => @panic("TODO: switch statement"),
         .identifier, .__keyword, .@"(_ch",
         => { // Expression statement
@@ -858,6 +870,15 @@ fn dumpNode(index: anytype, node: anytype, indent_level: usize) anyerror!void {
                     std.debug.print(") ", .{});
                 }
                 try dumpStatementChain(stmt.first_child, indent_level);
+            },
+            .break_statement => std.debug.print("break;", .{}),
+            .return_statement => |stmt| {
+                std.debug.print("return", .{});
+                if(ast.expressions.getOpt(stmt.expr)) |expr| {
+                    std.debug.print(" ", .{});
+                    try dumpNode(stmt.expr, expr, indent_level);
+                }
+                std.debug.print(";", .{});
             },
             else => |stmt| std.debug.panic("Cannot dump statement of type {s}", .{@tagName(stmt)}),
         },

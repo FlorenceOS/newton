@@ -22,9 +22,28 @@ pub const Bop = struct {
 
 const DeclInstr = union(enum) {
     param_ref: u8,
+    load_int_constant: i65,
     load_bool_constant: bool,
     @"undefined",
+
     add: Bop,
+    add_mod: Bop,
+    sub: Bop,
+    sub_mod: Bop,
+    multiply: Bop,
+    multiply_mod: Bop,
+    divide: Bop,
+    modulus: Bop,
+    shift_left: Bop,
+    shift_right: Bop,
+    bit_and: Bop,
+    bit_or: Bop,
+    bit_xor: Bop,
+    less: Bop,
+    less_equal: Bop,
+    equals: Bop,
+    not_equal: Bop,
+
     incomplete_phi: DeclIndex.OptIndex, // Holds the next incomplete phi node in the same block
     copy: DeclIndex.Index, // Should be eliminated during optimization
     @"if": struct {
@@ -32,6 +51,7 @@ const DeclInstr = union(enum) {
         taken: BlockEdgeIndex.Index,
         not_taken: BlockEdgeIndex.Index,
     },
+    @"return": DeclIndex.Index,
     goto: BlockEdgeIndex.Index,
     phi: PhiOperandIndex.Index,
 
@@ -64,14 +84,19 @@ const DeclInstr = union(enum) {
 
             .phi => |p| return OperandIterator{.value = .{.phi_iterator = phi_operands.get(p)}},
 
-            .add => |*a| {
-                bounded_result.value.bounded_iterator.appendAssumeCapacity(&a.lhs);
-                bounded_result.value.bounded_iterator.appendAssumeCapacity(&a.rhs);
+            .add, .add_mod, .sub, .sub_mod,
+            .multiply, .multiply_mod, .divide, .modulus,
+            .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
+            .less, .less_equal, .equals, .not_equal,
+            => |*bop| {
+                bounded_result.value.bounded_iterator.appendAssumeCapacity(&bop.lhs);
+                bounded_result.value.bounded_iterator.appendAssumeCapacity(&bop.rhs);
             },
+
             .copy => |*c| bounded_result.value.bounded_iterator.appendAssumeCapacity(c),
             .@"if" => |*instr| bounded_result.value.bounded_iterator.appendAssumeCapacity(&instr.condition),
-
-            .param_ref, .load_bool_constant, .@"undefined", .goto,
+            .@"return" => |*value| bounded_result.value.bounded_iterator.appendAssumeCapacity(value),
+            .param_ref, .load_int_constant, .load_bool_constant, .@"undefined", .goto,
             => {}, // No operands
         }
 
@@ -82,9 +107,13 @@ const DeclInstr = union(enum) {
         switch(self.*) {
             .incomplete_phi => unreachable,
 
-            .@"if", .goto => return true,
+            .@"if", .@"return", .goto => return true,
 
-            .param_ref, .load_bool_constant, .@"undefined", .add,
+            .param_ref, .load_int_constant, .load_bool_constant, .@"undefined",
+            .add, .add_mod, .sub, .sub_mod,
+            .multiply, .multiply_mod, .divide, .modulus,
+            .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
+            .less, .less_equal, .equals, .not_equal,
             .copy, .phi,
             => return false,
         }
@@ -99,8 +128,12 @@ const DeclInstr = union(enum) {
                 result.appendAssumeCapacity(&instr.not_taken);
             },
             .goto => |*out| result.appendAssumeCapacity(out),
-            .param_ref, .load_bool_constant, .@"undefined", .add, .copy,
-            .phi
+            .@"return",
+            .param_ref, .load_int_constant, .load_bool_constant, .@"undefined", .copy, .phi,
+            .add, .add_mod, .sub, .sub_mod,
+            .multiply, .multiply_mod, .divide, .modulus,
+            .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
+            .less, .less_equal, .equals, .not_equal,
             => {}, // No out edges
         }
         return result;
@@ -340,7 +373,9 @@ const function_optimizations = .{
 
 const peephole_optimizations = .{
     eliminateTrivialPhis,
-    eliminateTrivialIfs,
+    eliminateContantIfs,
+    eliminateRedundantIfs,
+    eliminateIndirectBranches,
 };
 
 var optimization_allocator = std.heap.GeneralPurposeAllocator(.{}){.backing_allocator = std.heap.page_allocator};
@@ -455,7 +490,7 @@ fn eliminateTrivialPhis(decl_idx: DeclIndex.Index) !bool {
     return false;
 }
 
-fn eliminateTrivialIfs(decl_idx: DeclIndex.Index) !bool {
+fn eliminateContantIfs(decl_idx: DeclIndex.Index) !bool {
     const decl = decls.get(decl_idx);
     if(decl.instr == .@"if") {
         const if_instr = decl.instr.@"if";
@@ -470,6 +505,37 @@ fn eliminateTrivialIfs(decl_idx: DeclIndex.Index) !bool {
         }
     }
     return false;
+}
+
+fn eliminateRedundantIfs(decl_idx: DeclIndex.Index) !bool {
+    const decl = decls.get(decl_idx);
+    if(decl.instr == .@"if") {
+        const if_instr = decl.instr.@"if";
+        const taken_edge = edges.get(if_instr.taken);
+        const not_taken_edge = edges.get(if_instr.not_taken);
+        if(taken_edge.target_block == not_taken_edge.target_block) {
+            decl.instr = .{.goto = if_instr.taken};
+            return true;
+        }
+    }
+    return false;
+}
+
+fn eliminateIndirectBranches(decl_idx: DeclIndex.Index) !bool {
+    const decl = decls.get(decl_idx);
+    var did_something = false;
+    for(decl.instr.outEdges().slice()) |edge| {
+        const target_edge = edges.get(edge.*);
+        const target_block = blocks.get(target_edge.target_block);
+        if(target_block.first_decl == target_block.last_decl) {
+            const first_decl = decls.getOpt(target_block.first_decl) orelse continue;
+            if(first_decl.instr == .goto) {
+                edge.* = first_decl.instr.goto;
+                did_something = true;
+            }
+        }
+    }
+    return did_something;
 }
 
 fn appendToBlock(block_idx: BlockIndex.Index, sema_decl: sema.DeclIndex.OptIndex, instr: DeclInstr) !DeclIndex.Index {
@@ -538,22 +604,20 @@ fn ssaBlockStatementIntoBasicBlock(
                 // and TODO: a new break target location
                 current_basic_block = try ssaBlockStatementIntoBasicBlock(b.first_stmt, b.scope, current_basic_block);
             },
-            .declaration, .expression => {
-                switch(stmt.value) {
-                    .declaration => |decl_idx| {
-                        const decl = sema.decls.get(decl_idx);
-                        const init_value = sema.values.get(decl.init_value);
+            .declaration => |decl_idx| {
+                const decl = sema.decls.get(decl_idx);
+                const init_value = sema.values.get(decl.init_value);
 
-                        if(init_value.* == .runtime) {
-                            const expr = init_value.runtime.expr;
-                            _ = try ssaExpr(current_basic_block, sema.ExpressionIndex.unwrap(expr).?, sema.DeclIndex.toOpt(decl_idx));
-                        }
-                    },
-                    .expression => |expr_idx| {
-                        _ = try ssaExpr(current_basic_block, expr_idx, .none);
-                    },
-                    else => unreachable,
+                if(init_value.* == .runtime) {
+                    const expr = init_value.runtime.expr;
+                    _ = try ssaExpr(current_basic_block, sema.ExpressionIndex.unwrap(expr).?, sema.DeclIndex.toOpt(decl_idx));
+                } else {
+                    const value = try ssaValue(current_basic_block, decl.init_value, .none);
+                    decls.get(value).sema_decl = sema.DeclIndex.toOpt(decl_idx);
                 }
+            },
+            .expression => |expr_idx| {
+                _ = try ssaExpr(current_basic_block, expr_idx, .none);
             },
             .if_statement => |if_stmt| {
                 const condition_value = try ssaValue(current_basic_block, if_stmt.condition, .none);
@@ -578,18 +642,22 @@ fn ssaBlockStatementIntoBasicBlock(
                     if_stmt.taken.scope,
                     taken_entry,
                 );
-                const taken_exit_branch = try appendToBlock(taken_exit, .none, .{.goto = undefined});
+                if(if_stmt.taken.reaches_end) {
+                    const taken_exit_branch = try appendToBlock(taken_exit, .none, .{.goto = undefined});
+                    decls.get(taken_exit_branch).instr.goto = try addEdge(taken_exit, if_exit);
+                }
                 try blocks.get(taken_exit).filled();
-                decls.get(taken_exit_branch).instr.goto = try addEdge(taken_exit, if_exit);
 
                 const not_taken_exit = try ssaBlockStatementIntoBasicBlock(
                     if_stmt.not_taken.first_stmt,
                     if_stmt.not_taken.scope,
                     not_taken_entry,
                 );
-                const not_taken_exit_branch = try appendToBlock(not_taken_exit, .none, .{.goto = undefined});
+                if (if_stmt.not_taken.reaches_end) {
+                    const not_taken_exit_branch = try appendToBlock(not_taken_exit, .none, .{.goto = undefined});
+                    decls.get(not_taken_exit_branch).instr.goto = try addEdge(not_taken_exit, if_exit);
+                }
                 try blocks.get(not_taken_exit).filled();
-                decls.get(not_taken_exit_branch).instr.goto = try addEdge(not_taken_exit, if_exit);
 
                 try blocks.get(if_exit).seal();
 
@@ -602,18 +670,34 @@ fn ssaBlockStatementIntoBasicBlock(
                 try blocks.get(current_basic_block).filled();
 
                 const exit_block = try blocks.insert(.{});
+                stmt.ir_block = BlockIndex.toOpt(exit_block);
                 const loop_body_end = try ssaBlockStatementIntoBasicBlock(
                     loop.body.first_stmt,
                     loop.body.scope,
                     loop_body_entry,
                 );
                 try blocks.get(exit_block).seal();
-                const loop_instr = try appendToBlock(loop_body_end, .none, .{.goto = undefined});
+                if(loop.body.reaches_end) {
+                    const loop_instr = try appendToBlock(loop_body_end, .none, .{.goto = undefined});
+                    decls.get(loop_instr).instr.goto = try addEdge(loop_body_end, loop_body_entry);
+                }
                 try blocks.get(loop_body_end).filled();
-                decls.get(loop_instr).instr.goto = try addEdge(loop_body_end, loop_body_entry);
                 try blocks.get(loop_body_entry).seal();
 
                 current_basic_block = exit_block;
+            },
+            .break_statement => |break_block| {
+                const goto_block = BlockIndex.unwrap(sema.statements.get(break_block).ir_block).?;
+                _ = try appendToBlock(current_basic_block, .none, .{.goto = try addEdge(current_basic_block, goto_block)});
+            },
+            .return_statement => |return_stmt| {
+                var value = if(sema.ValueIndex.unwrap(return_stmt.value)) |sema_value| blk: {
+                    break :blk try ssaValue(current_basic_block, sema_value, .none);
+                } else blk: {
+                    break :blk try appendToBlock(current_basic_block, .none, .{.@"undefined" = {}});
+                };
+
+                _ = try appendToBlock(current_basic_block, .none, .{.@"return" = value});
             },
         }
         current_statement = stmt.next;
@@ -641,9 +725,18 @@ fn ssaValue(
                 return readVariable(block_idx, decl_idx);
             }
         },
+        .comptime_int => |value| {
+            std.debug.assert(update_with_value == .none);
+            return appendToBlock(block_idx, .none, .{.load_int_constant = value});
+        },
         .bool => |value| {
             std.debug.assert(update_with_value == .none);
             return appendToBlock(block_idx, .none, .{.load_bool_constant = value});
+        },
+        .unsigned_int => |value| {
+            // TODO: Pass value bit width along too
+            std.debug.assert(update_with_value == .none);
+            return appendToBlock(block_idx, .none, .{.load_int_constant = value.value});
         },
         else => |val| std.debug.panic("Unhandled ssaing of value {s}", .{@tagName(val)}),
     }
@@ -665,12 +758,36 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index, up
 
             return undefined;
         },
-        .plus => |bop| {
-            return appendToBlock(block_idx, update_decl, .{.add = .{
+        inline
+        .add, .add_mod, .sub, .sub_mod,
+        .multiply, .multiply_mod, .divide, .modulus,
+        .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
+        .less, .less_equal, .equals, .not_equal,
+        => |bop, tag| {
+            return appendToBlock(block_idx, update_decl, @unionInit(DeclInstr, @tagName(tag), .{
                 .lhs = try ssaValue(block_idx, bop.lhs, .none),
                 .rhs = try ssaValue(block_idx, bop.rhs, .none),
-            }});
+            }));
         },
+        inline
+        .add_eq, .add_mod_eq, .sub_eq, .sub_mod_eq,
+        .multiply_eq, .multiply_mod_eq, .divide_eq, .modulus_eq,
+        .shift_left_eq, .shift_right_eq, .bit_and_eq, .bit_or_eq, .bit_xor_eq,
+        => |bop, tag| {
+            const value = try appendToBlock(block_idx, .none, @unionInit(DeclInstr, @tagName(tag)[0..@tagName(tag).len - 3], .{
+                .lhs = try ssaValue(block_idx, bop.lhs, .none),
+                .rhs = try ssaValue(block_idx, bop.rhs, .none),
+            }));
+            return try ssaValue(block_idx, bop.lhs, DeclIndex.toOpt(value));
+        },
+        .greater => |bop| return appendToBlock(block_idx, update_decl, .{.less_equal = .{
+            .lhs = try ssaValue(block_idx, bop.rhs, .none),
+            .rhs = try ssaValue(block_idx, bop.lhs, .none),
+        }}),
+        .greater_equal => |bop| return appendToBlock(block_idx, update_decl, .{.less = .{
+            .lhs = try ssaValue(block_idx, bop.rhs, .none),
+            .rhs = try ssaValue(block_idx, bop.lhs, .none),
+        }}),
         else => |expr| std.debug.panic("Unhandled ssaing of expr {s}", .{@tagName(expr)}),
     }
 }
@@ -707,12 +824,18 @@ pub fn memes(thing: *sema.Value) !void {
         std.debug.print("Block#{d}:\n", .{@enumToInt(bb)});
         var current_decl = blocks.get(bb).first_decl;
         while(decls.getOpt(current_decl)) |decl| {
-            std.debug.print("  ${d} (decl #{d}) = ", .{@enumToInt(current_decl), @enumToInt(decl.sema_decl)});
+            std.debug.print("  ${d} = ", .{@enumToInt(current_decl)});
             switch(decl.instr) {
                 .param_ref => |p| std.debug.print("@param({d})\n", .{p}),
+                .load_int_constant => |value| std.debug.print("{d}\n", .{value}),
                 .load_bool_constant => |b| std.debug.print("{}\n", .{b}),
                 .@"undefined" => std.debug.print("undefined", .{}),
-                .add => |a| std.debug.print("${d} + ${d}\n", .{@enumToInt(a.lhs), @enumToInt(a.rhs)}),
+                inline
+                .add, .add_mod, .sub, .sub_mod,
+                .multiply, .multiply_mod, .divide, .modulus,
+                .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
+                .less, .less_equal, .equals, .not_equal,
+                => |bop, tag| std.debug.print("{s}(${d}, ${d})\n", .{@tagName(tag), @enumToInt(bop.lhs), @enumToInt(bop.rhs)}),
                 .incomplete_phi => std.debug.print("<incomplete phi node>\n", .{}),
                 .copy => |c| std.debug.print("@copy(${d})\n", .{@enumToInt(c)}),
                 .@"if" => |if_instr| {
@@ -722,12 +845,13 @@ pub fn memes(thing: *sema.Value) !void {
                         @enumToInt(edges.get(if_instr.not_taken).target_block),
                     });
                 },
+                .@"return" => |value| std.debug.print("return ${d}\n", .{@enumToInt(value)}),
                 .goto => |goto_edge| {
                     std.debug.print("goto(Block#{d})\n", .{@enumToInt(edges.get(goto_edge).target_block)});
                 },
                 .phi => |phi_index| {
                     var current_phi = PhiOperandIndex.toOpt(phi_index);
-                    std.debug.print("φ(", .{});
+                    std.debug.print("phi(", .{});
                     while(phi_operands.getOpt(current_phi)) |phi| {
                         const edge = edges.get(phi.edge);
                         std.debug.print("[${d}, Block#{d}]", .{@enumToInt(phi.decl), @enumToInt(edge.source_block)});
