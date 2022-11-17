@@ -900,6 +900,7 @@ fn ssaBlockStatementIntoBasicBlock(
     first_stmt: sema.StatementIndex.OptIndex,
     scope: sema.ScopeIndex.Index,
     basic_block: BlockIndex.Index,
+    return_phi_node: DeclIndex.Index,
 ) !BlockIndex.Index {
     _ = scope;
     var current_statement = first_stmt;
@@ -910,7 +911,7 @@ fn ssaBlockStatementIntoBasicBlock(
             .block => |b| {
                 // A freestanding block statement is part of the same basic block but with a different scope
                 // and TODO: a new break target location
-                current_basic_block = try ssaBlockStatementIntoBasicBlock(b.first_stmt, b.scope, current_basic_block);
+                current_basic_block = try ssaBlockStatementIntoBasicBlock(b.first_stmt, b.scope, current_basic_block, return_phi_node);
             },
             .declaration => |decl_idx| {
                 const decl = sema.decls.get(decl_idx);
@@ -949,6 +950,7 @@ fn ssaBlockStatementIntoBasicBlock(
                     if_stmt.taken.first_stmt,
                     if_stmt.taken.scope,
                     taken_entry,
+                    return_phi_node,
                 );
                 if(if_stmt.taken.reaches_end) {
                     const taken_exit_branch = try appendToBlock(taken_exit, .none, .{.goto = undefined});
@@ -960,6 +962,7 @@ fn ssaBlockStatementIntoBasicBlock(
                     if_stmt.not_taken.first_stmt,
                     if_stmt.not_taken.scope,
                     not_taken_entry,
+                    return_phi_node,
                 );
                 if (if_stmt.not_taken.reaches_end) {
                     const not_taken_exit_branch = try appendToBlock(not_taken_exit, .none, .{.goto = undefined});
@@ -983,6 +986,7 @@ fn ssaBlockStatementIntoBasicBlock(
                     loop.body.first_stmt,
                     loop.body.scope,
                     loop_body_entry,
+                    return_phi_node,
                 );
                 try blocks.get(exit_block).seal();
                 if(loop.body.reaches_end) {
@@ -1005,7 +1009,15 @@ fn ssaBlockStatementIntoBasicBlock(
                     break :blk try appendToBlock(current_basic_block, .none, .{.@"undefined" = {}});
                 };
 
-                _ = try appendToBlock(current_basic_block, .none, .{.@"return" = value});
+                const phi_decl = decls.get(return_phi_node);
+                const exit_edge = try addEdge(current_basic_block, phi_decl.block);
+                phi_decl.instr.phi = PhiOperandIndex.toOpt(try phi_operands.insert(.{
+                    .edge = exit_edge,
+                    .decl = value,
+                    .next = phi_decl.instr.phi,
+                }));
+
+                _ = try appendToBlock(current_basic_block, .none, .{.@"goto" = exit_edge});
             },
         }
         current_statement = stmt.next;
@@ -1028,7 +1040,7 @@ fn ssaValue(
             // TODO: Check if the decl has gotten its address taken.
             // If so, we need to do a memory load instead of an SSA passthrough.
             if(decls.getOpt(update_with_value)) |update| {
-                return appendToBlock(block_idx, DeclIndex.toOpt(decl_idx), .{.copy = decls.getIndex(update)});
+                return appendToBlock(block_idx, sema.DeclIndex.toOpt(decl_idx), .{.copy = decls.getIndex(update)});
             } else {
                 return readVariable(block_idx, decl_idx);
             }
@@ -1114,9 +1126,14 @@ fn ssaFunction(func: *sema.Function) !BlockIndex.Index {
         curr_param = decl.next;
     }
 
-    const return_block = try ssaBlockStatementIntoBasicBlock(func.body.first_stmt, func.body.scope, first_basic_block);
-    // TODO: Place implicit return statement here
-    _ = return_block;
+    const exit_block = try blocks.insert(.{});
+    const phi = try appendToBlock(exit_block, .none, .{.phi = .none});
+    _ = try appendToBlock(exit_block, .none, .{.@"return" = phi});
+
+    const return_block = try ssaBlockStatementIntoBasicBlock(func.body.first_stmt, func.body.scope, first_basic_block, phi);
+    if(func.body.reaches_end) {
+        _ = try appendToBlock(return_block, .none, .{.goto = try addEdge(return_block, exit_block)});
+    }
     return first_basic_block;
 }
 
