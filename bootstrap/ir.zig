@@ -1189,6 +1189,12 @@ pub fn memes(thing: *sema.Value) !void {
         }
         std.debug.print("\n", .{});
     }
+
+    const backend = @import("backend.zig");
+    var writer = backend.Writer(backend.x86_64){
+        .allocator = optimization_allocator.allocator(),
+    };
+    try writer.writeFunction(bbidx);
 }
 
 pub fn init() !void {
