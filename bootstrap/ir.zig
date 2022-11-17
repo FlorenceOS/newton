@@ -140,9 +140,7 @@ const DeclInstr = union(enum) {
     fn isVolatile(self: *@This()) bool {
         switch(self.*) {
             .incomplete_phi => unreachable,
-
             .@"if", .@"return", .goto => return true,
-
             else => return false,
         }
     }
@@ -150,16 +148,8 @@ const DeclInstr = union(enum) {
     fn isValue(self: *@This()) bool {
         switch(self.*) {
             .incomplete_phi => unreachable,
-
             .@"if", .@"return", .goto => return false,
-
-            .param_ref, .load_int_constant, .load_bool_constant, .@"undefined",
-            .add, .add_mod, .sub, .sub_mod,
-            .multiply, .multiply_mod, .divide, .modulus,
-            .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
-            .less, .less_equal, .equals, .not_equal,
-            .phi, .copy,
-            => return true,
+            else => return true,
         }
     }
 
@@ -1112,10 +1102,14 @@ pub fn memes(thing: *sema.Value) !void {
         std.debug.print("Block#{d}:\n", .{@enumToInt(bb)});
         var current_decl = blocks.get(bb).first_decl;
         while(decls.getOpt(current_decl)) |decl| {
-            if(decl.reg_alloc_value) |reg| {
-                std.debug.print("  (reg #{d})", .{reg});
+            std.debug.print("  ", .{});
+            if(decl.instr.isValue()) {
+                std.debug.print("${d}", .{@enumToInt(current_decl)});
+                if(decl.reg_alloc_value) |reg| {
+                    std.debug.print(" (reg #{d})", .{reg});
+                }
+                std.debug.print(" = ", .{});
             }
-            std.debug.print("  ${d} = ", .{@enumToInt(current_decl)});
             switch(decl.instr) {
                 .param_ref => |p| std.debug.print("@param({d})\n", .{p}),
                 .load_int_constant => |value| std.debug.print("{d}\n", .{value}),
