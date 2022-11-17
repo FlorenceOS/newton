@@ -22,12 +22,12 @@ pub const Bop = struct {
 
 pub const VariableConstantBop = struct {
     lhs: DeclIndex.Index,
-    rhs: i65,
+    rhs: u64,
 };
 
 const DeclInstr = union(enum) {
     param_ref: u8,
-    load_int_constant: i65,
+    load_int_constant: u64,
     load_bool_constant: bool,
     @"undefined",
 
@@ -417,6 +417,7 @@ const peephole_optimizations = .{
     eliminateRedundantIfs,
     eliminateIndirectBranches,
     inlineConstants,
+    eliminateTrivialArithmetic,
 };
 
 var optimization_allocator = std.heap.GeneralPurposeAllocator(.{}){.backing_allocator = std.heap.page_allocator};
@@ -645,6 +646,75 @@ fn inlineConstants(decl_idx: DeclIndex.Index) !bool {
 
         else => {},
     }
+    return false;
+}
+
+fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
+    const decl = decls.get(decl_idx);
+    switch(decl.instr) {
+        .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
+        .shift_left_constant, .shift_right_constant,
+        .bit_or_constant, .bit_xor_constant,
+        => |bop| {
+            if(bop.rhs == 0) {
+                decl.instr = .{.copy = bop.lhs};
+                return true;
+            }
+        },
+
+        .multiply_constant, .multiply_mod_constant,
+        => |bop| {
+            if(bop.rhs == 1) {
+                decl.instr = .{.copy = bop.lhs};
+                return true;
+            } else {
+                const l2 = std.math.log2_int(u64, bop.rhs);
+                if((@as(u64, 1) << l2) == bop.rhs) {
+                    decl.instr = .{.shift_left_constant = .{.lhs = bop.lhs, .rhs = l2}};
+                    return true;
+                }
+            }
+        },
+
+        .divide_constant => |bop| {
+            if(bop.rhs == 0) {
+                decl.instr = .{.@"undefined" = {}};
+                return true;
+            } else {
+                const l2 = std.math.log2_int(u64, bop.rhs);
+                if((@as(u64, 1) << l2) == bop.rhs) {
+                    decl.instr = .{.shift_right_constant = .{.lhs = bop.lhs, .rhs = l2}};
+                    return true;
+                }
+            }
+        },
+
+        .modulus_constant => |bop| {
+            // TODO: check value against type size to optimize more
+            if(bop.rhs == 0) {
+                decl.instr = .{.@"undefined" = {}};
+                return true;
+            } else {
+                const l2 = std.math.log2_int(u64, bop.rhs);
+                if((@as(u64, 1) << l2) == bop.rhs) {
+                    decl.instr = .{.bit_and_constant = .{.lhs = bop.lhs, .rhs = bop.rhs - 1}};
+                    return true;
+                }
+            }
+        },
+
+
+        .bit_and_constant => |bop| {
+            // TODO: check value against type size to optimize more
+            if(bop.rhs == 0) {
+                decl.instr = .{.load_int_constant = 0};
+                return true;
+            }
+        },
+
+        else => {},
+    }
+
     return false;
 }
 
@@ -896,7 +966,7 @@ fn ssaValue(
         },
         .comptime_int => |value| {
             std.debug.assert(update_with_value == .none);
-            return appendToBlock(block_idx, .none, .{.load_int_constant = value});
+            return appendToBlock(block_idx, .none, .{.load_int_constant = @intCast(u64, value)});
         },
         .bool => |value| {
             std.debug.assert(update_with_value == .none);
@@ -905,7 +975,7 @@ fn ssaValue(
         .unsigned_int => |value| {
             // TODO: Pass value bit width along too
             std.debug.assert(update_with_value == .none);
-            return appendToBlock(block_idx, .none, .{.load_int_constant = value.value});
+            return appendToBlock(block_idx, .none, .{.load_int_constant = @intCast(u64, value.value)});
         },
         else => |val| std.debug.panic("Unhandled ssaing of value {s}", .{@tagName(val)}),
     }
