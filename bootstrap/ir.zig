@@ -369,6 +369,7 @@ fn allBlocksReachableFrom(allocator: std.mem.Allocator, head_block: BlockIndex.I
 const function_optimizations = .{
     eliminateCopies,
     eliminateUnreferenced,
+    eliminateDeadBlocks,
 };
 
 const peephole_optimizations = .{
@@ -427,6 +428,14 @@ fn eliminateCopyOperands(
     copy_dict: *std.AutoHashMap(DeclIndex.Index, DeclIndex.Index)
 ) !void {
     operand.* = try eliminateCopyChain(operand.*, copy_dict);
+}
+
+fn eliminateDeadBlocks(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
+    const new_blocks = try allBlocksReachableFrom(alloc, fn_blocks.items[0]);
+    if(new_blocks.items.len == fn_blocks.items.len) return false;
+    std.mem.copy(BlockIndex.Index, fn_blocks.items, new_blocks.items);
+    fn_blocks.shrinkRetainingCapacity(new_blocks.items.len);
+    return true;
 }
 
 fn eliminateCopies(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
