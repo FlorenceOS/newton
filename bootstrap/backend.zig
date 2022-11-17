@@ -22,7 +22,7 @@ const Relocation = struct {
         switch(self.relocation_type) {
             .rel32_post_0 => {
                 const rel = relocation_target_offset -% (self.output_offset +% 4);
-                output_bytes[self.output_offset..][0..4].* = std.mem.toBytes(@intCast(i32, rel));
+                output_bytes[self.output_offset..][0..4].* = std.mem.toBytes(@intCast(i32, @bitCast(i64, rel)));
             },
         }
     }
