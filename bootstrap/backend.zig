@@ -71,6 +71,26 @@ pub fn Writer(comptime Platform: type) type {
             try self.output_bytes.appendSlice(self.allocator, &std.mem.toBytes(value));
         }
 
+        pub fn prepareBranch(self: *@This(), edge: ir.BlockEdgeIndex.Index, param: Platform.MovParam) !void {
+            var curr_decl = ir.blocks.get(ir.edges.get(edge).target_block).first_decl;
+            while(ir.decls.getOpt(curr_decl)) |decl| {
+                if(decl.instr == .phi) {
+                    const dest_reg = decl.reg_alloc_value.?;
+                    var curr_op = decl.instr.phi;
+                    while(ir.phi_operands.getOpt(curr_op)) |op| {
+                        if(op.edge == edge) {
+                            const src_reg = ir.decls.get(op.decl).reg_alloc_value.?;
+                            if(src_reg != dest_reg) {
+                                try Platform.movRegForPhi(self, src_reg, dest_reg, param);
+                            }
+                        }
+                        curr_op = op.next;
+                    }
+                }
+                curr_decl = decl.next;
+            }
+        }
+
         fn writeBlock(self: *@This(), bidx: ir.BlockIndex.Index) !?ir.BlockIndex.Index {
             var block = ir.blocks.get(bidx);
             var current_instr = block.first_decl;
