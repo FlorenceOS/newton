@@ -1,3 +1,20 @@
+fn strlen(str: *const u8) u64 {
+    var result: u64 = 0;
+    loop {
+        if(str[result] == 0) {
+            return result;
+        }
+        result += 1;
+    }
+}
+
+const SYS_WRITE = 1;
+
+fn print(str: *const u8) void {
+    const len = strlen(str);
+    @syscall(SYS_WRITE, str, len);
+}
+
 const main = fn(a: u32, b: u32) u32 {
     var i: u32 = a + b;
     loop {

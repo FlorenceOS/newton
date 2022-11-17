@@ -1124,8 +1124,8 @@ pub fn memes(thing: *sema.Value) !void {
 
     try doRegAlloc(
         arena.allocator(), &blocks_to_dump, 0,
-        &[_]u8{5, 4, 3, 2, 8, 9},
-        &[_]u8{0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 14, 15},
+        &[_]u8{7, 6, 3, 2, 8, 9},
+        &[_]u8{0, 1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
     );
 
     for(blocks_to_dump.items) |bb| {
