@@ -158,7 +158,7 @@ pub fn writeDecl(writer: *backend.Writer(@This()), decl_idx: ir.DeclIndex.Index)
                 try writer.writeInt(u8, 0x0F);
                 try writer.writeInt(u8, 0x80 | cond_flag ^ cond_flags.not);
                 try writer.writeRelocatedValue(op.not_taken, .rel32_post_0);
-                try writer.prepareBranch(op.taken, null);
+                try writer.prepareBranch(op.not_taken, null);
                 return bidx;
             } else {
                 try writer.prepareBranch(op.taken, cond_flag);
