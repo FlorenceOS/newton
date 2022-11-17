@@ -119,6 +119,22 @@ const DeclInstr = union(enum) {
         }
     }
 
+    fn isValue(self: *@This()) bool {
+        switch(self.*) {
+            .incomplete_phi => unreachable,
+
+            .@"if", .@"return", .goto => return false,
+
+            .param_ref, .load_int_constant, .load_bool_constant, .@"undefined",
+            .add, .add_mod, .sub, .sub_mod,
+            .multiply, .multiply_mod, .divide, .modulus,
+            .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
+            .less, .less_equal, .equals, .not_equal,
+            .phi, .copy,
+            => return true,
+        }
+    }
+
     fn outEdges(self: *@This()) std.BoundedArray(*BlockEdgeIndex.Index, 2) {
         var result = std.BoundedArray(*BlockEdgeIndex.Index, 2){};
         switch(self.*) {
@@ -147,6 +163,7 @@ pub const Decl = struct {
 
     sema_decl: sema.DeclIndex.OptIndex,
     instr: DeclInstr,
+    reg_alloc_value: ?u8 = null,
 };
 
 const InstructionToBlockEdge = struct {
@@ -598,6 +615,65 @@ fn addEdge(
     return retval;
 }
 
+fn doRegAlloc(
+    allocator: std.mem.Allocator,
+    block_list: *const BlockList,
+    return_register: u8,
+    arg_registers: []const u8,
+    gprs: []const u8,
+) !void {
+    _ = gprs;
+
+    var to_visit = std.ArrayList(BlockIndex.Index).init(allocator);
+    var has_visited = std.AutoHashMap(BlockIndex.Index, void).init(allocator);
+
+    for(block_list.items) |blk| {
+        var current_decl = blocks.get(blk).last_decl;
+        while(decls.getOpt(current_decl)) |decl| {
+            // Is this a returning block?
+            switch(decl.instr) {
+                .phi => current_decl = decl.prev,
+                .@"return" => {
+                    try to_visit.append(blk);
+                    try has_visited.put(blk, {});
+                    break;
+                },
+                else => break,
+            }
+        }
+    }
+
+    while(to_visit.items.len > 0) {
+        const blk_idx = to_visit.swapRemove(0);
+        const blk = blocks.get(blk_idx);
+        {
+            var current_edge = blk.first_predecessor;
+            while(edges.getOpt(current_edge)) |edge| {
+                if(has_visited.get(edge.target_block) == null) {
+                    try has_visited.put(edge.target_block, {});
+                    try to_visit.append(edge.target_block);
+                }
+                current_edge = edge.next;
+            }
+        }
+
+        var current_decl = blk.last_decl;
+        while(decls.getOpt(current_decl)) |decl| {
+            switch(decl.instr) {
+                .@"return" => |op| {
+                    if(decls.get(op).reg_alloc_value == null) {
+                        decls.get(op).reg_alloc_value = return_register;
+                    }
+                },
+                .param_ref => |pr| decl.reg_alloc_value = arg_registers[pr],
+                // TODO: reg alloc for all decls when isValue()
+                else => {},
+            }
+            current_decl = decl.prev;
+        }
+    }
+}
+
 fn ssaBlockStatementIntoBasicBlock(
     first_stmt: sema.StatementIndex.OptIndex,
     scope: sema.ScopeIndex.Index,
@@ -828,12 +904,17 @@ pub fn memes(thing: *sema.Value) !void {
     try optimizeFunction(bbidx);
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+
     const blocks_to_dump = try allBlocksReachableFrom(arena.allocator(), bbidx);
+    try doRegAlloc(arena.allocator(), &blocks_to_dump, 0, &[_]u8{7}, &[_]u8{});
 
     for(blocks_to_dump.items) |bb| {
         std.debug.print("Block#{d}:\n", .{@enumToInt(bb)});
         var current_decl = blocks.get(bb).first_decl;
         while(decls.getOpt(current_decl)) |decl| {
+            if(decl.reg_alloc_value) |reg| {
+                std.debug.print("  (reg #{d})", .{reg});
+            }
             std.debug.print("  ${d} = ", .{@enumToInt(current_decl)});
             switch(decl.instr) {
                 .param_ref => |p| std.debug.print("@param({d})\n", .{p}),
