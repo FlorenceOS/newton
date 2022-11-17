@@ -530,6 +530,7 @@ fn eliminateIndirectBranches(decl_idx: DeclIndex.Index) !bool {
         if(target_block.first_decl == target_block.last_decl) {
             const first_decl = decls.getOpt(target_block.first_decl) orelse continue;
             if(first_decl.instr == .goto) {
+                edges.get(first_decl.instr.goto).source_block = decl.block;
                 edge.* = first_decl.instr.goto;
                 did_something = true;
             }
