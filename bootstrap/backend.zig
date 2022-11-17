@@ -40,7 +40,9 @@ pub fn Writer(comptime Platform: type) type {
             if(self.placed_blocks.get(target_block)) |_| {
                 return null;
             }
-            _ = try self.enqueued_blocks.getOrPutValue(self.allocator, target_block, .{});
+            if(!self.placed_blocks.contains(target_block)) {
+                _ = try self.enqueued_blocks.getOrPutValue(self.allocator, target_block, .{});
+            }
             return target_block;
         }
 
@@ -72,6 +74,8 @@ pub fn Writer(comptime Platform: type) type {
         fn writeBlock(self: *@This(), bidx: ir.BlockIndex.Index) !?ir.BlockIndex.Index {
             var block = ir.blocks.get(bidx);
             var current_instr = block.first_decl;
+
+            try self.placed_blocks.put(self.allocator, bidx, self.output_bytes.items.len);
             while(ir.decls.getOpt(current_instr)) |instr| {
                 const next_block: ?ir.BlockIndex.Index = try Platform.writeDecl(self, ir.decls.getIndex(instr));
                 if(next_block) |nb| return nb;
