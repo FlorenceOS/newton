@@ -821,9 +821,11 @@ fn doRegAlloc(
 ) !void {
     var to_visit = std.ArrayList(BlockIndex.Index).init(allocator);
     var has_visited = std.AutoHashMap(BlockIndex.Index, void).init(allocator);
-    var is_alive = [_]bool{false} ** 256;
+    const RegArray = std.PackedIntArray(bool, 256);
+    var alive_regs = std.AutoHashMap(BlockIndex.Index, RegArray).init(allocator);
 
     for(block_list.items) |blk| {
+        try alive_regs.put(blk, RegArray.initAllTo(false));
         var current_decl = blocks.get(blk).last_decl;
         while(decls.getOpt(current_decl)) |decl| {
             // Is this a returning block?
@@ -842,6 +844,7 @@ fn doRegAlloc(
     while(to_visit.items.len > 0) {
         const blk_idx = to_visit.swapRemove(0);
         const blk = blocks.get(blk_idx);
+        const blk_alive = alive_regs.getPtr(blk_idx).?;
 
         var current_edge = blk.first_predecessor;
         while(edges.getOpt(current_edge)) |edge| {
@@ -857,34 +860,66 @@ fn doRegAlloc(
             switch(decl.instr) {
                 .@"return" => |op| {
                     if(decls.get(op).reg_alloc_value == null) {
-                        is_alive[return_reg] = true;
+                        blk_alive.set(return_reg, true);
                         decls.get(op).reg_alloc_value = return_reg;
                     }
                 },
                 else => {
                     if(decl.instr.isValue()) {
                         if(decl.reg_alloc_value) |reg| {
-                            is_alive[reg] = false;
+                            blk_alive.set(reg, false);
                         }
                     }
 
-                    var operands = decl.instr.operands();
-                    var first_operand = true;
-                    while(operands.next()) |op_idx| {
-                        const operand = decls.get(op_idx.*);
-                        if(!operand.instr.isFlagsValue() and operand.reg_alloc_value == null) {
-                            if(first_operand and decl.reg_alloc_value != null) {
-                                const reg = decl.reg_alloc_value.?;
-                                is_alive[reg] = true;
-                                operand.reg_alloc_value = reg;
-                                first_operand = false;
-                            } else {
+                    if(decl.instr == .phi) {
+                        if(decl.reg_alloc_value == null) blk: {
+                            for(gprs) |reg| {
+                                if(!blk_alive.get(reg)) {
+                                    blk_alive.set(reg, true);
+                                    decl.reg_alloc_value = reg;
+                                    break :blk;
+                                }
+                            }
+                            @panic("Can't find free reg");
+                        }
+
+
+                        var current_phi_operand = decl.instr.phi;
+                        while(phi_operands.getOpt(current_phi_operand)) |op| {
+                            const operand = decls.get(op.decl);
+                            const op_block_alive = alive_regs.getPtr(edges.get(op.edge).source_block).?;
+                            if(operand.reg_alloc_value == null) blk: {
                                 for(gprs) |reg| {
-                                    if(!is_alive[reg]) {
-                                        is_alive[reg] = true;
+                                    if(!op_block_alive.get(reg)) {
+                                        op_block_alive.set(reg, true);
                                         operand.reg_alloc_value = reg;
-                                        break;
+                                        break :blk;
                                     }
+                                }
+                                @panic("Can't find free reg");
+                            }
+                            current_phi_operand = op.next;
+                        }
+                    } else {
+                        var operands = decl.instr.operands();
+                        var first_operand = true;
+                        while(operands.next()) |op_idx| {
+                            const operand = decls.get(op_idx.*);
+                            if(!operand.instr.isFlagsValue() and operand.reg_alloc_value == null) {
+                                if(first_operand and decl.reg_alloc_value != null) {
+                                    const reg = decl.reg_alloc_value.?;
+                                    blk_alive.set(reg, true);
+                                    operand.reg_alloc_value = reg;
+                                    first_operand = false;
+                                } else blk: {
+                                    for(gprs) |reg| {
+                                        if(!blk_alive.get(reg)) {
+                                            blk_alive.set(reg, true);
+                                            operand.reg_alloc_value = reg;
+                                            break :blk;
+                                        }
+                                    }
+                                    @panic("Can't find free reg");
                                 }
                             }
                         }
@@ -892,6 +927,18 @@ fn doRegAlloc(
                 },
             }
             current_decl = decl.prev;
+        }
+
+        current_edge = blk.first_predecessor;
+        while(edges.getOpt(current_edge)) |edge| {
+            const predecessor_alive = alive_regs.getPtr(edge.source_block).?;
+            var reg: usize = 0;
+            while(reg < blk_alive.len) : (reg += 1) {
+                if(blk_alive.get(reg)) {
+                    predecessor_alive.set(reg, true);
+                }
+            }
+            current_edge = edge.next;
         }
     }
 }
