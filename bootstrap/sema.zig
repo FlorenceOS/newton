@@ -4,29 +4,29 @@ const ast = @import("ast.zig");
 const ir = @import("ir.zig");
 const indexed_list = @import("indexed_list.zig");
 
-pub const TypeIndex = indexed_list.Indices(u32, .{
+pub const TypeIndex = indexed_list.Indices(u32, opaque{}, .{
     .void = .{.void = {}},
     .bool = .{.bool = {}},
     .type = .{.type = {}},
     .comptime_int = .{.comptime_int = {}},
 });
-pub const ValueIndex = indexed_list.Indices(u32, .{
+pub const ValueIndex = indexed_list.Indices(u32, opaque{}, .{
     .void = .{.type_idx = .void},
     .bool = .{.type_idx = .bool},
     .type = .{.type_idx = .type},
     .discard_underscore = .{.discard_underscore = {}},
 });
-pub const DeclIndex = indexed_list.Indices(u32, .{});
-pub const StructFieldIndex = indexed_list.Indices(u32, .{});
-pub const StructIndex = indexed_list.Indices(u32, .{});
-pub const ScopeIndex = indexed_list.Indices(u32, .{
+pub const DeclIndex = indexed_list.Indices(u32, opaque{}, .{});
+pub const StructFieldIndex = indexed_list.Indices(u32, opaque{}, .{});
+pub const StructIndex = indexed_list.Indices(u32, opaque{}, .{});
+pub const ScopeIndex = indexed_list.Indices(u32, opaque{}, .{
     .builtin_scope = .{
         .outer_scope = .none,
         .first_decl = .none,
     },
 });
-pub const StatementIndex = indexed_list.Indices(u32, .{});
-pub const ExpressionIndex = indexed_list.Indices(u32, .{});
+pub const StatementIndex = indexed_list.Indices(u32, opaque{}, .{});
+pub const ExpressionIndex = indexed_list.Indices(u32, opaque{}, .{});
 
 const TypeList = indexed_list.IndexedList(TypeIndex, Type);
 const ValueList = indexed_list.IndexedList(ValueIndex, Value);

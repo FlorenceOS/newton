@@ -4,10 +4,10 @@ const backend = @import("backend.zig");
 const indexed_list = @import("indexed_list.zig");
 const sema = @import("sema.zig");
 
-pub const DeclIndex = indexed_list.Indices(u32, .{});
-pub const BlockIndex = indexed_list.Indices(u32, .{});
-pub const BlockEdgeIndex = indexed_list.Indices(u32, .{});
-pub const PhiOperandIndex = indexed_list.Indices(u32, .{});
+pub const DeclIndex = indexed_list.Indices(u32, opaque{}, .{});
+pub const BlockIndex = indexed_list.Indices(u32, opaque{}, .{});
+pub const BlockEdgeIndex = indexed_list.Indices(u32, opaque{}, .{});
+pub const PhiOperandIndex = indexed_list.Indices(u32, opaque{}, .{});
 
 // Based on
 // "Simple and Efficient Construction of Static Single Assignment Form"

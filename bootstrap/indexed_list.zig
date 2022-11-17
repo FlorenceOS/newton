@@ -5,7 +5,7 @@ fn sliceIndex(comptime T: type, ptr: *T, slice: []T) usize {
     return @divExact((@ptrToInt(ptr) - @ptrToInt(slice.ptr)), @sizeOf(T));
 }
 
-pub fn Indices(comptime IndexType: type, comptime extra_field_tags: anytype) type {
+pub fn Indices(comptime IndexType: type, comptime _: type, comptime extra_field_tags: anytype) type {
     comptime var extra_fields: []const std.builtin.Type.EnumField = &[_]std.builtin.Type.EnumField{};
     comptime var current_value = 0;
 

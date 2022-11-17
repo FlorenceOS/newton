@@ -3,7 +3,7 @@ const std = @import("std");
 const indexed_list = @import("indexed_list.zig");
 const ast = @import("ast.zig");
 
-pub const SourceIndex = indexed_list.Indices(u32, .{});
+pub const SourceIndex = indexed_list.Indices(u32, opaque{}, .{});
 const SourceFileList = indexed_list.IndexedList(SourceIndex, SourceFile);
 
 pub const SourceFile = struct {

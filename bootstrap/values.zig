@@ -2,7 +2,7 @@ const std = @import("std");
 
 const indexed_list = @import("indexed_list.zig");
 
-pub const TypeIndex = indexed_list.Indices(u32, .{
+pub const TypeIndex = indexed_list.Indices(u32, opaque{}, .{
     .bool = .{.bool = {}},
     .type = .{.type = {}},
     .void = .{.void = {}},
@@ -23,7 +23,7 @@ pub fn init() !void {
     all_types = try TypeList.init(std.heap.page_allocator);
 }
 
-pub const PointerIndex = indexed_list.Indices(u32, .{});
+pub const PointerIndex = indexed_list.Indices(u32, opaque{}, .{});
 
 pub const PointerType = struct {
     child: TypeIndex.Index,

@@ -10,7 +10,7 @@ const StatementList = indexed_list.IndexedList(StmtIndex, StatementNode);
 const FunctionList = indexed_list.IndexedList(FunctionIndex, FunctionExpression);
 const FunctionParamList = indexed_list.IndexedList(FunctionParamIndex, FunctionParameter);
 
-pub const ExprIndex = indexed_list.Indices(u32, .{
+pub const ExprIndex = indexed_list.Indices(u32, opaque{}, .{
     // Commonly used constants
     .@"undefined" = .{ .undefined_expr = {}},
     .@"unreachable" = .{ .unreachable_expr = {}},
@@ -35,7 +35,7 @@ pub const ExprIndex = indexed_list.Indices(u32, .{
     // ^ This thing
     .discard_underscore = .{ .discard_underscore = {} },
 });
-pub const StmtIndex = indexed_list.Indices(u32, .{
+pub const StmtIndex = indexed_list.Indices(u32, opaque{}, .{
     .empty_return = .{ .next = .none, .value = .{
         .return_statement = .{ .expr = .none },
     } },
@@ -43,8 +43,8 @@ pub const StmtIndex = indexed_list.Indices(u32, .{
         .block_statement = .{ .first_child = .none },
     } },
 });
-pub const FunctionIndex = indexed_list.Indices(u32, .{});
-pub const FunctionParamIndex = indexed_list.Indices(u32, .{});
+pub const FunctionIndex = indexed_list.Indices(u32, opaque{}, .{});
+pub const FunctionParamIndex = indexed_list.Indices(u32, opaque{}, .{});
 
 pub const TypeBody = struct {
     first_decl: StmtIndex.OptIndex,
