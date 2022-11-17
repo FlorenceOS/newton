@@ -1,9 +1,11 @@
-const main = fn() u32 {
-    var i: u32 = 0;
+const main = fn(a: u32, b: u32) u32 {
+    var i: u32 = a + b;
     loop {
-        i = i + 1;
+        i += b;
         if (i > 10) {
             break;
+        } else {
+            return i * a;
         }
     }
     return i;

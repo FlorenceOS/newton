@@ -812,39 +812,37 @@ fn doRegAlloc(
     arg_registers: []const u8,
     gprs: []const u8,
 ) !void {
-    _ = gprs;
-
     var to_visit = std.ArrayList(BlockIndex.Index).init(allocator);
     var has_visited = std.AutoHashMap(BlockIndex.Index, void).init(allocator);
+    var is_alive = [_]bool{false} ** 256;
 
     for(block_list.items) |blk| {
         var current_decl = blocks.get(blk).last_decl;
         while(decls.getOpt(current_decl)) |decl| {
             // Is this a returning block?
             switch(decl.instr) {
-                .phi => current_decl = decl.prev,
+                .param_ref => |pr| decl.reg_alloc_value = arg_registers[pr],
                 .@"return" => {
                     try to_visit.append(blk);
                     try has_visited.put(blk, {});
-                    break;
                 },
-                else => break,
+                else => {},
             }
+            current_decl = decl.prev;
         }
     }
 
     while(to_visit.items.len > 0) {
         const blk_idx = to_visit.swapRemove(0);
         const blk = blocks.get(blk_idx);
-        {
-            var current_edge = blk.first_predecessor;
-            while(edges.getOpt(current_edge)) |edge| {
-                if(has_visited.get(edge.target_block) == null) {
-                    try has_visited.put(edge.target_block, {});
-                    try to_visit.append(edge.target_block);
-                }
-                current_edge = edge.next;
+
+        var current_edge = blk.first_predecessor;
+        while(edges.getOpt(current_edge)) |edge| {
+            if(has_visited.get(edge.source_block) == null) {
+                try has_visited.put(edge.source_block, {});
+                try to_visit.append(edge.source_block);
             }
+            current_edge = edge.next;
         }
 
         var current_decl = blk.last_decl;
@@ -852,12 +850,39 @@ fn doRegAlloc(
             switch(decl.instr) {
                 .@"return" => |op| {
                     if(decls.get(op).reg_alloc_value == null) {
+                        is_alive[return_register] = true;
                         decls.get(op).reg_alloc_value = return_register;
                     }
                 },
-                .param_ref => |pr| decl.reg_alloc_value = arg_registers[pr],
-                // TODO: reg alloc for all decls when isValue()
-                else => {},
+                else => {
+                    if(decl.instr.isValue()) {
+                        if(decl.reg_alloc_value) |reg| {
+                            is_alive[reg] = false;
+                        }
+                    }
+
+                    var operands = decl.instr.operands();
+                    var first_operand = true;
+                    while(operands.next()) |op_idx| {
+                        const operand = decls.get(op_idx.*);
+                        if(operand.reg_alloc_value == null) {
+                            if(first_operand and decl.reg_alloc_value != null) {
+                                const reg = decl.reg_alloc_value.?;
+                                is_alive[reg] = true;
+                                operand.reg_alloc_value = reg;
+                            } else {
+                                for(gprs) |reg| {
+                                    if(!is_alive[reg]) {
+                                        is_alive[reg] = true;
+                                        operand.reg_alloc_value = reg;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        first_operand = false;
+                    }
+                },
             }
             current_decl = decl.prev;
         }
@@ -1096,7 +1121,12 @@ pub fn memes(thing: *sema.Value) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 
     const blocks_to_dump = try allBlocksReachableFrom(arena.allocator(), bbidx);
-    try doRegAlloc(arena.allocator(), &blocks_to_dump, 0, &[_]u8{7}, &[_]u8{});
+
+    try doRegAlloc(
+        arena.allocator(), &blocks_to_dump, 0,
+        &[_]u8{5, 4, 3, 2, 8, 9},
+        &[_]u8{0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 14, 15},
+    );
 
     for(blocks_to_dump.items) |bb| {
         std.debug.print("Block#{d}:\n", .{@enumToInt(bb)});
