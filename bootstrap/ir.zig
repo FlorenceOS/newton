@@ -1,7 +1,7 @@
-const indexed_list = @import("indexed_list.zig");
-
 const std = @import("std");
 
+const backend = @import("backend.zig");
+const indexed_list = @import("indexed_list.zig");
 const sema = @import("sema.zig");
 
 pub const DeclIndex = indexed_list.Indices(u32, .{});
@@ -1120,12 +1120,15 @@ pub fn memes(thing: *sema.Value) !void {
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 
+    const curr_backend = backend.x86_64;
     const blocks_to_dump = try allBlocksReachableFrom(arena.allocator(), bbidx);
 
     try doRegAlloc(
-        arena.allocator(), &blocks_to_dump, 0,
-        &[_]u8{7, 6, 3, 2, 8, 9},
-        &[_]u8{0, 1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
+        arena.allocator(),
+        &blocks_to_dump,
+        curr_backend.registers.return_reg,
+        &curr_backend.registers.param_regs,
+        &curr_backend.registers.gprs,
     );
 
     for(blocks_to_dump.items) |bb| {
@@ -1190,8 +1193,7 @@ pub fn memes(thing: *sema.Value) !void {
         std.debug.print("\n", .{});
     }
 
-    const backend = @import("backend.zig");
-    var writer = backend.Writer(backend.x86_64){
+    var writer = backend.Writer(curr_backend){
         .allocator = optimization_allocator.allocator(),
     };
     try writer.writeFunction(bbidx);

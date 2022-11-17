@@ -1,6 +1,30 @@
+const backend = @import("backend.zig");
 const ir = @import("ir.zig");
 
-const backend = @import("backend.zig");
+pub const registers = struct {
+    const rax = 0;
+    const rcx = 1;
+    const rdx = 2;
+    const rbx = 3;
+    const rsp = 4;
+    const rbp = 5;
+    const rsi = 6;
+    const rdi = 7;
+    const r8 = 8;
+    const r9 = 9;
+    const r10 = 10;
+    const r11 = 11;
+    const r12 = 12;
+    const r13 = 13;
+    const r14 = 14;
+    const r15 = 15;
+    const rflags = 255; // Special value the IR will emit to signal the use of flags
+
+    pub const return_reg = rax;
+    pub const flags_reg = rflags;
+    pub const gprs = [_]u8{rax, rcx, rdx, rbx, rsi, rdi, r8, r9, r10, r11, r12, r13, r14, r15};
+    pub const param_regs = [_]u8{rdi, rsi, rdx, rcx, r8, r9};
+};
 
 pub fn writeDecl(writer: *backend.Writer(@This()), decl_idx: ir.DeclIndex.Index) !?ir.BlockIndex.Index {
     const decl = ir.decls.get(decl_idx);

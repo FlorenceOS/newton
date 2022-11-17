@@ -54,7 +54,7 @@ pub fn Writer(comptime Platform: type) type {
             if(self.placed_blocks.get(reloc_target)) |offset| {
                 reloc.resolve(self.output_bytes.items, offset);
             } else if(self.enqueued_blocks.get(reloc_target)) |q| {
-                q.append(self.allocator, reloc);     
+                q.append(self.allocator, reloc);
             } else {
                 var queue = std.ArrayListUnmanaged(Relocation){};
                 queue.append(self.allocator, reloc);
