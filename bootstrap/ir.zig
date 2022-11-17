@@ -20,6 +20,11 @@ pub const Bop = struct {
     rhs: DeclIndex.Index,
 };
 
+pub const VariableConstantBop = struct {
+    lhs: DeclIndex.Index,
+    rhs: i65,
+};
+
 const DeclInstr = union(enum) {
     param_ref: u8,
     load_int_constant: i65,
@@ -43,6 +48,27 @@ const DeclInstr = union(enum) {
     less_equal: Bop,
     equals: Bop,
     not_equal: Bop,
+
+    add_constant: VariableConstantBop,
+    add_mod_constant: VariableConstantBop,
+    sub_constant: VariableConstantBop,
+    sub_mod_constant: VariableConstantBop,
+    multiply_constant: VariableConstantBop,
+    multiply_mod_constant: VariableConstantBop,
+    divide_constant: VariableConstantBop,
+    modulus_constant: VariableConstantBop,
+    shift_left_constant: VariableConstantBop,
+    shift_right_constant: VariableConstantBop,
+    bit_and_constant: VariableConstantBop,
+    bit_or_constant: VariableConstantBop,
+    bit_xor_constant: VariableConstantBop,
+
+    less_constant: VariableConstantBop,
+    less_equal_constant: VariableConstantBop,
+    greater_constant: VariableConstantBop,
+    greater_equal_constant: VariableConstantBop,
+    equals_constant: VariableConstantBop,
+    not_equal_constant: VariableConstantBop,
 
     incomplete_phi: DeclIndex.OptIndex, // Holds the next incomplete phi node in the same block
     copy: DeclIndex.Index, // Should be eliminated during optimization
@@ -93,6 +119,14 @@ const DeclInstr = union(enum) {
                 bounded_result.value.bounded_iterator.appendAssumeCapacity(&bop.rhs);
             },
 
+            .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
+            .multiply_constant, .multiply_mod_constant, .divide_constant, .modulus_constant,
+            .shift_left_constant, .shift_right_constant, .bit_and_constant, .bit_or_constant, .bit_xor_constant,
+            .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant,
+            .equals_constant, .not_equal_constant => |*bop| {
+                bounded_result.value.bounded_iterator.appendAssumeCapacity(&bop.lhs);
+            },
+
             .copy => |*c| bounded_result.value.bounded_iterator.appendAssumeCapacity(c),
             .@"if" => |*instr| bounded_result.value.bounded_iterator.appendAssumeCapacity(&instr.condition),
             .@"return" => |*value| bounded_result.value.bounded_iterator.appendAssumeCapacity(value),
@@ -109,13 +143,7 @@ const DeclInstr = union(enum) {
 
             .@"if", .@"return", .goto => return true,
 
-            .param_ref, .load_int_constant, .load_bool_constant, .@"undefined",
-            .add, .add_mod, .sub, .sub_mod,
-            .multiply, .multiply_mod, .divide, .modulus,
-            .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
-            .less, .less_equal, .equals, .not_equal,
-            .copy, .phi,
-            => return false,
+            else => return false,
         }
     }
 
@@ -144,13 +172,7 @@ const DeclInstr = union(enum) {
                 result.appendAssumeCapacity(&instr.not_taken);
             },
             .goto => |*out| result.appendAssumeCapacity(out),
-            .@"return",
-            .param_ref, .load_int_constant, .load_bool_constant, .@"undefined", .copy, .phi,
-            .add, .add_mod, .sub, .sub_mod,
-            .multiply, .multiply_mod, .divide, .modulus,
-            .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
-            .less, .less_equal, .equals, .not_equal,
-            => {}, // No out edges
+            else => {}, // No out edges
         }
         return result;
     }
@@ -394,6 +416,7 @@ const peephole_optimizations = .{
     eliminateContantIfs,
     eliminateRedundantIfs,
     eliminateIndirectBranches,
+    inlineConstants,
 };
 
 var optimization_allocator = std.heap.GeneralPurposeAllocator(.{}){.backing_allocator = std.heap.page_allocator};
@@ -563,6 +586,66 @@ fn eliminateIndirectBranches(decl_idx: DeclIndex.Index) !bool {
         }
     }
     return did_something;
+}
+
+fn inlineConstants(decl_idx: DeclIndex.Index) !bool {
+    const decl = decls.get(decl_idx);
+    switch(decl.instr) {
+        // Commutative ops
+        inline
+        .add, .add_mod, .multiply, .multiply_mod,
+        .bit_and, .bit_or, .bit_xor, .equals, .not_equal
+        => |bop, tag| {
+            const lhs = decls.get(bop.lhs).instr;
+            if(lhs == .load_int_constant) {
+                decl.instr = @unionInit(DeclInstr, @tagName(tag) ++ "_constant", .{
+                    .lhs = bop.rhs,
+                    .rhs = lhs.load_int_constant,
+                });
+                return true;
+            }
+            const rhs = decls.get(bop.rhs).instr;
+            if(rhs == .load_int_constant) {
+                decl.instr = @unionInit(DeclInstr, @tagName(tag) ++ "_constant", .{
+                    .lhs = bop.lhs,
+                    .rhs = rhs.load_int_constant,
+                });
+               return true;
+            }
+        },
+
+        // Noncommutative ops
+        inline
+        .less, .less_equal, .sub, .sub_mod, .divide, .modulus,
+        .shift_left, .shift_right,
+        => |bop, tag| {
+            const swapped_tag: ?[]const u8 = comptime switch(tag) {
+                .less => "greater_equal",
+                .less_equal => "greater",
+                else => null,
+            };
+
+            const lhs = decls.get(bop.lhs).instr;
+            if(swapped_tag != null and lhs == .load_int_constant) {
+                decl.instr = @unionInit(DeclInstr, swapped_tag.? ++ "_constant", .{
+                    .lhs = bop.rhs,
+                    .rhs = lhs.load_int_constant,
+                });
+            }
+
+            const rhs = decls.get(bop.rhs).instr;
+            if(rhs == .load_int_constant) {
+                decl.instr = @unionInit(DeclInstr, @tagName(tag) ++ "_constant", .{
+                    .lhs = bop.lhs,
+                    .rhs = rhs.load_int_constant,
+                });
+               return true;
+            }
+        },
+
+        else => {},
+    }
+    return false;
 }
 
 fn appendToBlock(block_idx: BlockIndex.Index, sema_decl: sema.DeclIndex.OptIndex, instr: DeclInstr) !DeclIndex.Index {
@@ -927,6 +1010,13 @@ pub fn memes(thing: *sema.Value) !void {
                 .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
                 .less, .less_equal, .equals, .not_equal,
                 => |bop, tag| std.debug.print("{s}(${d}, ${d})\n", .{@tagName(tag), @enumToInt(bop.lhs), @enumToInt(bop.rhs)}),
+                inline
+                .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
+                .multiply_constant, .multiply_mod_constant, .divide_constant, .modulus_constant,
+                .shift_left_constant, .shift_right_constant, .bit_and_constant, .bit_or_constant, .bit_xor_constant,
+                .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant,
+                .equals_constant, .not_equal_constant
+                => |bop, tag| std.debug.print("{s}(${d}, #{d})\n", .{@tagName(tag)[0..@tagName(tag).len-9], @enumToInt(bop.lhs), bop.rhs}),
                 .incomplete_phi => std.debug.print("<incomplete phi node>\n", .{}),
                 .copy => |c| std.debug.print("@copy(${d})\n", .{@enumToInt(c)}),
                 .@"if" => |if_instr| {
