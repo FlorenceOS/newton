@@ -1,3 +1,5 @@
+const std = @import("std");
+
 const backend = @import("backend.zig");
 const ir = @import("ir.zig");
 
@@ -26,6 +28,14 @@ pub const registers = struct {
     pub const param_regs = [_]u8{rdi, rsi, rdx, rcx, r8, r9};
 };
 
+const cond_flags = struct {
+    const not = 1;
+
+    const below = 2;       // Less than unsigned
+    const zero = 4;        // Also equal
+    const below_equal = 6; // Less than unsigned or equal
+};
+
 pub fn writeDecl(writer: *backend.Writer(@This()), decl_idx: ir.DeclIndex.Index) !?ir.BlockIndex.Index {
     const decl = ir.decls.get(decl_idx);
     switch(decl.instr) {
@@ -46,6 +56,69 @@ pub fn writeDecl(writer: *backend.Writer(@This()), decl_idx: ir.DeclIndex.Index)
                 try writer.writeInt(u8, (dest_reg << 3) | 4);
                 try writer.writeInt(u8, (rhs_reg << 3) | lhs_reg);
             }
+        },
+        .multiply => |bop| {
+            const dest_reg = decl.reg_alloc_value.?;
+            const lhs_reg = ir.decls.get(bop.lhs).reg_alloc_value.?;
+            const rhs_reg = ir.decls.get(bop.rhs).reg_alloc_value.?;
+
+            std.debug.assert(lhs_reg == registers.rax);
+            std.debug.assert(dest_reg == registers.rax);
+            try writer.writeInt(u8, 0x48);
+            try writer.writeInt(u8, 0xF7);
+            try writer.writeInt(u8, 0xE0 | rhs_reg);
+        },
+        .goto => |edge| {
+            if(try writer.attemptInlineEdge(edge)) |bidx| {
+                return bidx;
+            } else {
+                try writer.writeInt(u8, 0xE9);
+                try writer.writeRelocatedValue(edge, .rel32_post_0);
+            }
+        },
+        .less_constant, .less_equal_constant,
+        .greater_constant, .greater_equal_constant,
+        .equals_constant, .not_equal_constant,
+        => |bop| {
+            const reg = ir.decls.get(bop.lhs).reg_alloc_value.?;
+            try writer.writeInt(u8, 0x48);
+            try writer.writeInt(u8, 0x81);
+            try writer.writeInt(u8, reg | 0xF8);
+            try writer.writeInt(u32, @truncate(u32, bop.rhs));
+        },
+        .@"if" => |op| {
+            const op_instr = ir.decls.get(op.condition).instr;
+            const cond_flag: u8 = switch(op_instr) {
+                .less, .less_constant, => cond_flags.below,
+                .less_equal, .less_equal_constant => cond_flags.below_equal,
+                .greater_constant => cond_flags.not | cond_flags.below_equal,
+                .greater_equal_constant => cond_flags.not | cond_flags.below,
+                .equals, .equals_constant => cond_flags.zero,
+                .not_equal, .not_equal_constant => cond_flags.not | cond_flags.zero,
+                else => unreachable,
+            };
+            if(try writer.attemptInlineEdge(op.not_taken)) |bidx| {
+                try writer.writeInt(u8, 0x0F);
+                try writer.writeInt(u8, 0x80 | cond_flag);
+                try writer.writeRelocatedValue(op.taken, .rel32_post_0);
+                return bidx;
+            } else if(try writer.attemptInlineEdge(op.taken)) |bidx| {
+                try writer.writeInt(u8, 0x0F);
+                try writer.writeInt(u8, 0x80 | cond_flag ^ cond_flags.not);
+                try writer.writeRelocatedValue(op.not_taken, .rel32_post_0);
+                return bidx;
+            } else {
+                try writer.writeInt(u8, 0x0F);
+                try writer.writeInt(u8, 0x80 | cond_flag);
+                try writer.writeRelocatedValue(op.taken, .rel32_post_0);
+                try writer.writeInt(u8, 0xE9);
+                try writer.writeRelocatedValue(op.not_taken, .rel32_post_0);
+            }
+        },
+        .@"return" => |op| {
+            const op_reg = ir.decls.get(op).reg_alloc_value.?;
+            std.debug.assert(op_reg == registers.rax);
+            try writer.writeInt(u8, 0xC3);
         },
         inline else => |_, tag| @panic("TODO: x86_64 decl " ++ @tagName(tag)),
     }

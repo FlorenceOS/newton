@@ -18,7 +18,7 @@ const Relocation = struct {
         };
     }
 
-    fn resolve(self: @This(), output_bytes: []u8, relocation_target_offset: usize) !void {
+    fn resolve(self: @This(), output_bytes: []u8, relocation_target_offset: usize) void {
         switch(self.relocation_type) {
             .rel32_post_0 => {
                 const rel = relocation_target_offset -% (self.output_offset +% 4);
@@ -35,30 +35,33 @@ pub fn Writer(comptime Platform: type) type {
         enqueued_blocks: std.AutoHashMapUnmanaged(ir.BlockIndex.Index, std.ArrayListUnmanaged(Relocation)) = .{},
         placed_blocks: std.AutoHashMapUnmanaged(ir.BlockIndex.Index, usize) = .{},
 
-        pub fn blockUnplaced(self: @This(), block: ir.BlockIndex.Index) bool {
-            if(self.placed_blocks.get(block)) |_| {
-                return true;
+        pub fn attemptInlineEdge(self: *@This(), edge: ir.BlockEdgeIndex.Index) !?ir.BlockIndex.Index {
+            const target_block = ir.edges.get(edge).target_block;
+            if(self.placed_blocks.get(target_block)) |_| {
+                return null;
             }
-            return false;
+            _ = try self.enqueued_blocks.getOrPutValue(self.allocator, target_block, .{});
+            return target_block;
         }
 
-        pub fn writeRelocatedValue(self: *@This(), reloc_target: ir.BlockIndex.Index, reloc_type: Relocation) !void {
+        pub fn writeRelocatedValue(self: *@This(), edge: ir.BlockEdgeIndex.Index, reloc_type: RelocationType) !void {
+            const reloc_target = ir.edges.get(edge).target_block;
             const reloc = Relocation{
                 .output_offset = self.output_bytes.items.len,
                 .relocation_type = reloc_type,
             };
 
             const sz = reloc.size();
-            self.output_bytes.appendNTimes(self.allocator, 0xCC, sz);
+            try self.output_bytes.appendNTimes(self.allocator, 0xCC, sz);
 
             if(self.placed_blocks.get(reloc_target)) |offset| {
                 reloc.resolve(self.output_bytes.items, offset);
-            } else if(self.enqueued_blocks.get(reloc_target)) |q| {
-                q.append(self.allocator, reloc);
+            } else if(self.enqueued_blocks.getPtr(reloc_target)) |q| {
+                try q.append(self.allocator, reloc);
             } else {
                 var queue = std.ArrayListUnmanaged(Relocation){};
-                queue.append(self.allocator, reloc);
-                self.enqueued_blocks.put(self.allocator, reloc_target, queue);
+                try queue.append(self.allocator, reloc);
+                try self.enqueued_blocks.put(self.allocator, reloc_target, queue);
             }
         }
 
@@ -71,9 +74,9 @@ pub fn Writer(comptime Platform: type) type {
             var current_instr = block.first_decl;
             while(ir.decls.getOpt(current_instr)) |instr| {
                 const next_block: ?ir.BlockIndex.Index = try Platform.writeDecl(self, ir.decls.getIndex(instr));
+                std.debug.print("Output so far: {}\n", .{std.fmt.fmtSliceHexUpper(self.output_bytes.items)});
                 if(next_block) |nb| return nb;
                 current_instr = instr.next;
-                std.debug.print("Output so far: {}\n", .{std.fmt.fmtSliceHexUpper(self.output_bytes.items)});
             }
             return null;
         }
@@ -99,7 +102,7 @@ pub fn Writer(comptime Platform: type) type {
                 }
 
                 for(block_relocs.items) |reloc| {
-                    try reloc.resolve(self.output_bytes.items, self.output_bytes.items.len);
+                    reloc.resolve(self.output_bytes.items, self.output_bytes.items.len);
                 }
                 block_relocs.deinit(self.allocator);
 
