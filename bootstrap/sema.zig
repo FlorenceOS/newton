@@ -143,19 +143,21 @@ fn analyzeStatementChain(
                 const body_scope = try scopes.insert(.{
                     .outer_scope = ScopeIndex.toOpt(block_scope_idx),
                 });
-                const loop_stmt = try stmt_builder.insert(.{.value = .{.loop_statement = .{.body = undefined}}});
-                const body = try analyzeStatementChain(body_scope, loop.first_child, current_function, StatementIndex.toOpt(loop_stmt));
-                statements.get(loop_stmt).value.loop_statement.body = body;
+                const loop_stmt_idx = try stmt_builder.insert(.{.value = .{.loop_statement = .{.body = undefined, .breaks = false}}});
+                const body = try analyzeStatementChain(body_scope, loop.first_child, current_function, StatementIndex.toOpt(loop_stmt_idx));
+                const loop_stmt = statements.get(loop_stmt_idx);
+                loop_stmt.value.loop_statement.body = body;
+                reaches_end = loop_stmt.value.loop_statement.breaks;
             },
             .break_statement => {
                 if(StatementIndex.unwrap(current_break_block)) |break_block| {
                     reaches_end = false;
+                    statements.get(break_block).value.loop_statement.breaks = true;
                     _ = try stmt_builder.insert(.{.value = .{.break_statement = break_block}});
                 } else {
                     return error.BreakOutsideLoop;
                 }
             },
-
             .return_statement => |ret_stmt| {
                 const func_idx = ValueIndex.unwrap(current_function).?;
                 const func = values.get(func_idx).function;
@@ -166,6 +168,7 @@ fn analyzeStatementChain(
                 } else {
                     std.debug.assert(func.return_type == .void);
                 }
+                reaches_end = false;
                 _ = try stmt_builder.insert(.{.value = .{.return_statement = .{.function = func_idx, .value = expr}}});
             },
             else => |stmt| std.debug.panic("TODO: Sema {s} statement", .{@tagName(stmt)}),
@@ -634,6 +637,7 @@ pub const Statement = struct {
         },
         loop_statement: struct {
             body: Block,
+            breaks: bool,
         },
         break_statement: StatementIndex.Index,
         return_statement: struct {
