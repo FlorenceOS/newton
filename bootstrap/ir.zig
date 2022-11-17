@@ -79,7 +79,7 @@ const DeclInstr = union(enum) {
     },
     @"return": DeclIndex.Index,
     goto: BlockEdgeIndex.Index,
-    phi: PhiOperandIndex.Index,
+    phi: PhiOperandIndex.OptIndex,
 
     const OperandIterator = struct {
         value: union(enum) {
@@ -108,7 +108,7 @@ const DeclInstr = union(enum) {
         switch(self.*) {
             .incomplete_phi => unreachable,
 
-            .phi => |p| return OperandIterator{.value = .{.phi_iterator = phi_operands.get(p)}},
+            .phi => |p| return OperandIterator{.value = .{.phi_iterator = phi_operands.getOpt(p)}},
 
             .add, .add_mod, .sub, .sub_mod,
             .multiply, .multiply_mod, .divide, .modulus,
@@ -289,10 +289,7 @@ fn addPhiOperands(sema_decl: sema.DeclIndex.Index, block_idx: BlockIndex.Index, 
         current_pred_edge = edge.next;
     }
 
-    decls.get(phi_idx).instr = .{
-        .phi = PhiOperandIndex.unwrap(init_operand).?,
-    };
-
+    decls.get(phi_idx).instr = .{.phi = init_operand};
     return tryRemoveTrivialPhi(phi_idx, delete);
 }
 
@@ -334,7 +331,7 @@ fn tryRemoveTrivialPhi(phi_decl: DeclIndex.Index, delete: bool) DeclIndex.Index 
 
 // Name from paper
 fn checkTrivialPhi(phi_decl: DeclIndex.Index) ??DeclIndex.Index {
-    var current_operand = PhiOperandIndex.toOpt(decls.get(phi_decl).instr.phi);
+    var current_operand = decls.get(phi_decl).instr.phi;
     var only_decl: ?DeclIndex.Index = null;
 
     while(phi_operands.getOpt(current_operand)) |op| {
@@ -1185,7 +1182,7 @@ pub fn memes(thing: *sema.Value) !void {
                     std.debug.print("goto(Block#{d})\n", .{@enumToInt(edges.get(goto_edge).target_block)});
                 },
                 .phi => |phi_index| {
-                    var current_phi = PhiOperandIndex.toOpt(phi_index);
+                    var current_phi = phi_index;
                     std.debug.print("phi(", .{});
                     while(phi_operands.getOpt(current_phi)) |phi| {
                         const edge = edges.get(phi.edge);
