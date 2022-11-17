@@ -74,7 +74,6 @@ pub fn Writer(comptime Platform: type) type {
             var current_instr = block.first_decl;
             while(ir.decls.getOpt(current_instr)) |instr| {
                 const next_block: ?ir.BlockIndex.Index = try Platform.writeDecl(self, ir.decls.getIndex(instr));
-                std.debug.print("Output so far: {}\n", .{std.fmt.fmtSliceHexUpper(self.output_bytes.items)});
                 if(next_block) |nb| return nb;
                 current_instr = instr.next;
             }
@@ -108,6 +107,8 @@ pub fn Writer(comptime Platform: type) type {
 
                 preferred_block = try self.writeBlock(current_block);
             }
+
+            std.debug.print("Output: {}\n", .{std.fmt.fmtSliceHexUpper(self.output_bytes.items)});
         }
     };
 }
