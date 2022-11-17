@@ -458,7 +458,7 @@ fn eliminateCopyChain(
     if(decl.instr == .copy) {
         const retval = try eliminateCopyChain(decl.instr.copy, copy_dict);
         try copy_dict.put(decl_idx, retval);
-        removeDecl(decl_idx);
+        decl.instr = .{.@"undefined" = {}};
         return retval;
     }
     return decl_idx;
