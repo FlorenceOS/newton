@@ -153,6 +153,16 @@ const DeclInstr = union(enum) {
         }
     }
 
+    fn isFlagsValue(self: *@This()) bool {
+        switch(self.*) {
+            .less, .less_equal, .equals, .not_equal,
+            .less_constant, .less_equal_constant, .greater_constant,
+            .greater_equal_constant, .equals_constant, .not_equal_constant,
+            => return true,
+            else => return false,
+        }
+    }
+
     fn outEdges(self: *@This()) std.BoundedArray(*BlockEdgeIndex.Index, 2) {
         var result = std.BoundedArray(*BlockEdgeIndex.Index, 2){};
         switch(self.*) {
@@ -808,8 +818,8 @@ fn addEdge(
 fn doRegAlloc(
     allocator: std.mem.Allocator,
     block_list: *const BlockList,
-    return_register: u8,
-    arg_registers: []const u8,
+    return_reg: u8,
+    param_regs: []const u8,
     gprs: []const u8,
 ) !void {
     var to_visit = std.ArrayList(BlockIndex.Index).init(allocator);
@@ -821,7 +831,7 @@ fn doRegAlloc(
         while(decls.getOpt(current_decl)) |decl| {
             // Is this a returning block?
             switch(decl.instr) {
-                .param_ref => |pr| decl.reg_alloc_value = arg_registers[pr],
+                .param_ref => |pr| decl.reg_alloc_value = param_regs[pr],
                 .@"return" => {
                     try to_visit.append(blk);
                     try has_visited.put(blk, {});
@@ -850,8 +860,8 @@ fn doRegAlloc(
             switch(decl.instr) {
                 .@"return" => |op| {
                     if(decls.get(op).reg_alloc_value == null) {
-                        is_alive[return_register] = true;
-                        decls.get(op).reg_alloc_value = return_register;
+                        is_alive[return_reg] = true;
+                        decls.get(op).reg_alloc_value = return_reg;
                     }
                 },
                 else => {
@@ -865,11 +875,12 @@ fn doRegAlloc(
                     var first_operand = true;
                     while(operands.next()) |op_idx| {
                         const operand = decls.get(op_idx.*);
-                        if(operand.reg_alloc_value == null) {
+                        if(!operand.instr.isFlagsValue() and operand.reg_alloc_value == null) {
                             if(first_operand and decl.reg_alloc_value != null) {
                                 const reg = decl.reg_alloc_value.?;
                                 is_alive[reg] = true;
                                 operand.reg_alloc_value = reg;
+                                first_operand = false;
                             } else {
                                 for(gprs) |reg| {
                                     if(!is_alive[reg]) {
@@ -880,7 +891,6 @@ fn doRegAlloc(
                                 }
                             }
                         }
-                        first_operand = false;
                     }
                 },
             }

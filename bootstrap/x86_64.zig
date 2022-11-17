@@ -20,10 +20,8 @@ pub const registers = struct {
     const r13 = 13;
     const r14 = 14;
     const r15 = 15;
-    const rflags = 255; // Special value the IR will emit to signal the use of flags
 
     pub const return_reg = rax;
-    pub const flags_reg = rflags;
     pub const gprs = [_]u8{rax, rcx, rdx, rbx, rsi, rdi, r8, r9, r10, r11, r12, r13, r14, r15};
     pub const param_regs = [_]u8{rdi, rsi, rdx, rcx, r8, r9};
 };
