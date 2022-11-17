@@ -1073,7 +1073,7 @@ pub fn memes(thing: *sema.Value) !void {
                 .param_ref => |p| std.debug.print("@param({d})\n", .{p}),
                 .load_int_constant => |value| std.debug.print("{d}\n", .{value}),
                 .load_bool_constant => |b| std.debug.print("{}\n", .{b}),
-                .@"undefined" => std.debug.print("undefined", .{}),
+                .@"undefined" => std.debug.print("undefined\n", .{}),
                 inline
                 .add, .add_mod, .sub, .sub_mod,
                 .multiply, .multiply_mod, .divide, .modulus,
