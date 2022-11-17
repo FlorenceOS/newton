@@ -872,23 +872,32 @@ fn doRegAlloc(
                     }
 
                     if(decl.instr == .phi) {
-                        if(decl.reg_alloc_value == null) blk: {
-                            for(gprs) |reg| {
-                                if(!blk_alive.get(reg)) {
-                                    blk_alive.set(reg, true);
-                                    decl.reg_alloc_value = reg;
-                                    break :blk;
+                        var current_phi_operand = decl.instr.phi;
+                        while(phi_operands.getOpt(current_phi_operand)) |op| {
+                            if(op.decl != decls.getIndex(decl)) {
+                                const op_decl = decls.get(op.decl);
+                                if(op_decl.reg_alloc_value) |reg| {
+                                    if(!blk_alive.get(reg)) {
+                                        blk_alive.set(reg, true);
+                                        decl.reg_alloc_value = reg;
+                                    }
+                                    break;
                                 }
                             }
-                            @panic("Can't find free reg");
+                            current_phi_operand = op.next;
                         }
 
-
-                        var current_phi_operand = decl.instr.phi;
+                        current_phi_operand = decl.instr.phi;
                         while(phi_operands.getOpt(current_phi_operand)) |op| {
                             const operand = decls.get(op.decl);
                             const op_block_alive = alive_regs.getPtr(edges.get(op.edge).source_block).?;
                             if(operand.reg_alloc_value == null) blk: {
+                                if(!op_block_alive.get(decl.reg_alloc_value.?)) {
+                                    op_block_alive.set(decl.reg_alloc_value.?, true);
+                                    operand.reg_alloc_value = decl.reg_alloc_value.?;
+                                    break :blk;
+                                }
+
                                 for(gprs) |reg| {
                                     if(!op_block_alive.get(reg)) {
                                         op_block_alive.set(reg, true);
