@@ -797,10 +797,12 @@ pub fn insertBefore(before: DeclIndex.Index, instr: DeclInstr) !DeclIndex.Index 
 fn appendToBlock(block_idx: BlockIndex.Index, sema_decl: sema.DeclIndex.OptIndex, instr: DeclInstr) !DeclIndex.Index {
     const block = blocks.get(block_idx);
 
-    var curr_instr = block.first_decl;
-    while(decls.getOpt(curr_instr)) |inst| {
-        if(std.meta.eql(inst.instr, instr)) return DeclIndex.unwrap(curr_instr).?;
-        curr_instr = inst.next;
+    if(sema_decl != .none) {
+        var curr_instr = block.first_decl;
+        while(decls.getOpt(curr_instr)) |inst| {
+            if(std.meta.eql(inst.instr, instr)) return DeclIndex.unwrap(curr_instr).?;
+            curr_instr = inst.next;
+        }
     }
 
     const retval = try decls.insert(.{
