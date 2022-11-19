@@ -136,11 +136,22 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
                 try writer.writeInt(u8, 0x48 | @as(u8, @boolToInt(dest_reg >= 8)) * 5);
                 try writer.writeInt(u8, 0x31);
                 try writer.writeInt(u8, 0xC0 | (dest_reg & 0x7) * 9);
-            } else {
+            } else if(c <= 0x7F or c > 0xFFFFFFFFFFFFFF80) {
+                try writer.writeInt(u8, 0x6A);
+                try writer.writeInt(i8, @intCast(i8, c));
+                if(dest_reg >= 8) {
+                    try writer.writeInt(u8, 0x41);
+                }
+                try writer.writeInt(u8, 0x58 | (dest_reg & 0x7));
+            } else if(c <= 0x7FFFFFFF or c > 0xFFFFFFFF80000000) {
                 try writer.writeInt(u8, 0x48 | @as(u8, @boolToInt(dest_reg >= 8)));
                 try writer.writeInt(u8, 0xC7);
                 try writer.writeInt(u8, 0xC0 | (dest_reg & 0x7));
                 try writer.writeInt(u32, @intCast(u32, c));
+            } else {
+                try writer.writeInt(u8, 0x48 | @as(u8, @boolToInt(dest_reg >= 8)));
+                try writer.writeInt(u8, 0xB8 | (dest_reg & 0x7));
+                try writer.writeInt(u64, c);
             }
         },
         .less_constant, .less_equal_constant,
