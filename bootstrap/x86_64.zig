@@ -4,6 +4,8 @@ const backend = @import("backend.zig");
 const ir = @import("ir.zig");
 const rega = @import("rega.zig");
 
+pub const Writer = backend.Writer(@This());
+
 pub const registers = struct {
     const rax = 0;
     const rcx = 1;
@@ -35,7 +37,7 @@ const cond_flags = struct {
     const below_equal = 6; // Less than unsigned or equal
 };
 
-pub fn writeDecl(writer: *backend.Writer(@This()), decl_idx: ir.DeclIndex.Index, uf: rega.UnionFind) !?ir.BlockIndex.Index {
+pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFind) !?ir.BlockIndex.Index {
     const decl = ir.decls.get(decl_idx);
     switch(decl.instr) {
         .param_ref, .@"undefined",
@@ -109,8 +111,12 @@ pub fn writeDecl(writer: *backend.Writer(@This()), decl_idx: ir.DeclIndex.Index,
             if(try writer.attemptInlineEdge(edge)) |bidx| {
                 return bidx;
             } else {
-                try writer.writeInt(u8, 0xE9);
-                try writer.writeRelocatedValue(edge, .rel32_post_0);
+                const reloc_type = writer.pickSmallestRelocationType(edge, &.{.{1, .rel8_post_0}}) orelse .rel32_post_0;
+                try writer.writeInt(u8, @as(u8, switch(reloc_type) {
+                    .rel8_post_0 => 0xE8,
+                    .rel32_post_0 => 0xE9,
+                }));
+                try writer.writeRelocatedValue(edge, reloc_type);
             }
         },
         .copy => |cope| {
@@ -169,17 +175,30 @@ pub fn writeDecl(writer: *backend.Writer(@This()), decl_idx: ir.DeclIndex.Index,
                 .not_equal, .not_equal_constant => cond_flags.not | cond_flags.zero,
                 else => unreachable,
             };
+            const taken_reloc_type = writer.pickSmallestRelocationType(op.taken, &.{.{2, .rel8_post_0}}) orelse .rel32_post_0;
+            const not_taken_reloc_type = writer.pickSmallestRelocationType(op.not_taken, &.{.{2, .rel8_post_0}}) orelse .rel32_post_0;
             if(try writer.attemptInlineEdge(op.not_taken)) |bidx| {
-                try writer.writeInt(u8, 0x0F);
-                try writer.writeInt(u8, 0x80 | cond_flag);
-                try writer.writeRelocatedValue(op.taken, .rel32_post_0);
+                switch(taken_reloc_type) {
+                    .rel8_post_0 => try writer.writeInt(u8, 0x70 | cond_flag),
+                    .rel32_post_0 => {
+                        try writer.writeInt(u8, 0x0F);
+                        try writer.writeInt(u8, 0x80 | cond_flag);
+                    },
+                }
+                try writer.writeRelocatedValue(op.taken, taken_reloc_type);
                 return bidx;
             } else if(try writer.attemptInlineEdge(op.taken)) |bidx| {
-                try writer.writeInt(u8, 0x0F);
-                try writer.writeInt(u8, 0x80 | cond_flag ^ cond_flags.not);
-                try writer.writeRelocatedValue(op.not_taken, .rel32_post_0);
+                switch(not_taken_reloc_type) {
+                    .rel8_post_0 => try writer.writeInt(u8, 0x70 | cond_flag ^ cond_flags.not),
+                    .rel32_post_0 => {
+                        try writer.writeInt(u8, 0x0F);
+                        try writer.writeInt(u8, 0x80 | cond_flag ^ cond_flags.not);
+                    },
+                }
+                try writer.writeRelocatedValue(op.not_taken, not_taken_reloc_type);
                 return bidx;
             } else {
+                // TODO: Use shortest possible jumps here too
                 try writer.writeInt(u8, 0x0F);
                 try writer.writeInt(u8, 0x80 | cond_flag);
                 try writer.writeRelocatedValue(op.taken, .rel32_post_0);

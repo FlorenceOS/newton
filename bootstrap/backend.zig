@@ -5,22 +5,42 @@ const rega = @import("rega.zig");
 
 pub const x86_64 = @import("x86_64.zig");
 
-const RelocationType = enum {
+pub const RelocationType = enum {
+    rel8_post_0,
     rel32_post_0,
+
+    pub fn size(self: @This()) usize {
+        return switch(self) {
+            .rel8_post_0 => 1,
+            .rel32_post_0 => 4,
+        };
+    }
+
+    pub fn minDisplacement(self: @This()) isize {
+        return switch(self) {
+            .rel8_post_0 => -0x80,
+            .rel32_post_0 => -0x80000000,
+        };
+    }
+
+    pub fn maxDisplacement(self: @This()) usize {
+        return switch(self) {
+            .rel8_post_0 => 0x7F,
+            .rel32_post_0 => 0x7FFFFFFF,
+        };
+    }
 };
 
 const Relocation = struct {
     relocation_type: RelocationType,
     output_offset: usize,
 
-    fn size(self: @This()) usize {
-        return switch(self.relocation_type) {
-            .rel32_post_0 => 4,
-        };
-    }
-
     fn resolve(self: @This(), output_bytes: []u8, relocation_target_offset: usize) void {
         switch(self.relocation_type) {
+            .rel8_post_0 => {
+                const rel = relocation_target_offset -% (self.output_offset +% 1);
+                output_bytes[self.output_offset..][0..1].* = std.mem.toBytes(@intCast(i8, @bitCast(i64, rel)));
+            },
             .rel32_post_0 => {
                 const rel = relocation_target_offset -% (self.output_offset +% 4);
                 output_bytes[self.output_offset..][0..4].* = std.mem.toBytes(@intCast(i32, @bitCast(i64, rel)));
@@ -48,6 +68,30 @@ pub fn Writer(comptime Platform: type) type {
             return target_block;
         }
 
+        pub fn currentOffset(self: *const @This()) usize {
+            return self.output_bytes.items.len;
+        }
+
+        pub fn blockOffset(self: *const @This(), edge: ir.BlockEdgeIndex.Index) ?usize {
+            const target = ir.edges.get(edge).target_block;
+            return self.placed_blocks.get(target);
+        }
+
+        pub fn pickSmallestRelocationType(
+            self: *const @This(),
+            edge: ir.BlockEdgeIndex.Index,
+            comptime types: []const std.meta.Tuple(&.{usize, RelocationType}),
+        ) ?RelocationType {
+            if(self.blockOffset(edge)) |offset| {
+                inline for(types) |t| {
+                    const instr_size = t[1].size() + t[0];
+                    const disp = @bitCast(isize, offset -% (self.currentOffset() + instr_size));
+                    if(disp >= t[1].minDisplacement() and disp <= t[1].maxDisplacement()) return t[1];
+                }
+            }
+            return null;
+        }
+
         pub fn writeRelocatedValue(self: *@This(), edge: ir.BlockEdgeIndex.Index, reloc_type: RelocationType) !void {
             const reloc_target = ir.edges.get(edge).target_block;
             const reloc = Relocation{
@@ -55,7 +99,7 @@ pub fn Writer(comptime Platform: type) type {
                 .relocation_type = reloc_type,
             };
 
-            const sz = reloc.size();
+            const sz = reloc_type.size();
             try self.output_bytes.appendNTimes(self.allocator, 0xCC, sz);
 
             if(self.placed_blocks.get(reloc_target)) |offset| {
