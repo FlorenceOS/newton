@@ -32,7 +32,7 @@ pub fn Writer(comptime Platform: type) type {
     return struct {
         allocator: std.mem.Allocator = std.heap.page_allocator,
         output_bytes: std.ArrayListUnmanaged(u8) = .{},
-        enqueued_blocks: std.AutoHashMapUnmanaged(ir.BlockIndex.Index, std.ArrayListUnmanaged(Relocation)) = .{},
+        enqueued_blocks: std.AutoArrayHashMapUnmanaged(ir.BlockIndex.Index, std.ArrayListUnmanaged(Relocation)) = .{},
         placed_blocks: std.AutoHashMapUnmanaged(ir.BlockIndex.Index, usize) = .{},
 
         pub fn attemptInlineEdge(self: *@This(), edge: ir.BlockEdgeIndex.Index) !?ir.BlockIndex.Index {
@@ -114,14 +114,12 @@ pub fn Writer(comptime Platform: type) type {
 
                 if(preferred_block) |blk| {
                     current_block = blk;
-                    block_relocs = self.enqueued_blocks.fetchRemove(current_block).?.value;
+                    block_relocs = self.enqueued_blocks.fetchSwapRemove(current_block).?.value;
                     preferred_block = null;
                 } else {
-                    var it = self.enqueued_blocks.iterator();
-                    const block = it.next() orelse break;
-                    current_block = block.key_ptr.*;
-                    block_relocs = block.value_ptr.*;
-                    self.enqueued_blocks.removeByPtr(block.key_ptr);
+                    const block = self.enqueued_blocks.popOrNull() orelse break;
+                    current_block = block.key;
+                    block_relocs = block.value;
                 }
 
                 for(block_relocs.items) |reloc| {

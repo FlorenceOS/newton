@@ -37,14 +37,18 @@ const cond_flags = struct {
 pub const MovParam = ?u8;
 pub fn movRegForPhi(writer: *backend.Writer(@This()), src_reg: u8, dest_reg: u8, cond_flag: MovParam) !void {
     if(cond_flag) |cond| {
+        // TODO: HIGH REGS
         try writer.writeInt(u8, 0x48);
         try writer.writeInt(u8, 0x0F);
         try writer.writeInt(u8, 0x40 | cond);
         try writer.writeInt(u8, src_reg | (dest_reg << 3) | 0xC0);
     } else {
-        try writer.writeInt(u8, 0x48);
+        try writer.writeInt(u8, 0x48
+            | @as(u8, @boolToInt(dest_reg >= 8)) << 0
+            | @as(u8, @boolToInt(src_reg >= 8)) << 2
+        );
         try writer.writeInt(u8, 0x89);
-        try writer.writeInt(u8, (src_reg << 3) | dest_reg | 0xC0);
+        try writer.writeInt(u8, ((src_reg & 0x7) << 3) | (dest_reg & 0x7) | 0xC0);
     }
 }
 
@@ -59,36 +63,47 @@ pub fn writeDecl(writer: *backend.Writer(@This()), decl_idx: ir.DeclIndex.Index)
             const rhs_reg = ir.decls.get(bop.rhs).reg_alloc_value.?;
 
             if(dest_reg == lhs_reg) {
+                // TODO: HIGH REGS
                 try writer.writeInt(u8, 0x48);
                 try writer.writeInt(u8, 0x01);
                 try writer.writeInt(u8, 0xC0 | dest_reg | (rhs_reg << 3));
             } else if(dest_reg == rhs_reg) {
+                // TODO: HIGH REGS
                 try writer.writeInt(u8, 0x48);
                 try writer.writeInt(u8, 0x01);
                 try writer.writeInt(u8, 0xC0 | dest_reg | (lhs_reg << 3));
             } else {
-                try writer.writeInt(u8, 0x48);
+                try writer.writeInt(u8, 0x48
+                    | @as(u8, @boolToInt(lhs_reg >= 8)) << 0
+                    | @as(u8, @boolToInt(rhs_reg >= 8)) << 1
+                    | @as(u8, @boolToInt(dest_reg >= 8)) << 2
+                );
                 try writer.writeInt(u8, 0x8D);
-                try writer.writeInt(u8, (dest_reg << 3) | 4);
-                try writer.writeInt(u8, (rhs_reg << 3) | lhs_reg);
+                try writer.writeInt(u8, ((dest_reg & 0x7) << 3) | 4);
+                try writer.writeInt(u8, ((rhs_reg & 0x7) << 3) | (lhs_reg & 0x7));
             }
         },
         .add_constant => |bop| {
             const dest_reg = decl.reg_alloc_value.?;
             const lhs_reg = ir.decls.get(bop.lhs).reg_alloc_value.?;
             if(dest_reg == lhs_reg) {
+                // TODO: HIGH REGS
                 try writer.writeInt(u8, 0x48);
                 try writer.writeInt(u8, 0x81);
                 try writer.writeInt(u8, 0xC0 | dest_reg);
                 try writer.writeInt(u32, @intCast(u32, bop.rhs));
             } else {
-                try writer.writeInt(u8, 0x48);
+                try writer.writeInt(u8, 0x48
+                    | @as(u8, @boolToInt(lhs_reg >= 8)) << 0
+                    | @as(u8, @boolToInt(dest_reg >= 8)) << 2
+                );
                 try writer.writeInt(u8, 0x8D);
-                try writer.writeInt(u8, 0x80 | lhs_reg | (dest_reg << 3));
+                try writer.writeInt(u8, 0x80 | (lhs_reg & 0x7) | ((dest_reg & 0x7) << 3));
                 try writer.writeInt(u32, @intCast(u32, bop.rhs));
             }
         },
         .multiply => |bop| {
+            // TODO: HIGH REGS
             const dest_reg = decl.reg_alloc_value.?;
             const lhs_reg = ir.decls.get(bop.lhs).reg_alloc_value.?;
             const rhs_reg = ir.decls.get(bop.rhs).reg_alloc_value.?;
@@ -110,6 +125,7 @@ pub fn writeDecl(writer: *backend.Writer(@This()), decl_idx: ir.DeclIndex.Index)
             }
         },
         .load_int_constant => |c| {
+            // TODO: HIGH REGS
             const dest_reg = decl.reg_alloc_value.?;
             try writer.writeInt(u8, 0x48);
             try writer.writeInt(u8, 0xC7);
@@ -120,6 +136,7 @@ pub fn writeDecl(writer: *backend.Writer(@This()), decl_idx: ir.DeclIndex.Index)
         .greater_constant, .greater_equal_constant,
         .equals_constant, .not_equal_constant,
         => |bop| {
+            // TODO: HIGH REGS
             const reg = ir.decls.get(bop.lhs).reg_alloc_value.?;
             try writer.writeInt(u8, 0x48);
             try writer.writeInt(u8, 0x81);
@@ -131,9 +148,12 @@ pub fn writeDecl(writer: *backend.Writer(@This()), decl_idx: ir.DeclIndex.Index)
             const lhs_reg = ir.decls.get(bop.lhs).reg_alloc_value.?;
             const rhs_reg = ir.decls.get(bop.rhs).reg_alloc_value.?;
 
-            try writer.writeInt(u8, 0x48);
+            try writer.writeInt(u8, 0x48
+                | @as(u8, @boolToInt(lhs_reg >= 8)) << 0
+                | @as(u8, @boolToInt(rhs_reg >= 8)) << 2
+            );
             try writer.writeInt(u8, 0x39);
-            try writer.writeInt(u8, 0xC0 | (rhs_reg << 3) | lhs_reg);
+            try writer.writeInt(u8, 0xC0 | ((rhs_reg & 0x7) << 3) | (lhs_reg & 0x7));
         },
         .@"if" => |op| {
             const op_instr = ir.decls.get(op.condition).instr;

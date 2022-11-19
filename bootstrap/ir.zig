@@ -87,7 +87,7 @@ const DeclInstr = union(enum) {
             phi_iterator: ?*PhiOperand,
         },
 
-        fn next(self: *@This()) ?*DeclIndex.Index {
+        pub fn next(self: *@This()) ?*DeclIndex.Index {
             switch(self.value) {
                 .bounded_iterator => |*list| return list.popOrNull(),
                 .phi_iterator => |*curr_opt| {
@@ -102,7 +102,7 @@ const DeclInstr = union(enum) {
         }
     };
 
-    fn operands(self: *@This()) OperandIterator {
+    pub fn operands(self: *@This()) OperandIterator {
         var bounded_result = OperandIterator{.value = .{.bounded_iterator = .{}}};
 
         switch(self.*) {
@@ -137,7 +137,7 @@ const DeclInstr = union(enum) {
         return bounded_result;
     }
 
-    fn isVolatile(self: *@This()) bool {
+    pub fn isVolatile(self: *@This()) bool {
         switch(self.*) {
             .incomplete_phi => unreachable,
             .@"if", .@"return", .goto => return true,
@@ -145,7 +145,7 @@ const DeclInstr = union(enum) {
         }
     }
 
-    fn isValue(self: *@This()) bool {
+    pub fn isValue(self: *@This()) bool {
         switch(self.*) {
             .incomplete_phi => unreachable,
             .@"if", .@"return", .goto => return false,
@@ -153,7 +153,7 @@ const DeclInstr = union(enum) {
         }
     }
 
-    fn isFlagsValue(self: *@This()) bool {
+    pub fn isFlagsValue(self: *@This()) bool {
         switch(self.*) {
             .less, .less_equal, .equals, .not_equal,
             .less_constant, .less_equal_constant, .greater_constant,
@@ -163,7 +163,7 @@ const DeclInstr = union(enum) {
         }
     }
 
-    fn outEdges(self: *@This()) std.BoundedArray(*BlockEdgeIndex.Index, 2) {
+    pub fn outEdges(self: *@This()) std.BoundedArray(*BlockEdgeIndex.Index, 2) {
         var result = std.BoundedArray(*BlockEdgeIndex.Index, 2){};
         switch(self.*) {
             .incomplete_phi => unreachable,
@@ -381,7 +381,7 @@ const DiscoverContext = struct {
     }
 };
 
-const BlockList = std.ArrayListUnmanaged(BlockIndex.Index);
+pub const BlockList = std.ArrayListUnmanaged(BlockIndex.Index);
 
 // Assumes an arena allocator is passed
 fn allBlocksReachableFrom(allocator: std.mem.Allocator, head_block: BlockIndex.Index) !BlockList {
@@ -578,9 +578,12 @@ fn eliminateIndirectBranches(decl_idx: DeclIndex.Index) !bool {
         if(target_block.first_decl == target_block.last_decl) {
             const first_decl = decls.getOpt(target_block.first_decl) orelse continue;
             if(first_decl.instr == .goto) {
-                edges.get(first_decl.instr.goto).source_block = decl.block;
-                edge.* = first_decl.instr.goto;
-                did_something = true;
+                const goto_edge = edges.get(first_decl.instr.goto);
+                if(target_edge != goto_edge) {
+                    goto_edge.source_block = decl.block;
+                    edge.* = first_decl.instr.goto;
+                    did_something = true;
+                }
             }
         }
     }
@@ -810,146 +813,6 @@ fn addEdge(
     target_block.first_predecessor = BlockEdgeIndex.toOpt(retval);
 
     return retval;
-}
-
-fn doRegAlloc(
-    allocator: std.mem.Allocator,
-    block_list: *const BlockList,
-    return_reg: u8,
-    param_regs: []const u8,
-    gprs: []const u8,
-) !void {
-    var to_visit = std.ArrayList(BlockIndex.Index).init(allocator);
-    var has_visited = std.AutoHashMap(BlockIndex.Index, void).init(allocator);
-    const RegArray = std.PackedIntArray(bool, 256);
-    var alive_regs = std.AutoHashMap(BlockIndex.Index, RegArray).init(allocator);
-
-    for(block_list.items) |blk| {
-        try alive_regs.put(blk, RegArray.initAllTo(false));
-        var current_decl = blocks.get(blk).last_decl;
-        while(decls.getOpt(current_decl)) |decl| {
-            // Is this a returning block?
-            switch(decl.instr) {
-                .param_ref => |pr| decl.reg_alloc_value = param_regs[pr],
-                .@"return" => {
-                    try to_visit.append(blk);
-                    try has_visited.put(blk, {});
-                },
-                else => {},
-            }
-            current_decl = decl.prev;
-        }
-    }
-
-    while(to_visit.items.len > 0) {
-        const blk_idx = to_visit.swapRemove(0);
-        const blk = blocks.get(blk_idx);
-        const blk_alive = alive_regs.getPtr(blk_idx).?;
-
-        var current_edge = blk.first_predecessor;
-        while(edges.getOpt(current_edge)) |edge| {
-            if(has_visited.get(edge.source_block) == null) {
-                try has_visited.put(edge.source_block, {});
-                try to_visit.append(edge.source_block);
-            }
-            current_edge = edge.next;
-        }
-
-        var current_decl = blk.last_decl;
-        while(decls.getOpt(current_decl)) |decl| {
-            switch(decl.instr) {
-                .@"return" => |op| {
-                    if(decls.get(op).reg_alloc_value == null) {
-                        blk_alive.set(return_reg, true);
-                        decls.get(op).reg_alloc_value = return_reg;
-                    }
-                },
-                else => {
-                    if(decl.instr.isValue()) {
-                        if(decl.reg_alloc_value) |reg| {
-                            blk_alive.set(reg, false);
-                        }
-                    }
-
-                    if(decl.instr == .phi) {
-                        var current_phi_operand = decl.instr.phi;
-                        while(phi_operands.getOpt(current_phi_operand)) |op| {
-                            if(op.decl != decls.getIndex(decl)) {
-                                const op_decl = decls.get(op.decl);
-                                if(op_decl.reg_alloc_value) |reg| {
-                                    if(!blk_alive.get(reg)) {
-                                        blk_alive.set(reg, true);
-                                        decl.reg_alloc_value = reg;
-                                    }
-                                    break;
-                                }
-                            }
-                            current_phi_operand = op.next;
-                        }
-
-                        current_phi_operand = decl.instr.phi;
-                        while(phi_operands.getOpt(current_phi_operand)) |op| {
-                            const operand = decls.get(op.decl);
-                            const op_block_alive = alive_regs.getPtr(edges.get(op.edge).source_block).?;
-                            if(operand.reg_alloc_value == null) blk: {
-                                if(!op_block_alive.get(decl.reg_alloc_value.?)) {
-                                    op_block_alive.set(decl.reg_alloc_value.?, true);
-                                    operand.reg_alloc_value = decl.reg_alloc_value.?;
-                                    break :blk;
-                                }
-
-                                for(gprs) |reg| {
-                                    if(!op_block_alive.get(reg)) {
-                                        op_block_alive.set(reg, true);
-                                        operand.reg_alloc_value = reg;
-                                        break :blk;
-                                    }
-                                }
-                                @panic("Can't find free reg");
-                            }
-                            current_phi_operand = op.next;
-                        }
-                    } else {
-                        var operands = decl.instr.operands();
-                        var first_operand = true;
-                        while(operands.next()) |op_idx| {
-                            const operand = decls.get(op_idx.*);
-                            if(!operand.instr.isFlagsValue() and operand.reg_alloc_value == null) {
-                                if(first_operand and decl.reg_alloc_value != null) {
-                                    const reg = decl.reg_alloc_value.?;
-                                    blk_alive.set(reg, true);
-                                    operand.reg_alloc_value = reg;
-                                    first_operand = false;
-                                } else blk: {
-                                    for(gprs) |reg| {
-                                        if(!blk_alive.get(reg)) {
-                                            blk_alive.set(reg, true);
-                                            operand.reg_alloc_value = reg;
-                                            break :blk;
-                                        }
-                                    }
-                                    @panic("Can't find free reg");
-                                }
-                            }
-                        }
-                    }
-                },
-            }
-            current_decl = decl.prev;
-        }
-
-        current_edge = blk.first_predecessor;
-        while(edges.getOpt(current_edge)) |edge| {
-            const predecessor_alive = alive_regs.getPtr(edge.source_block).?;
-            var reg: usize = 0;
-            while(reg < blk_alive.len) : (reg += 1) {
-                if(blk_alive.get(reg)) {
-                    predecessor_alive.set(reg, true);
-                }
-            }
-            current_edge = edge.next;
-        }
-    }
 }
 
 fn ssaBlockStatementIntoBasicBlock(
@@ -1203,7 +1066,7 @@ pub fn memes(thing: *sema.Value) !void {
     const curr_backend = backend.x86_64;
     const blocks_to_dump = try allBlocksReachableFrom(arena.allocator(), bbidx);
 
-    try doRegAlloc(
+    try @import("rega.zig").doRegAlloc(
         arena.allocator(),
         &blocks_to_dump,
         curr_backend.registers.return_reg,
@@ -1216,13 +1079,13 @@ pub fn memes(thing: *sema.Value) !void {
         var current_decl = blocks.get(bb).first_decl;
         while(decls.getOpt(current_decl)) |decl| {
             std.debug.print("  ", .{});
-            if(decl.instr.isValue()) {
+            //if(decl.instr.isValue()) {
                 std.debug.print("${d}", .{@enumToInt(current_decl)});
                 if(decl.reg_alloc_value) |reg| {
                     std.debug.print(" (reg #{d})", .{reg});
                 }
                 std.debug.print(" = ", .{});
-            }
+            //}
             switch(decl.instr) {
                 .param_ref => |p| std.debug.print("@param({d})\n", .{p}),
                 .load_int_constant => |value| std.debug.print("{d}\n", .{value}),
