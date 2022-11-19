@@ -166,43 +166,42 @@ pub fn doRegAlloc(
                 blk: {
                     try copyInto(arena.allocator(), &new_in, curr_out orelse break :blk);
                 }
+                _ = new_in.swapRemove(iidx);
                 var ops_it = instr.instr.operands();
                 while(ops_it.next()) |op| {
                     try new_in.put(arena.allocator(), op.*, {});
                 }
 
                 var new_out = DeclSet{};
-                // if(ir.decls.getOpt(instr.next)) |succi| blk: {
-                //     try copyInto(arena.allocator(), &new_out, ins.getPtr(ir.decls.getIndex(succi)) orelse break :blk);
-                // } else {
-                //     const out_edges = instr.instr.outEdges();
-                //     for(out_edges.slice()) |edge_idx| {
-                //         const edge = ir.edges.get(edge_idx.*);
-                //         const target_block = ir.blocks.get(edge.target_block);
-                //         if(ir.decls.getOpt(target_block.first_decl)) |succi| {
-                //             try copyInto(arena.allocator(), &new_out, ins.getPtr(ir.decls.getIndex(succi)) orelse continue);
-                //         }
+                if(ir.decls.getOpt(instr.next)) |succi| blk: {
+                    try copyInto(arena.allocator(), &new_out, ins.getPtr(ir.decls.getIndex(succi)) orelse break :blk);
+                } else {
+                    const out_edges = instr.instr.outEdges();
+                    for(out_edges.slice()) |edge_idx| {
+                        const edge = ir.edges.get(edge_idx.*);
+                        const target_block = ir.blocks.get(edge.target_block);
+                        if(ir.decls.getOpt(target_block.first_decl)) |succi| {
+                            try copyInto(arena.allocator(), &new_out, ins.getPtr(ir.decls.getIndex(succi)) orelse continue);
+                        }
+                    }
+                }
+                // {
+                //     var succ_instr = instr.next;
+                //     while(ir.decls.getOpt(succ_instr)) |succi| : (succ_instr = succi.next) {
+                //         const succ_idx = ir.decls.getIndex(succi);
+                //         //try copyIntoCond(arena.allocator(), &new_out, &new_in, ins.getPtr(succ_idx) orelse continue);
+                //         try copyInto(arena.allocator(), &new_out, ins.getPtr(succ_idx) orelse continue);
                 //     }
                 // }
-                {
-                    var succ_instr = instr.next;
-                    while(ir.decls.getOpt(succ_instr)) |succi| : (succ_instr = succi.next) {
-                        const succ_idx = ir.decls.getIndex(succi);
-                        //try copyIntoCond(arena.allocator(), &new_out, &new_in, ins.getPtr(succ_idx) orelse continue);
-                        try copyInto(arena.allocator(), &new_out, ins.getPtr(succ_idx) orelse continue);
-                    }
-                }
-                for(succ.get(blk_idx).?.items) |succ_block_idx| {
-                    const succ_block = ir.blocks.get(succ_block_idx);
-                    var succ_instr = succ_block.first_decl;
-                    while(ir.decls.getOpt(succ_instr)) |succi| : (succ_instr = succi.next) {
-                        const succ_idx = ir.decls.getIndex(succi);
-                        //try copyIntoCond(arena.allocator(), &new_out, &new_in, ins.getPtr(succ_idx) orelse continue);
-                        try copyInto(arena.allocator(), &new_out, ins.getPtr(succ_idx) orelse continue);
-                    }
-                }
-
-                _ = new_in.swapRemove(iidx);
+                // for(succ.get(blk_idx).?.items) |succ_block_idx| {
+                //     const succ_block = ir.blocks.get(succ_block_idx);
+                //     var succ_instr = succ_block.first_decl;
+                //     while(ir.decls.getOpt(succ_instr)) |succi| : (succ_instr = succi.next) {
+                //         const succ_idx = ir.decls.getIndex(succi);
+                //         //try copyIntoCond(arena.allocator(), &new_out, &new_in, ins.getPtr(succ_idx) orelse continue);
+                //         try copyInto(arena.allocator(), &new_out, ins.getPtr(succ_idx) orelse continue);
+                //     }
+                // }
 
                 if(!any_changed and (!setEq(&new_in, curr_in) or !setEq(&new_out, curr_out))) {
                     any_changed = true;
