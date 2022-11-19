@@ -336,7 +336,7 @@ fn checkTrivialPhi(phi_decl: DeclIndex.Index) ??DeclIndex.Index {
 
     while(phi_operands.getOpt(current_operand)) |op| {
         if(only_decl) |only| {
-            if(only != op.decl) return null;
+            if(only != op.decl and op.decl != phi_decl) return null;
         } else {
             only_decl = op.decl;
         }
