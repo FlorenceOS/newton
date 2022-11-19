@@ -3,6 +3,7 @@ const std = @import("std");
 const backend = @import("backend.zig");
 const indexed_list = @import("indexed_list.zig");
 const sema = @import("sema.zig");
+const rega = @import("rega.zig");
 
 pub const DeclIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const BlockIndex = indexed_list.Indices(u32, opaque{}, .{});
@@ -293,7 +294,7 @@ fn addPhiOperands(sema_decl: sema.DeclIndex.Index, block_idx: BlockIndex.Index, 
     return tryRemoveTrivialPhi(phi_idx, delete);
 }
 
-fn removeDecl(decl_idx: DeclIndex.Index) void {
+pub fn removeDecl(decl_idx: DeclIndex.Index) void {
     const decl = decls.get(decl_idx);
     const block = blocks.get(decl.block);
 
@@ -765,6 +766,34 @@ fn eliminateConstantExpressions(decl_idx: DeclIndex.Index) !bool {
     return false;
 }
 
+pub fn insertBefore(before: DeclIndex.Index, instr: DeclInstr) !DeclIndex.Index {
+    const retval = blk: {
+        const bdecl = decls.get(before);
+
+        break :blk try decls.insert(.{
+            .next = DeclIndex.toOpt(before),
+            .prev = bdecl.prev,
+            .block = bdecl.block,
+            .instr = instr,
+            .sema_decl = .none,
+        });
+    };
+
+    const bdecl = decls.get(before);
+    const blk_idx = bdecl.block;
+    const blk = blocks.get(blk_idx);
+
+    bdecl.prev = DeclIndex.toOpt(retval);
+
+    if(blk.first_decl == DeclIndex.toOpt(before)) {
+        blk.first_decl = DeclIndex.toOpt(retval);
+    } else {
+        decls.getOpt(decls.get(retval).prev).?.next = DeclIndex.toOpt(retval);
+    }
+
+    return retval;
+}
+
 fn appendToBlock(block_idx: BlockIndex.Index, sema_decl: sema.DeclIndex.OptIndex, instr: DeclInstr) !DeclIndex.Index {
     const block = blocks.get(block_idx);
 
@@ -1056,6 +1085,75 @@ fn ssaFunction(func: *sema.Function) !BlockIndex.Index {
     return first_basic_block;
 }
 
+pub fn dumpBlock(
+    bb: BlockIndex.Index,
+    uf: ?rega.UnionFind,
+) !void {
+    std.debug.print("Block#{d}:\n", .{@enumToInt(bb)});
+    var current_decl = blocks.get(bb).first_decl;
+    while(decls.getOpt(current_decl)) |decl| {
+        std.debug.print("  ", .{});
+        //if(decl.instr.isValue()) {
+            std.debug.print("${d}", .{@enumToInt(current_decl)});
+            const adecl = blk: { break :blk (uf orelse break :blk decl).findDeclByPtr(decl); };
+            if(adecl != decl) {
+                std.debug.print(" (union with ${d})", .{@enumToInt(decls.getIndex(adecl))});
+            }
+            if(adecl.reg_alloc_value) |reg| {
+                std.debug.print(" (reg #{d})", .{reg});
+            }
+            std.debug.print(" = ", .{});
+        //}
+        switch(decl.instr) {
+            .param_ref => |p| std.debug.print("@param({d})\n", .{p}),
+            .load_int_constant => |value| std.debug.print("{d}\n", .{value}),
+            .load_bool_constant => |b| std.debug.print("{}\n", .{b}),
+            .@"undefined" => std.debug.print("undefined\n", .{}),
+            inline
+            .add, .add_mod, .sub, .sub_mod,
+            .multiply, .multiply_mod, .divide, .modulus,
+            .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
+            .less, .less_equal, .equals, .not_equal,
+            => |bop, tag| std.debug.print("{s}(${d}, ${d})\n", .{@tagName(tag), @enumToInt(bop.lhs), @enumToInt(bop.rhs)}),
+            inline
+            .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
+            .multiply_constant, .multiply_mod_constant, .divide_constant, .modulus_constant,
+            .shift_left_constant, .shift_right_constant, .bit_and_constant, .bit_or_constant, .bit_xor_constant,
+            .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant,
+            .equals_constant, .not_equal_constant
+            => |bop, tag| std.debug.print("{s}(${d}, #{d})\n", .{@tagName(tag)[0..@tagName(tag).len-9], @enumToInt(bop.lhs), bop.rhs}),
+            .incomplete_phi => std.debug.print("<incomplete phi node>\n", .{}),
+            .copy => |c| std.debug.print("@copy(${d})\n", .{@enumToInt(c)}),
+            .@"if" => |if_instr| {
+                std.debug.print("if(${d}, Block#{d}, Block#{d})\n", .{
+                    @enumToInt(if_instr.condition),
+                    @enumToInt(edges.get(if_instr.taken).target_block),
+                    @enumToInt(edges.get(if_instr.not_taken).target_block),
+                });
+            },
+            .@"return" => |value| std.debug.print("return ${d}\n", .{@enumToInt(value)}),
+            .goto => |goto_edge| {
+                std.debug.print("goto(Block#{d})\n", .{@enumToInt(edges.get(goto_edge).target_block)});
+            },
+            .phi => |phi_index| {
+                var current_phi = phi_index;
+                std.debug.print("phi(", .{});
+                while(phi_operands.getOpt(current_phi)) |phi| {
+                    const edge = edges.get(phi.edge);
+                    std.debug.print("[${d}, Block#{d}]", .{@enumToInt(phi.decl), @enumToInt(edge.source_block)});
+                    if(phi.next != .none) {
+                        std.debug.print(", ", .{});
+                    }
+                    current_phi = phi.next;
+                }
+                std.debug.print(")\n", .{});
+            },
+        }
+        current_decl = decl.next;
+    }
+    std.debug.print("\n", .{});
+}
+
 pub fn memes(thing: *sema.Value) !void {
     const bbidx = try ssaFunction(&thing.function);
 
@@ -1066,7 +1164,11 @@ pub fn memes(thing: *sema.Value) !void {
     const curr_backend = backend.x86_64;
     const blocks_to_dump = try allBlocksReachableFrom(arena.allocator(), bbidx);
 
-    try @import("rega.zig").doRegAlloc(
+    for(blocks_to_dump.items) |bb| {
+        try dumpBlock(bb, null);
+    }
+
+    const uf = try rega.doRegAlloc(
         arena.allocator(),
         &blocks_to_dump,
         curr_backend.registers.return_reg,
@@ -1075,69 +1177,12 @@ pub fn memes(thing: *sema.Value) !void {
     );
 
     for(blocks_to_dump.items) |bb| {
-        std.debug.print("Block#{d}:\n", .{@enumToInt(bb)});
-        var current_decl = blocks.get(bb).first_decl;
-        while(decls.getOpt(current_decl)) |decl| {
-            std.debug.print("  ", .{});
-            //if(decl.instr.isValue()) {
-                std.debug.print("${d}", .{@enumToInt(current_decl)});
-                if(decl.reg_alloc_value) |reg| {
-                    std.debug.print(" (reg #{d})", .{reg});
-                }
-                std.debug.print(" = ", .{});
-            //}
-            switch(decl.instr) {
-                .param_ref => |p| std.debug.print("@param({d})\n", .{p}),
-                .load_int_constant => |value| std.debug.print("{d}\n", .{value}),
-                .load_bool_constant => |b| std.debug.print("{}\n", .{b}),
-                .@"undefined" => std.debug.print("undefined\n", .{}),
-                inline
-                .add, .add_mod, .sub, .sub_mod,
-                .multiply, .multiply_mod, .divide, .modulus,
-                .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
-                .less, .less_equal, .equals, .not_equal,
-                => |bop, tag| std.debug.print("{s}(${d}, ${d})\n", .{@tagName(tag), @enumToInt(bop.lhs), @enumToInt(bop.rhs)}),
-                inline
-                .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
-                .multiply_constant, .multiply_mod_constant, .divide_constant, .modulus_constant,
-                .shift_left_constant, .shift_right_constant, .bit_and_constant, .bit_or_constant, .bit_xor_constant,
-                .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant,
-                .equals_constant, .not_equal_constant
-                => |bop, tag| std.debug.print("{s}(${d}, #{d})\n", .{@tagName(tag)[0..@tagName(tag).len-9], @enumToInt(bop.lhs), bop.rhs}),
-                .incomplete_phi => std.debug.print("<incomplete phi node>\n", .{}),
-                .copy => |c| std.debug.print("@copy(${d})\n", .{@enumToInt(c)}),
-                .@"if" => |if_instr| {
-                    std.debug.print("if(${d}, Block#{d}, Block#{d})\n", .{
-                        @enumToInt(if_instr.condition),
-                        @enumToInt(edges.get(if_instr.taken).target_block),
-                        @enumToInt(edges.get(if_instr.not_taken).target_block),
-                    });
-                },
-                .@"return" => |value| std.debug.print("return ${d}\n", .{@enumToInt(value)}),
-                .goto => |goto_edge| {
-                    std.debug.print("goto(Block#{d})\n", .{@enumToInt(edges.get(goto_edge).target_block)});
-                },
-                .phi => |phi_index| {
-                    var current_phi = phi_index;
-                    std.debug.print("phi(", .{});
-                    while(phi_operands.getOpt(current_phi)) |phi| {
-                        const edge = edges.get(phi.edge);
-                        std.debug.print("[${d}, Block#{d}]", .{@enumToInt(phi.decl), @enumToInt(edge.source_block)});
-                        if(phi.next != .none) {
-                            std.debug.print(", ", .{});
-                        }
-                        current_phi = phi.next;
-                    }
-                    std.debug.print(")\n", .{});
-                },
-            }
-            current_decl = decl.next;
-        }
-        std.debug.print("\n", .{});
+        try dumpBlock(bb, uf);
     }
 
     var writer = backend.Writer(curr_backend){
         .allocator = optimization_allocator.allocator(),
+        .uf = uf,
     };
     try writer.writeFunction(bbidx);
 }

@@ -2,6 +2,7 @@ const std = @import("std");
 
 const backend = @import("backend.zig");
 const ir = @import("ir.zig");
+const rega = @import("rega.zig");
 
 pub const registers = struct {
     const rax = 0;
@@ -34,33 +35,15 @@ const cond_flags = struct {
     const below_equal = 6; // Less than unsigned or equal
 };
 
-pub const MovParam = ?u8;
-pub fn movRegForPhi(writer: *backend.Writer(@This()), src_reg: u8, dest_reg: u8, cond_flag: MovParam) !void {
-    if(cond_flag) |cond| {
-        // TODO: HIGH REGS
-        try writer.writeInt(u8, 0x48);
-        try writer.writeInt(u8, 0x0F);
-        try writer.writeInt(u8, 0x40 | cond);
-        try writer.writeInt(u8, src_reg | (dest_reg << 3) | 0xC0);
-    } else {
-        try writer.writeInt(u8, 0x48
-            | @as(u8, @boolToInt(dest_reg >= 8)) << 0
-            | @as(u8, @boolToInt(src_reg >= 8)) << 2
-        );
-        try writer.writeInt(u8, 0x89);
-        try writer.writeInt(u8, ((src_reg & 0x7) << 3) | (dest_reg & 0x7) | 0xC0);
-    }
-}
-
-pub fn writeDecl(writer: *backend.Writer(@This()), decl_idx: ir.DeclIndex.Index) !?ir.BlockIndex.Index {
+pub fn writeDecl(writer: *backend.Writer(@This()), decl_idx: ir.DeclIndex.Index, uf: rega.UnionFind) !?ir.BlockIndex.Index {
     const decl = ir.decls.get(decl_idx);
     switch(decl.instr) {
         .param_ref, .@"undefined",
         => {},
         .add => |bop| {
-            const dest_reg = decl.reg_alloc_value.?;
-            const lhs_reg = ir.decls.get(bop.lhs).reg_alloc_value.?;
-            const rhs_reg = ir.decls.get(bop.rhs).reg_alloc_value.?;
+            const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
+            const lhs_reg = uf.findDecl(bop.lhs).reg_alloc_value.?;
+            const rhs_reg = uf.findDecl(bop.rhs).reg_alloc_value.?;
 
             if(dest_reg == lhs_reg) {
                 // TODO: HIGH REGS
@@ -84,8 +67,8 @@ pub fn writeDecl(writer: *backend.Writer(@This()), decl_idx: ir.DeclIndex.Index)
             }
         },
         .add_constant => |bop| {
-            const dest_reg = decl.reg_alloc_value.?;
-            const lhs_reg = ir.decls.get(bop.lhs).reg_alloc_value.?;
+            const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
+            const lhs_reg = uf.findDecl(bop.lhs).reg_alloc_value.?;
             if(dest_reg == lhs_reg) {
                 // TODO: HIGH REGS
                 try writer.writeInt(u8, 0x48);
@@ -104,9 +87,9 @@ pub fn writeDecl(writer: *backend.Writer(@This()), decl_idx: ir.DeclIndex.Index)
         },
         .multiply => |bop| {
             // TODO: HIGH REGS
-            const dest_reg = decl.reg_alloc_value.?;
-            const lhs_reg = ir.decls.get(bop.lhs).reg_alloc_value.?;
-            const rhs_reg = ir.decls.get(bop.rhs).reg_alloc_value.?;
+            const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
+            const lhs_reg = uf.findDecl(bop.lhs).reg_alloc_value.?;
+            const rhs_reg = uf.findDecl(bop.rhs).reg_alloc_value.?;
 
             std.debug.assert(lhs_reg == registers.rax);
             std.debug.assert(dest_reg == registers.rax);
@@ -116,17 +99,26 @@ pub fn writeDecl(writer: *backend.Writer(@This()), decl_idx: ir.DeclIndex.Index)
         },
         .goto => |edge| {
             if(try writer.attemptInlineEdge(edge)) |bidx| {
-                try writer.prepareBranch(edge, null);
                 return bidx;
             } else {
-                try writer.prepareBranch(edge, null);
                 try writer.writeInt(u8, 0xE9);
                 try writer.writeRelocatedValue(edge, .rel32_post_0);
             }
         },
+        .copy => |cope| {
+            const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
+            const src_reg = uf.findDecl(cope).reg_alloc_value.?;
+            if(dest_reg == src_reg) return null;
+            try writer.writeInt(u8, 0x48
+                | @as(u8, @boolToInt(dest_reg >= 8)) << 0
+                | @as(u8, @boolToInt(src_reg >= 8)) << 2
+            );
+            try writer.writeInt(u8, 0x89);
+            try writer.writeInt(u8, ((src_reg & 0x7) << 3) | (dest_reg & 0x7) | 0xC0);
+        },
         .load_int_constant => |c| {
             // TODO: HIGH REGS
-            const dest_reg = decl.reg_alloc_value.?;
+            const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
             try writer.writeInt(u8, 0x48);
             try writer.writeInt(u8, 0xC7);
             try writer.writeInt(u8, 0xC0 | dest_reg);
@@ -137,7 +129,7 @@ pub fn writeDecl(writer: *backend.Writer(@This()), decl_idx: ir.DeclIndex.Index)
         .equals_constant, .not_equal_constant,
         => |bop| {
             // TODO: HIGH REGS
-            const reg = ir.decls.get(bop.lhs).reg_alloc_value.?;
+            const reg = uf.findDecl(bop.lhs).reg_alloc_value.?;
             try writer.writeInt(u8, 0x48);
             try writer.writeInt(u8, 0x81);
             try writer.writeInt(u8, reg | 0xF8);
@@ -145,8 +137,8 @@ pub fn writeDecl(writer: *backend.Writer(@This()), decl_idx: ir.DeclIndex.Index)
         },
         .less, .less_equal, .equals, .not_equal,
         => |bop| {
-            const lhs_reg = ir.decls.get(bop.lhs).reg_alloc_value.?;
-            const rhs_reg = ir.decls.get(bop.rhs).reg_alloc_value.?;
+            const lhs_reg = uf.findDecl(bop.lhs).reg_alloc_value.?;
+            const rhs_reg = uf.findDecl(bop.rhs).reg_alloc_value.?;
 
             try writer.writeInt(u8, 0x48
                 | @as(u8, @boolToInt(lhs_reg >= 8)) << 0
@@ -167,31 +159,25 @@ pub fn writeDecl(writer: *backend.Writer(@This()), decl_idx: ir.DeclIndex.Index)
                 else => unreachable,
             };
             if(try writer.attemptInlineEdge(op.not_taken)) |bidx| {
-                try writer.prepareBranch(op.taken, cond_flag);
                 try writer.writeInt(u8, 0x0F);
                 try writer.writeInt(u8, 0x80 | cond_flag);
                 try writer.writeRelocatedValue(op.taken, .rel32_post_0);
-                try writer.prepareBranch(op.not_taken, null);
                 return bidx;
             } else if(try writer.attemptInlineEdge(op.taken)) |bidx| {
-                try writer.prepareBranch(op.taken, cond_flag ^ 1);
                 try writer.writeInt(u8, 0x0F);
                 try writer.writeInt(u8, 0x80 | cond_flag ^ cond_flags.not);
                 try writer.writeRelocatedValue(op.not_taken, .rel32_post_0);
-                try writer.prepareBranch(op.not_taken, null);
                 return bidx;
             } else {
-                try writer.prepareBranch(op.taken, cond_flag);
                 try writer.writeInt(u8, 0x0F);
                 try writer.writeInt(u8, 0x80 | cond_flag);
                 try writer.writeRelocatedValue(op.taken, .rel32_post_0);
-                try writer.prepareBranch(op.taken, null);
                 try writer.writeInt(u8, 0xE9);
                 try writer.writeRelocatedValue(op.not_taken, .rel32_post_0);
             }
         },
         .@"return" => |op| {
-            const op_reg = ir.decls.get(op).reg_alloc_value.?;
+            const op_reg = uf.findDecl(op).reg_alloc_value.?;
             std.debug.assert(op_reg == registers.rax);
             try writer.writeInt(u8, 0xC3);
         },

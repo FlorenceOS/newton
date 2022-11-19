@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const ir = @import("ir.zig");
+const rega = @import("rega.zig");
 
 pub const x86_64 = @import("x86_64.zig");
 
@@ -34,6 +35,7 @@ pub fn Writer(comptime Platform: type) type {
         output_bytes: std.ArrayListUnmanaged(u8) = .{},
         enqueued_blocks: std.AutoArrayHashMapUnmanaged(ir.BlockIndex.Index, std.ArrayListUnmanaged(Relocation)) = .{},
         placed_blocks: std.AutoHashMapUnmanaged(ir.BlockIndex.Index, usize) = .{},
+        uf: rega.UnionFind,
 
         pub fn attemptInlineEdge(self: *@This(), edge: ir.BlockEdgeIndex.Index) !?ir.BlockIndex.Index {
             const target_block = ir.edges.get(edge).target_block;
@@ -71,33 +73,13 @@ pub fn Writer(comptime Platform: type) type {
             try self.output_bytes.appendSlice(self.allocator, &std.mem.toBytes(value));
         }
 
-        pub fn prepareBranch(self: *@This(), edge: ir.BlockEdgeIndex.Index, param: Platform.MovParam) !void {
-            var curr_decl = ir.blocks.get(ir.edges.get(edge).target_block).first_decl;
-            while(ir.decls.getOpt(curr_decl)) |decl| {
-                if(decl.instr == .phi) {
-                    const dest_reg = decl.reg_alloc_value.?;
-                    var curr_op = decl.instr.phi;
-                    while(ir.phi_operands.getOpt(curr_op)) |op| {
-                        if(op.edge == edge) {
-                            const src_reg = ir.decls.get(op.decl).reg_alloc_value.?;
-                            if(src_reg != dest_reg) {
-                                try Platform.movRegForPhi(self, src_reg, dest_reg, param);
-                            }
-                        }
-                        curr_op = op.next;
-                    }
-                }
-                curr_decl = decl.next;
-            }
-        }
-
         fn writeBlock(self: *@This(), bidx: ir.BlockIndex.Index) !?ir.BlockIndex.Index {
             var block = ir.blocks.get(bidx);
             var current_instr = block.first_decl;
 
             try self.placed_blocks.put(self.allocator, bidx, self.output_bytes.items.len);
             while(ir.decls.getOpt(current_instr)) |instr| {
-                const next_block: ?ir.BlockIndex.Index = try Platform.writeDecl(self, ir.decls.getIndex(instr));
+                const next_block: ?ir.BlockIndex.Index = try Platform.writeDecl(self, ir.decls.getIndex(instr), self.uf);
                 if(next_block) |nb| return nb;
                 current_instr = instr.next;
             }
