@@ -60,7 +60,7 @@ fn movReg(writer: *Writer, dest_reg: u8, src_reg: u8) !void {
 pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFind) !?ir.BlockIndex.Index {
     const decl = ir.decls.get(decl_idx);
     switch(decl.instr) {
-        .param_ref, .@"undefined" => {},
+        .param_ref, .undefined => {},
         .load_int_constant => |value| {
             const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
             const mov_ops: [4]std.meta.Tuple(&.{u16, u2, MovType}) = .{

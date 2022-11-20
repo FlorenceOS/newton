@@ -3,7 +3,6 @@ const std = @import("std");
 const indexed_list = @import("indexed_list.zig");
 const sources = @import("sources.zig");
 const tokenizer = @import("tokenizer.zig");
-const values = @import("values.zig");
 
 const ExpressionList = indexed_list.IndexedList(ExprIndex, ExpressionNode);
 const StatementList = indexed_list.IndexedList(StmtIndex, StatementNode);
@@ -12,7 +11,7 @@ const FunctionParamList = indexed_list.IndexedList(FunctionParamIndex, FunctionP
 
 pub const ExprIndex = indexed_list.Indices(u32, opaque{}, .{
     // Commonly used constants
-    .@"undefined" = .{ .undefined_expr = {}},
+    .undefined = .{ .undefined = {}},
     .@"unreachable" = .{ .unreachable_expr = {}},
 
     // Commonly used types
@@ -114,7 +113,7 @@ pub const ExpressionNode = union(enum) {
     addr_of: Uop,
     deref: Uop,
 
-    undefined_expr,
+    undefined,
     unreachable_expr,
     discard_underscore,
 

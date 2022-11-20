@@ -171,7 +171,7 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
                 if(@hasDecl(T, "equals")) {
                     if(item.equals(&val)) return @intToEnum(Index, i);
                 } else {
-                    if(item == val) return @intToEnum(Index, i);
+                    if(std.meta.eql(item, val)) return @intToEnum(Index, i);
                 }
             }
             return self.insert(val);

@@ -396,9 +396,9 @@ pub fn doRegAlloc(
         var curr_instr = blk.first_decl;
         while(ir.decls.getOpt(curr_instr)) |decl| : (curr_instr = decl.next) {
             switch(decl.instr) {
-                .@"return" => |op_idx| {
-                    const adecl = uf.findDecl(op_idx);
-                    if(adecl.reg_alloc_value == null) {
+                .@"return" => |ret| {
+                    const adecl = uf.findDecl(ret.value);
+                    if(adecl.reg_alloc_value == null and isDeclInReg(ret.value)) {
                         adecl.reg_alloc_value = return_reg;
                     }
                 },
