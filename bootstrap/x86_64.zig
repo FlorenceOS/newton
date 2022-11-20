@@ -37,6 +37,16 @@ const cond_flags = struct {
     const below_equal = 6; // Less than unsigned or equal
 };
 
+fn movReg64(writer: *Writer, dest_reg: u8, src_reg: u8) !void {
+    if(dest_reg == src_reg) return;
+    try writer.writeInt(u8, 0x48
+        | @as(u8, @boolToInt(dest_reg >= 8)) << 0
+        | @as(u8, @boolToInt(src_reg >= 8)) << 2
+    );
+    try writer.writeInt(u8, 0x89);
+    try writer.writeInt(u8, 0xC0 | ((src_reg & 0x7) << 3) | (dest_reg & 0x7));
+}
+
 pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFind) !?ir.BlockIndex.Index {
     const decl = ir.decls.get(decl_idx);
     switch(decl.instr) {
@@ -95,6 +105,21 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
                 try writer.writeInt(u32, @intCast(u32, bop.rhs));
             }
         },
+        .sub_constant => |bop| {
+            const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
+            const lhs_reg = uf.findDecl(bop.lhs).reg_alloc_value.?;
+            try movReg64(writer, dest_reg, lhs_reg);
+            if(bop.rhs == 1) { // dec r64
+                try writer.writeInt(u8, 0x48 | @as(u8, @boolToInt(dest_reg >= 8)));
+                try writer.writeInt(u8, 0xFF);
+                try writer.writeInt(u8, 0xC8 | (dest_reg & 0x7));
+            } else { // sub r64, imm32
+                try writer.writeInt(u8, 0x48 | @as(u8, @boolToInt(dest_reg >= 8)));
+                try writer.writeInt(u8, 0x81);
+                try writer.writeInt(u8, 0xE8 | (dest_reg & 0x7));
+                try writer.writeInt(u32, @intCast(u32, bop.rhs));
+            }
+        },
         .multiply => |bop| {
             // TODO: HIGH REGS
             const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
@@ -119,16 +144,10 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
                 try writer.writeRelocatedValue(edge, reloc_type);
             }
         },
-        .copy => |cope| {
+        .copy => |target| {
             const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
-            const src_reg = uf.findDecl(cope).reg_alloc_value.?;
-            if(dest_reg == src_reg) return null;
-            try writer.writeInt(u8, 0x48
-                | @as(u8, @boolToInt(dest_reg >= 8)) << 0
-                | @as(u8, @boolToInt(src_reg >= 8)) << 2
-            );
-            try writer.writeInt(u8, 0x89);
-            try writer.writeInt(u8, 0xC0 | ((src_reg & 0x7) << 3) | (dest_reg & 0x7));
+            const src_reg = uf.findDecl(target).reg_alloc_value.?;
+            try movReg64(writer, dest_reg, src_reg);
         },
         .load_int_constant => |c| {
             const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
