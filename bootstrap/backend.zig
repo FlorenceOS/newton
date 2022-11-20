@@ -3,16 +3,20 @@ const std = @import("std");
 const ir = @import("ir.zig");
 const rega = @import("rega.zig");
 
+pub const aarch64 = @import("aarch64.zig");
 pub const x86_64 = @import("x86_64.zig");
 
 pub const RelocationType = enum {
     rel8_post_0,
     rel32_post_0,
+    imm19_div4_shift5,
+    imm26_div4,
 
-    pub fn size(self: @This()) usize {
+    pub fn byteSize(self: @This()) usize {
         return switch(self) {
             .rel8_post_0 => 1,
             .rel32_post_0 => 4,
+            else => unreachable,
         };
     }
 
@@ -20,6 +24,8 @@ pub const RelocationType = enum {
         return switch(self) {
             .rel8_post_0 => -0x80,
             .rel32_post_0 => -0x80000000,
+            .imm19_div4_shift5 => -(1 << 20),
+            .imm26_div4 => -(1 << 27),
         };
     }
 
@@ -27,6 +33,8 @@ pub const RelocationType = enum {
         return switch(self) {
             .rel8_post_0 => 0x7F,
             .rel32_post_0 => 0x7FFFFFFF,
+            .imm19_div4_shift5 => (1 << 20) - 4,
+            .imm26_div4 => (1 << 27) - 4,
         };
     }
 };
@@ -44,6 +52,14 @@ const Relocation = struct {
             .rel32_post_0 => {
                 const rel = relocation_target_offset -% (self.output_offset +% 4);
                 output_bytes[self.output_offset..][0..4].* = std.mem.toBytes(@intCast(i32, @bitCast(i64, rel)));
+            },
+            .imm19_div4_shift5 => {
+                const rel = @intCast(i19, @bitCast(i64, (relocation_target_offset -% self.output_offset)) >> 2);
+                std.mem.bytesAsValue(u32, output_bytes[self.output_offset..][0..4]).* |= @as(u32, @bitCast(u19, rel)) << 5;
+            },
+            .imm26_div4 => {
+                const rel = @intCast(i26, @bitCast(i64, (relocation_target_offset -% self.output_offset)) >> 2);
+                std.mem.bytesAsValue(u32, output_bytes[self.output_offset..][0..4]).* |= @as(u32, @bitCast(u26, rel));
             },
         }
     }
@@ -84,7 +100,7 @@ pub fn Writer(comptime Platform: type) type {
         ) ?RelocationType {
             if(self.blockOffset(edge)) |offset| {
                 inline for(types) |t| {
-                    const instr_size = t[1].size() + t[0];
+                    const instr_size = t[1].byteSize() + t[0];
                     const disp = @bitCast(isize, offset -% (self.currentOffset() + instr_size));
                     if(disp >= t[1].minDisplacement() and disp <= t[1].maxDisplacement()) return t[1];
                 }
@@ -92,29 +108,43 @@ pub fn Writer(comptime Platform: type) type {
             return null;
         }
 
-        pub fn writeRelocatedValue(self: *@This(), edge: ir.BlockEdgeIndex.Index, reloc_type: RelocationType) !void {
+        fn addRelocation(self: *@This(), edge: ir.BlockEdgeIndex.Index, reloc: Relocation) !void {
             const reloc_target = ir.edges.get(edge).target_block;
-            const reloc = Relocation{
-                .output_offset = self.output_bytes.items.len,
-                .relocation_type = reloc_type,
-            };
-
-            const sz = reloc_type.size();
-            try self.output_bytes.appendNTimes(self.allocator, 0xCC, sz);
-
             if(self.placed_blocks.get(reloc_target)) |offset| {
                 reloc.resolve(self.output_bytes.items, offset);
             } else if(self.enqueued_blocks.getPtr(reloc_target)) |q| {
                 try q.append(self.allocator, reloc);
             } else {
-                var queue = std.ArrayListUnmanaged(Relocation){};
+                var queue: std.ArrayListUnmanaged(Relocation) = .{};
                 try queue.append(self.allocator, reloc);
                 try self.enqueued_blocks.put(self.allocator, reloc_target, queue);
             }
         }
 
+        pub fn writeRelocatedValue(self: *@This(), edge: ir.BlockEdgeIndex.Index, reloc_type: RelocationType) !void {
+            try self.output_bytes.appendNTimes(self.allocator, 0xCC, reloc_type.byteSize());
+            return self.addRelocation(edge, .{
+                .output_offset = self.output_bytes.items.len - reloc_type.byteSize(),
+                .relocation_type = reloc_type,
+            });
+        }
+
         pub fn writeInt(self: *@This(), comptime T: type, value: T) !void {
             try self.output_bytes.appendSlice(self.allocator, &std.mem.toBytes(value));
+        }
+
+        pub fn writeIntWithRelocation(
+            self: *@This(),
+            comptime T: type,
+            value: T,
+            edge: ir.BlockEdgeIndex.Index,
+            reloc_type: RelocationType,
+        ) !void {
+            try self.writeInt(T, value);
+            return self.addRelocation(edge, .{
+                .output_offset = self.output_bytes.items.len - @sizeOf(T),
+                .relocation_type = reloc_type,
+            });
         }
 
         fn writeBlock(self: *@This(), bidx: ir.BlockIndex.Index) !?ir.BlockIndex.Index {

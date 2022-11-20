@@ -152,6 +152,7 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
                 try writer.writeInt(u8, @as(u8, switch(reloc_type) {
                     .rel8_post_0 => 0xE8,
                     .rel32_post_0 => 0xE9,
+                    else => unreachable,
                 }));
                 try writer.writeRelocatedValue(edge, reloc_type);
             }
@@ -226,6 +227,7 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
                         try writer.writeInt(u8, 0x0F);
                         try writer.writeInt(u8, 0x80 | cond_flag);
                     },
+                    else => unreachable,
                 }
                 try writer.writeRelocatedValue(op.taken, taken_reloc_type);
                 return bidx;
@@ -236,6 +238,7 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
                         try writer.writeInt(u8, 0x0F);
                         try writer.writeInt(u8, 0x80 | cond_flag ^ cond_flags.not);
                     },
+                    else => unreachable,
                 }
                 try writer.writeRelocatedValue(op.not_taken, not_taken_reloc_type);
                 return bidx;
@@ -253,7 +256,6 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
             std.debug.assert(op_reg == registers.rax);
             try writer.writeInt(u8, 0xC3);
         },
-        .phi => {},
         inline else => |_, tag| @panic("TODO: x86_64 decl " ++ @tagName(tag)),
     }
     return null;
