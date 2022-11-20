@@ -81,6 +81,18 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
                 try writer.writeInt(u8, ((rhs_reg & 0x7) << 3) | (lhs_reg & 0x7));
             }
         },
+        .sub => |bop| {
+            const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
+            const lhs_reg = uf.findDecl(bop.lhs).reg_alloc_value.?;
+            const rhs_reg = uf.findDecl(bop.rhs).reg_alloc_value.?;
+            try movReg64(writer, dest_reg, lhs_reg);
+            try writer.writeInt(u8, 0x48
+                | @as(u8, @boolToInt(dest_reg >= 8)) << 0
+                | @as(u8, @boolToInt(rhs_reg >= 8)) << 2
+            );
+            try writer.writeInt(u8, 0x29);
+            try writer.writeInt(u8, 0xC8 | (dest_reg & 0x7) | ((rhs_reg & 0x7) << 3));
+        },
         .add_constant => |bop| {
             const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
             const lhs_reg = uf.findDecl(bop.lhs).reg_alloc_value.?;
