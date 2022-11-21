@@ -242,10 +242,10 @@ fn evaluateWithoutTypeHint(
                 .scope = scope_idx,
             }});
             try values.get(item_type_idx).analyze();
-            return putValueIn(value_out, .{.type_idx = try types.insert(.{.pointer = .{
+            return putValueIn(value_out, .{.type_idx = try types.addDedupLinear(.{.pointer = .{
                 .is_const = ptr.is_const,
                 .is_volatile = ptr.is_volatile,
-                .item = item_type_idx,
+                .item = values.get(item_type_idx).type_idx,
             }})});
         },
         .struct_expression => |type_body| {
@@ -409,7 +409,7 @@ fn evaluateWithoutTypeHint(
                         .type_idx = try types.addDedupLinear(.{.pointer = .{
                             .is_const = !decl.mutable,
                             .is_volatile = false,
-                            .item = try values.addDedupLinear(.{.type_idx = try operand.getType()}),
+                            .item = try operand.getType(),
                         }}),
                     });
                 },
@@ -462,7 +462,7 @@ fn evaluateWithoutTypeHint(
             std.debug.assert(lhs_type.* == .pointer);
             const size_expr = try values.addDedupLinear(.{.unsigned_int = .{
                 .bits = 64,
-                .value = @as(i65, @intCast(i64, types.get(values.get(lhs_type.pointer.item).type_idx).getSize()))
+                .value = @as(i65, @intCast(i64, types.get(lhs_type.pointer.item).getSize()))
             }});
             const u64_type = try values.addDedupLinear(.{.type_idx = try types.addDedupLinear(.{.unsigned_int = 64})});
             const offset_expr = try values.insert(.{.runtime = .{
@@ -499,7 +499,7 @@ fn evaluateWithTypeHint(
         .runtime => |rt| {
             if(values.get(rt.value_type).type_idx == requested_type) return evaluated_idx;
             const evaluated_type = types.get(try evaluated.getType());
-            if(evaluated_type.* == .reference and values.get(evaluated_type.reference.item).type_idx == requested_type) {
+            if(evaluated_type.* == .reference and evaluated_type.reference.item == requested_type) {
                 return values.addDedupLinear(.{.deref = evaluated_idx});
             }
         },
@@ -507,7 +507,7 @@ fn evaluateWithTypeHint(
             const decl_type = try values.get(decls.get(dr).init_value).getType();
             if(decl_type == requested_type) return evaluated_idx;
         },
-        .deref => if(values.get(types.get(try evaluated.getType()).reference.item).type_idx == requested_type) return evaluated_idx,
+        .deref => if(types.get(try evaluated.getType()).reference.item == requested_type) return evaluated_idx,
         else => {},
     }
 
@@ -543,7 +543,7 @@ const SizedInt = struct {
 const PointerType = struct {
     is_const: bool,
     is_volatile: bool,
-    item: ValueIndex.Index,
+    item: TypeIndex.Index,
 };
 
 pub const Type = union(enum) {
