@@ -685,6 +685,7 @@ fn inlineConstants(decl_idx: DeclIndex.Index) !bool {
                     .lhs = bop.rhs,
                     .rhs = lhs.load_int_constant,
                 });
+                return true;
             }
 
             const rhs = decls.get(bop.rhs).instr;
