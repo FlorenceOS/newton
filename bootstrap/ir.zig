@@ -826,8 +826,8 @@ fn appendToBlock(
         var curr_instr = block.first_decl;
         while(decls.getOpt(curr_instr)) |inst| : (curr_instr = inst.next) {
             if(!std.meta.eql(inst.instr, instr)) continue;
+            if(inst.sema_decl != .none) continue;
             if(sema_decl != .none) {
-                if(inst.sema_decl != .none) continue;
                 inst.sema_decl = sema_decl;
             }
             return DeclIndex.unwrap(curr_instr).?;
