@@ -178,7 +178,7 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
                 try writer.writeInt(u8, 0xC0 | (dest_reg & 0x7) * 9);
             } else if(c <= 0x7F or c > 0xFFFFFFFFFFFFFF80) {
                 try writer.writeInt(u8, 0x6A);
-                try writer.writeInt(i8, @intCast(i8, c));
+                try writer.writeInt(i8, @intCast(i8, @bitCast(i64, c)));
                 if(dest_reg >= 8) {
                     try writer.writeInt(u8, 0x41);
                 }
@@ -187,7 +187,7 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
                 try writer.writeInt(u8, 0x48 | @as(u8, @boolToInt(dest_reg >= 8)));
                 try writer.writeInt(u8, 0xC7);
                 try writer.writeInt(u8, 0xC0 | (dest_reg & 0x7));
-                try writer.writeInt(u32, @intCast(u32, c));
+                try writer.writeInt(i32, @intCast(i32, @bitCast(i64, c)));
             } else {
                 try writer.writeInt(u8, 0x48 | @as(u8, @boolToInt(dest_reg >= 8)));
                 try writer.writeInt(u8, 0xB8 | (dest_reg & 0x7));
@@ -201,7 +201,7 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
                     if(bop.rhs <= 0x7F or bop.rhs > 0xFFFFFFFFFFFFFF80) {
                         // push imm8
                         try writer.writeInt(u8, 0x6A);
-                        try writer.writeInt(i8, @intCast(i8, bop.rhs));
+                        try writer.writeInt(i8, @intCast(i8, @bitCast(i64, bop.rhs)));
                         // pop [rbp - offset]
                         try writer.writeInt(u8, 0x8F);
                         try writer.writeInt(u8, 0x85);
@@ -212,7 +212,7 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
                         try writer.writeInt(u8, 0xC7);
                         try writer.writeInt(u8, 0x85);
                         try writer.writeInt(u32, ~offset + 1);
-                        try writer.writeInt(i32, @intCast(i32, bop.rhs));
+                        try writer.writeInt(i32, @intCast(i32, @bitCast(i64, bop.rhs)));
                     } else {
                         @panic(":(");
                     }
@@ -221,7 +221,7 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
                     const lhs_reg = uf.findDeclByPtr(lhs).reg_alloc_value.?;
                     if(bop.rhs <= 0x7F or bop.rhs > 0xFFFFFFFFFFFFFF80) {
                         try writer.writeInt(u8, 0x6A);
-                        try writer.writeInt(i8, @intCast(i8, bop.rhs));
+                        try writer.writeInt(i8, @intCast(i8, @bitCast(i64, bop.rhs)));
                         if(lhs_reg >= 8) {
                             try writer.writeInt(u8, 0x41);
                         }
@@ -230,7 +230,7 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
                         try writer.writeInt(u8, 0x48 | @as(u8, @boolToInt(lhs_reg >= 8)));
                         try writer.writeInt(u8, 0xC7);
                         try writer.writeInt(u8, 0x00 | (lhs_reg & 0x7));
-                        try writer.writeInt(i32, @intCast(i32, bop.rhs));
+                        try writer.writeInt(i32, @intCast(i32, @bitCast(i64, bop.rhs)));
                     } else {
                         @panic(":(");
                     }
@@ -245,7 +245,7 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
             try writer.writeInt(u8, 0x48 | @as(u8, @boolToInt(reg >= 8)));
             try writer.writeInt(u8, 0x81);
             try writer.writeInt(u8, 0xF8 | (reg & 0x7));
-            try writer.writeInt(u32, @truncate(u32, bop.rhs));
+            try writer.writeInt(i32, @intCast(i32, @bitCast(i64, bop.rhs)));
         },
         .less, .less_equal, .equals, .not_equal,
         => |bop| {
@@ -364,6 +364,18 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
                     try writer.writeInt(u8, 0x00 | ((dest_reg & 0x7) << 3) | (source_reg & 0x7));
                 },
             }
+        },
+        .shift_left_constant, .shift_right_constant => |bop| {
+            const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
+            const lhs_reg = uf.findDecl(bop.lhs).reg_alloc_value.?;
+            try movReg64(writer, dest_reg, lhs_reg);
+            try writer.writeInt(u8, 0x48 | @as(u8, @boolToInt(dest_reg >= 8)));
+            try writer.writeInt(u8, 0xC1);
+            try writer.writeInt(u8, 0xE0
+                | (dest_reg & 0x7)
+                | @as(u8, @boolToInt(decl.instr == .shift_right_constant)) << 3
+            );
+            try writer.writeInt(u8, @intCast(u8, bop.rhs));
         },
         inline else => |_, tag| @panic("TODO: x86_64 decl " ++ @tagName(tag)),
     }
