@@ -365,6 +365,29 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
                 },
             }
         },
+        .bit_and_constant, .bit_or_constant, .bit_xor_constant => |bop| {
+            const opcode: u8 = switch(decl.instr) {
+                .bit_and_constant => 0xE0,
+                .bit_or_constant => 0xF0,
+                .bit_xor_constant => 0xC8,
+                else => unreachable,
+            };
+            const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
+            const lhs_reg = uf.findDecl(bop.lhs).reg_alloc_value.?;
+            try movReg64(writer, dest_reg, lhs_reg);
+            try writer.writeInt(u8, 0x48 | @as(u8, @boolToInt(dest_reg >= 8)));
+            if(bop.rhs <= 0x7F or bop.rhs > 0xFFFFFFFFFFFFFF80) {
+                try writer.writeInt(u8, 0x83);
+                try writer.writeInt(u8, opcode | (dest_reg & 0x7));
+                try writer.writeInt(i8, @intCast(i8, @bitCast(i64, bop.rhs)));
+            } else if(bop.rhs <= 0x7FFFFFFF or bop.rhs > 0xFFFFFFFF80000000) {
+                try writer.writeInt(u8, 0x81);
+                try writer.writeInt(u8, opcode | (dest_reg & 0x7));
+                try writer.writeInt(i32, @intCast(i32, @bitCast(i64, bop.rhs)));
+            } else {
+                @panic(":(");
+            }
+        },
         .shift_left_constant, .shift_right_constant => |bop| {
             const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
             const lhs_reg = uf.findDecl(bop.lhs).reg_alloc_value.?;
