@@ -706,8 +706,47 @@ fn inlineConstants(decl_idx: DeclIndex.Index) !bool {
 fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
     const decl = decls.get(decl_idx);
     switch(decl.instr) {
+        .add, .add_mod => |bop| {
+            if(bop.lhs == bop.rhs) {
+                decl.instr = .{.multiply_constant = .{.lhs = bop.lhs, .rhs = 2}};
+                return true;
+            }
+        },
+        .bit_and, .bit_or => |bop| {
+            if(bop.lhs == bop.rhs) {
+                decl.instr = .{.copy = bop.lhs};
+                return true;
+            }
+        },
+        .bit_xor, .sub, .sub_mod => |bop| {
+            if(bop.lhs == bop.rhs) {
+                decl.instr = .{.load_int_constant = 0};
+                return true;
+            }
+        },
+        .equals, .not_equal => |bop| {
+            if(bop.lhs == bop.rhs) {
+                decl.instr = .{.load_bool_constant = decl.instr == .equals};
+                return true;
+            }
+        },
+
+        inline
         .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
         .shift_left_constant, .shift_right_constant,
+        => |*bop, tag| {
+            if(bop.rhs == 0) {
+                decl.instr = .{.copy = bop.lhs};
+                return true;
+            }
+            const lhs_decl = decls.get(bop.lhs);
+            if(std.meta.activeTag(lhs_decl.instr) == std.meta.activeTag(decl.instr)) {
+                const lhs_instr = @field(lhs_decl.instr, @tagName(tag));
+                bop.lhs = lhs_instr.lhs;
+                bop.rhs += lhs_instr.rhs;
+                return true;
+            }
+        },
         .bit_or_constant, .bit_xor_constant,
         => |bop| {
             if(bop.rhs == 0) {
@@ -727,6 +766,15 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
                 if((@as(u64, 1) << l2) == bop.rhs) {
                     decl.instr = .{.shift_left_constant = .{.lhs = bop.lhs, .rhs = l2}};
                     return true;
+                }
+                const lhs_decl = decls.get(bop.lhs);
+                switch(lhs_decl.instr) {
+                    .multiply_constant => |op_bop| {
+                        decl.instr.multiply_constant.lhs = op_bop.lhs;
+                        decl.instr.multiply_constant.rhs *= op_bop.rhs;
+                        return true;
+                    },
+                    else => {},
                 }
             }
         },
