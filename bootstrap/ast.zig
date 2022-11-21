@@ -35,12 +35,8 @@ pub const ExprIndex = indexed_list.Indices(u32, opaque{}, .{
     .discard_underscore = .{ .discard_underscore = {} },
 });
 pub const StmtIndex = indexed_list.Indices(u32, opaque{}, .{
-    .empty_return = .{ .next = .none, .value = .{
-        .return_statement = .{ .expr = .none },
-    } },
-    .empty_block = .{ .next = .none, .value = .{
-        .block_statement = .{ .first_child = .none },
-    } },
+    .empty_return = .{.value = .{.return_statement = .{.expr = .none}}},
+    .empty_block = .{.value = .{.block_statement = .{.first_child = .none}}},
 });
 pub const FunctionIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const FunctionParamIndex = indexed_list.Indices(u32, opaque{}, .{});
@@ -83,7 +79,7 @@ pub const SourceRef = struct {
 
 pub const FunctionArgument = struct {
     value: ExprIndex.Index,
-    next: ExprIndex.OptIndex,
+    next: ExprIndex.OptIndex = .none,
 };
 
 pub const FunctionCall = struct {
@@ -175,7 +171,7 @@ pub const ExpressionNode = union(enum) {
 };
 
 pub const StatementNode = struct {
-    next: StmtIndex.OptIndex,
+    next: StmtIndex.OptIndex = .none,
 
     value: union (enum) {
         declaration: struct {
@@ -229,7 +225,7 @@ pub const FunctionExpression = struct {
 pub const FunctionParameter = struct {
     identifier: SourceRef,
     type: ExprIndex.Index,
-    next: FunctionParamIndex.OptIndex,
+    next: FunctionParamIndex.OptIndex = .none,
 };
 
 pub var expressions: ExpressionList = undefined;

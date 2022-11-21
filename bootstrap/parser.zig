@@ -112,7 +112,6 @@ fn parseFunctionExpr(self: *@This()) anyerror!ast.FunctionIndex.Index {
         _ = try param_builder.insert(.{
             .identifier = self.toAstIdent(ident),
             .type = try self.parseExpression(null),
-            .next = .none,
         });
 
         if((try self.tryConsume(.@",_ch")) == null) break;
@@ -153,14 +152,14 @@ fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
     const token = try self.peekToken();
     switch(token) {
         .@"{_ch" => {
-            return ast.statements.insert(.{.next = .none, .value = .{
+            return ast.statements.insert(.{.value = .{
                 .block_statement = .{.first_child = try self.parseBlockStatement()},
             }});
         },
         .break_keyword => {
             _ = try self.tokenize();
             _ = try self.expect(.@";_ch");
-            return ast.statements.insert(.{.next = .none, .value = .break_statement});
+            return ast.statements.insert(.{.value = .break_statement});
         },
         .case_keyword => @panic("TODO: case statement"),
         .const_keyword, .var_keyword => return self.parseDeclaration(token),
@@ -183,7 +182,7 @@ fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
                     },
                 };
             } else .none;
-            return ast.statements.insert(.{.next = .none, .value = .{
+            return ast.statements.insert(.{.value = .{
                 .if_statement = .{
                     .condition = condition,
                     .first_taken = first_taken,
@@ -200,7 +199,7 @@ fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
                 break :blk ast.ExprIndex.toOpt(res);
             } else .none;
             const body = try self.parseBlockStatement();
-            return ast.statements.insert(.{.next = .none, .value = .{
+            return ast.statements.insert(.{.value = .{
                 .loop_statement = .{
                     .condition = condition,
                     .first_child = body,
@@ -214,18 +213,14 @@ fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
                 expr = ast.ExprIndex.toOpt(try self.parseExpression(null));
             }
             _ = try self.expect(.@";_ch");
-            return ast.statements.insert(.{.next = .none, .value = .{.return_statement = .{.expr = expr}}});
+            return ast.statements.insert(.{.value = .{.return_statement = .{.expr = expr}}});
         },
         .switch_keyword => @panic("TODO: switch statement"),
         .identifier, .__keyword, .@"(_ch",
         => { // Expression statement
             const expr_idx = try self.parseExpression(null);
             _ = try self.expect(.@";_ch");
-            return ast.statements.insert(.{ .next = .none,
-                .value = .{ .expression_statement = .{
-                    .expr = expr_idx,
-                } },
-            });
+            return ast.statements.insert(.{.value = .{.expression_statement = .{.expr = expr_idx}}});
         },
 
         inline
@@ -395,11 +390,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
                 _ = try self.tokenize();
                 var arg_builder = ast.expressions.builderWithPath("function_argument.next");
                 while((try self.peekToken()) != .@")_ch") {
-                    _ = try arg_builder.insert(.{ .function_argument = .{
-                        .value = try self.parseExpression(null),
-                        .next = .none,
-                    }});
-
+                    _ = try arg_builder.insert(.{ .function_argument = .{.value = try self.parseExpression(null)}});
                     if ((try self.tryConsume(.@",_ch")) == null) {
                         break;
                     }
@@ -578,7 +569,7 @@ fn parseDeclaration(self: *@This(), token: tokenizer.Token) !ast.StmtIndex.Index
         _ = try self.expect(.@";_ch");
     }
 
-    return ast.statements.insert(.{ .next = .none, .value = .{ .declaration = .{
+    return ast.statements.insert(.{.value = .{ .declaration = .{
         .identifier = self.toAstIdent(ident),
         .type = type_expr,
         .init_value = init_expr,
@@ -609,7 +600,7 @@ fn parseTypeBody(self: *@This()) !ast.StmtIndex.OptIndex {
                 }
 
                 _ = try self.expect(.@",_ch");
-                _ = try decl_builder.insert(.{ .next = .none, .value = .{ .field_decl = .{
+                _ = try decl_builder.insert(.{.value = .{ .field_decl = .{
                     .identifier = self.toAstIdent(ident),
                     .type = type_expr,
                     .init_value = init_expr,

@@ -108,7 +108,6 @@ fn analyzeStatementChain(
                     .function_param_idx = null,
                     .name = decl.identifier,
                     .init_value = init_value,
-                    .next = .none,
                 });
                 _ = try stmt_builder.insert(.{.value = .{.declaration = new_decl}});
                 if(block_scope.first_decl == .none) block_scope.first_decl = decl_builder.first;
@@ -218,7 +217,6 @@ fn evaluateWithoutTypeHint(
                     .function_param_idx = function_param_idx,
                     .name = ast_param.identifier,
                     .init_value = try values.addDedupLinear(.{.runtime = .{.expr = .none, .value_type = param_type}}),
-                    .next = .none,
                 });
                 function_param_idx += 1;
                 curr_ast_param = ast_param.next;
@@ -267,7 +265,6 @@ fn evaluateWithoutTypeHint(
                                 ast.ExprIndex.toOpt(inner_decl.init_value),
                                 inner_decl.type,
                             ),
-                            .next = .none,
                         });
                     },
                     .field_decl => |field_decl| {
@@ -275,7 +272,6 @@ fn evaluateWithoutTypeHint(
                         _ = try field_builder.insert(.{
                             .name = field_decl.identifier,
                             .init_value = try astDeclToValue(struct_scope, field_decl.init_value, field_decl.type),
-                            .next = .none,
                         });
                     },
                     else => unreachable,
@@ -333,15 +329,12 @@ fn evaluateWithoutTypeHint(
             while(ast.expressions.getOpt(curr_ast_arg)) |ast_arg| {
                 const func_arg = ast_arg.function_argument;
                 const curr_param = decls.getOpt(curr_param_decl) orelse return error.TooManyArguments;
-                _ = try arg_builder.insert(.{.function_arg = .{
-                    .value = try evaluateWithTypeHint(
-                        scope_idx,
-                        .none,
-                        func_arg.value,
-                        values.get(values.get(curr_param.init_value).runtime.value_type).type_idx,
-                    ),
-                    .next = .none,
-                }});
+                _ = try arg_builder.insert(.{.function_arg = .{.value = try evaluateWithTypeHint(
+                    scope_idx,
+                    .none,
+                    func_arg.value,
+                    values.get(values.get(curr_param.init_value).runtime.value_type).type_idx,
+                )}});
                 curr_ast_arg = func_arg.next;
                 curr_param_decl = curr_param.next;
             }
@@ -635,7 +628,7 @@ pub const Decl = struct {
     function_param_idx: ?u8,
     name: ast.SourceRef,
     init_value: ValueIndex.Index,
-    next: DeclIndex.OptIndex,
+    next: DeclIndex.OptIndex = .none,
 
     pub fn analyze(self: *@This()) !void {
         const value_ptr = values.get(self.init_value);
@@ -646,7 +639,7 @@ pub const Decl = struct {
 pub const StructField = struct {
     name: ast.SourceRef,
     init_value: ValueIndex.Index,
-    next: StructFieldIndex.OptIndex,
+    next: StructFieldIndex.OptIndex = .none,
 };
 
 fn genericChainLookup(
@@ -736,7 +729,7 @@ pub const BinaryOp = struct {
 
 pub const FunctionArgument = struct {
     value: ValueIndex.Index,
-    next: ExpressionIndex.OptIndex,
+    next: ExpressionIndex.OptIndex = .none,
 };
 
 pub const FunctionCall = struct {

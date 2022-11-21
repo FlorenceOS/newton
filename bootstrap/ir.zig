@@ -835,8 +835,6 @@ fn appendToBlock(
     }
 
     const retval = try decls.insert(.{
-        .next = .none,
-        .prev = .none,
         .block = block_idx,
         .instr = instr,
         .sema_decl = sema_decl,
