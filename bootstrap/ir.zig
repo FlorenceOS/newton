@@ -743,7 +743,7 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
             if(std.meta.activeTag(lhs_decl.instr) == std.meta.activeTag(decl.instr)) {
                 const lhs_instr = @field(lhs_decl.instr, @tagName(tag));
                 bop.lhs = lhs_instr.lhs;
-                bop.rhs += lhs_instr.rhs;
+                bop.rhs +%= lhs_instr.rhs;
                 return true;
             }
         },
