@@ -5,6 +5,8 @@ const indexed_list = @import("indexed_list.zig");
 const sema = @import("sema.zig");
 const rega = @import("rega.zig");
 
+const current_backend = backend.x86_64;
+
 pub const DeclIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const BlockIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const BlockEdgeIndex = indexed_list.Indices(u32, opaque{}, .{});
@@ -26,10 +28,39 @@ pub const VariableConstantBop = struct {
     rhs: u64,
 };
 
+pub const InstrType = enum {
+    u8,
+    u16,
+    u32,
+    u64,
+};
+
+fn typeForBits(bits: u32) InstrType {
+    if(bits <= 8) return .u8;
+    if(bits <= 16) return .u16;
+    if(bits <= 32) return .u32;
+    if(bits <= 64) return .u64;
+    @panic("it's too big for me :pensive:");
+}
+
+fn typeFor(type_idx: sema.TypeIndex.Index) InstrType {
+    return switch(sema.types.get(type_idx).*) {
+        .signed_int, .unsigned_int => |bits| typeForBits(bits),
+        .reference, .pointer => current_backend.pointer_type,
+        else => |other| std.debug.panic("TODO: typeFor {s}", .{@tagName(other)}),
+    };
+}
+
 const DeclInstr = union(enum) {
-    param_ref: u8,
+    param_ref: struct {
+        param_idx: u8,
+        type: InstrType,
+    },
     stack_ref: u32,
-    load_int_constant: u64,
+    load_int_constant: struct {
+        value: u64,
+        type: InstrType,
+    },
     load_bool_constant: bool,
     enter_function: u32,
     undefined,
@@ -52,9 +83,19 @@ const DeclInstr = union(enum) {
     equals: Bop,
     not_equal: Bop,
 
-    store: Bop,
-    store_constant: VariableConstantBop,
-    load: DeclIndex.Index,
+    store: struct {
+        dest: DeclIndex.Index,
+        value: DeclIndex.Index,
+    },
+    store_constant: struct {
+        dest: DeclIndex.Index,
+        type: InstrType,
+        value: u64,
+    },
+    load: struct {
+        source: DeclIndex.Index,
+        type: InstrType,
+    },
 
     add_constant: VariableConstantBop,
     add_mod_constant: VariableConstantBop,
@@ -123,7 +164,7 @@ const DeclInstr = union(enum) {
             .add, .add_mod, .sub, .sub_mod,
             .multiply, .multiply_mod, .divide, .modulus,
             .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
-            .less, .less_equal, .equals, .not_equal, .store,
+            .less, .less_equal, .equals, .not_equal,
             => |*bop| {
                 bounded_result.value.bounded_iterator.appendAssumeCapacity(&bop.lhs);
                 bounded_result.value.bounded_iterator.appendAssumeCapacity(&bop.rhs);
@@ -133,13 +174,19 @@ const DeclInstr = union(enum) {
             .multiply_constant, .multiply_mod_constant, .divide_constant, .modulus_constant,
             .shift_left_constant, .shift_right_constant, .bit_and_constant, .bit_or_constant, .bit_xor_constant,
             .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant,
-            .equals_constant, .not_equal_constant, .store_constant,
+            .equals_constant, .not_equal_constant,
             => |*bop| {
                 bounded_result.value.bounded_iterator.appendAssumeCapacity(&bop.lhs);
             },
 
+            .store => |*p| {
+                bounded_result.value.bounded_iterator.appendAssumeCapacity(&p.dest);
+                bounded_result.value.bounded_iterator.appendAssumeCapacity(&p.value);
+            },
+            .store_constant => |*p| bounded_result.value.bounded_iterator.appendAssumeCapacity(&p.dest),
+
             .copy => |*c| bounded_result.value.bounded_iterator.appendAssumeCapacity(c),
-            .load => |*p| bounded_result.value.bounded_iterator.appendAssumeCapacity(p),
+            .load => |*p| bounded_result.value.bounded_iterator.appendAssumeCapacity(&p.source),
             .@"if" => |*instr| bounded_result.value.bounded_iterator.appendAssumeCapacity(&instr.condition),
             .@"return" => |*value| bounded_result.value.bounded_iterator.appendAssumeCapacity(&value.value),
             .param_ref, .stack_ref, .load_int_constant, .load_bool_constant, .undefined, .goto, .enter_function,
@@ -188,6 +235,60 @@ const DeclInstr = union(enum) {
             else => {}, // No out edges
         }
         return result;
+    }
+
+    pub fn getOperationType(self: *const @This()) InstrType {
+        switch(self.*) {
+            inline .param_ref, .load_int_constant, .load, .store_constant => |val| return val.type,
+            .add, .add_mod, .sub, .sub_mod,
+            .multiply, .multiply_mod, .divide, .modulus,
+            .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
+            .less, .less_equal, .equals, .not_equal,
+            => |bop| {
+                const lhs = decls.get(bop.lhs);
+                const lhs_type = lhs.instr.getOperationType();
+                const rhs = decls.get(bop.rhs);
+                const rhs_type = rhs.instr.getOperationType();
+                std.debug.assert(lhs_type == rhs_type);
+                return lhs_type;
+            },
+            .store => |val| return decls.get(val.value).instr.getOperationType(),
+            .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
+            .multiply_constant, .multiply_mod_constant, .divide_constant, .modulus_constant,
+            .shift_left_constant, .shift_right_constant, .bit_and_constant, .bit_or_constant, .bit_xor_constant,
+            .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant, .equals_constant, .not_equal_constant,
+            => |bop| return decls.get(bop.lhs).instr.getOperationType(),
+            .copy => |decl| return decls.get(decl).instr.getOperationType(),
+            .phi => |phi_operand| {
+                // TODO:
+                // Block#1:
+                //   ...
+                //   u64 $5 = 0
+                //   ...
+                // Block#3:
+                //   u64 $8 = phi([$5, Block#1], [$19, Block#7])
+                //   ...
+                // Block#7:
+                //   u64 $19 = add($8, #1)
+                //   ...
+                var curr_operand = phi_operand;
+                // var first_type: InstrType = undefined;
+                // var first_iter = true;
+                while(phi_operands.getOpt(curr_operand)) |operand| : (curr_operand = operand.next) {
+                    const operand_type = decls.get(operand.decl).instr.getOperationType();
+                    return operand_type;
+                    // if(first_iter) {
+                    //     first_type = operand_type;
+                    // } else if() {
+                    //     std.debug.assert(operand_type == first_type);
+                    // }
+                }
+                // std.debug.assert(!first_iter);
+                // return first_type;
+                unreachable;
+            },
+            else => |other| std.debug.panic("TODO getOperationType of {s}", .{@tagName(other)}),
+        }
     }
 };
 
@@ -654,7 +755,7 @@ fn inlineConstants(decl_idx: DeclIndex.Index) !bool {
             if(lhs == .load_int_constant) {
                 decl.instr = @unionInit(DeclInstr, @tagName(tag) ++ "_constant", .{
                     .lhs = bop.rhs,
-                    .rhs = lhs.load_int_constant,
+                    .rhs = lhs.load_int_constant.value,
                 });
                 return true;
             }
@@ -662,7 +763,7 @@ fn inlineConstants(decl_idx: DeclIndex.Index) !bool {
             if(rhs == .load_int_constant) {
                 decl.instr = @unionInit(DeclInstr, @tagName(tag) ++ "_constant", .{
                     .lhs = bop.lhs,
-                    .rhs = rhs.load_int_constant,
+                    .rhs = rhs.load_int_constant.value,
                 });
                return true;
             }
@@ -671,7 +772,7 @@ fn inlineConstants(decl_idx: DeclIndex.Index) !bool {
         // Noncommutative ops
         inline
         .less, .less_equal, .sub, .sub_mod, .divide, .modulus,
-        .shift_left, .shift_right, .store,
+        .shift_left, .shift_right,
         => |bop, tag| {
             const swapped_tag: ?[]const u8 = comptime switch(tag) {
                 .less => "greater_equal",
@@ -683,7 +784,7 @@ fn inlineConstants(decl_idx: DeclIndex.Index) !bool {
             if(swapped_tag != null and lhs == .load_int_constant) {
                 decl.instr = @unionInit(DeclInstr, swapped_tag.? ++ "_constant", .{
                     .lhs = bop.rhs,
-                    .rhs = lhs.load_int_constant,
+                    .rhs = lhs.load_int_constant.value,
                 });
                 return true;
             }
@@ -692,8 +793,20 @@ fn inlineConstants(decl_idx: DeclIndex.Index) !bool {
             if(rhs == .load_int_constant) {
                 decl.instr = @unionInit(DeclInstr, @tagName(tag) ++ "_constant", .{
                     .lhs = bop.lhs,
-                    .rhs = rhs.load_int_constant,
+                    .rhs = rhs.load_int_constant.value,
                 });
+               return true;
+            }
+        },
+
+        .store => |store| {
+            const value = decls.get(store.value).instr;
+            if(value == .load_int_constant) {
+                decl.instr = .{.store_constant = .{
+                    .dest = store.dest,
+                    .type = value.load_int_constant.type,
+                    .value = value.load_int_constant.value,
+                }};
                return true;
             }
         },
@@ -720,7 +833,10 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
         },
         .bit_xor, .sub, .sub_mod => |bop| {
             if(bop.lhs == bop.rhs) {
-                decl.instr = .{.load_int_constant = 0};
+                decl.instr = .{.load_int_constant = .{
+                    .value = 0,
+                    .type = decl.instr.getOperationType(),
+                }};
                 return true;
             }
         },
@@ -757,7 +873,10 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
         .multiply_constant, .multiply_mod_constant,
         => |bop| {
             if(bop.rhs == 0) {
-                decl.instr = .{.load_int_constant = 0};
+                decl.instr = .{.load_int_constant = .{
+                    .value = 0,
+                    .type = decl.instr.getOperationType(),
+                }};
             } else if(bop.rhs == 1) {
                 decl.instr = .{.copy = bop.lhs};
                 return true;
@@ -806,7 +925,10 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
         .bit_and_constant => |bop| {
             // TODO: check value against type size to optimize more
             if(bop.rhs == 0) {
-                decl.instr = .{.load_int_constant = 0};
+                decl.instr = .{.load_int_constant = .{
+                    .value = 0,
+                    .type = decl.instr.getOperationType(),
+                }};
                 return true;
             }
         },
@@ -819,9 +941,9 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
 fn eliminateConstantExpressions(decl_idx: DeclIndex.Index) !bool {
     const decl = decls.get(decl_idx);
     switch(decl.instr) {
-        .store => |bop| {
-            const rhs = decls.get(bop.rhs);
-            if(rhs.instr == .undefined) {
+        .store => |store| {
+            const value = decls.get(store.value);
+            if(value.instr == .undefined) {
                 decl.instr = .{.undefined = {}};
             }
         },
@@ -832,21 +954,24 @@ fn eliminateConstantExpressions(decl_idx: DeclIndex.Index) !bool {
         => |bop, tag| {
             const lhs = decls.get(bop.lhs);
             if(lhs.instr == .load_int_constant) {
-                decl.instr = .{.load_int_constant = switch(tag) {
-                    .add_constant => lhs.instr.load_int_constant + bop.rhs,
-                    .add_mod_constant => lhs.instr.load_int_constant +% bop.rhs,
-                    .sub_constant => lhs.instr.load_int_constant - bop.rhs,
-                    .sub_mod_constant => lhs.instr.load_int_constant -% bop.rhs,
-                    .multiply_constant => lhs.instr.load_int_constant * bop.rhs,
-                    .multiply_mod_constant => lhs.instr.load_int_constant *% bop.rhs,
-                    .divide_constant => lhs.instr.load_int_constant / bop.rhs,
-                    .modulus_constant => lhs.instr.load_int_constant % bop.rhs,
-                    .shift_left_constant => lhs.instr.load_int_constant << @intCast(u6, bop.rhs),
-                    .shift_right_constant => lhs.instr.load_int_constant >> @intCast(u6, bop.rhs),
-                    .bit_and_constant => lhs.instr.load_int_constant & bop.rhs,
-                    .bit_or_constant => lhs.instr.load_int_constant | bop.rhs,
-                    .bit_xor_constant => lhs.instr.load_int_constant ^ bop.rhs,
-                    else => unreachable,
+                decl.instr = .{.load_int_constant = .{
+                    .value = switch(tag) {
+                        .add_constant => lhs.instr.load_int_constant.value + bop.rhs,
+                        .add_mod_constant => lhs.instr.load_int_constant.value +% bop.rhs,
+                        .sub_constant => lhs.instr.load_int_constant.value - bop.rhs,
+                        .sub_mod_constant => lhs.instr.load_int_constant.value -% bop.rhs,
+                        .multiply_constant => lhs.instr.load_int_constant.value * bop.rhs,
+                        .multiply_mod_constant => lhs.instr.load_int_constant.value *% bop.rhs,
+                        .divide_constant => lhs.instr.load_int_constant.value / bop.rhs,
+                        .modulus_constant => lhs.instr.load_int_constant.value % bop.rhs,
+                        .shift_left_constant => lhs.instr.load_int_constant.value << @intCast(u6, bop.rhs),
+                        .shift_right_constant => lhs.instr.load_int_constant.value >> @intCast(u6, bop.rhs),
+                        .bit_and_constant => lhs.instr.load_int_constant.value & bop.rhs,
+                        .bit_or_constant => lhs.instr.load_int_constant.value | bop.rhs,
+                        .bit_xor_constant => lhs.instr.load_int_constant.value ^ bop.rhs,
+                        else => unreachable,
+                    },
+                    .type = decl.instr.getOperationType(),
                 }};
                 return true;
             }
@@ -858,12 +983,12 @@ fn eliminateConstantExpressions(decl_idx: DeclIndex.Index) !bool {
             const lhs = decls.get(bop.lhs);
             if(lhs.instr == .load_int_constant) {
                 decl.instr = .{.load_bool_constant = switch(tag) {
-                    .less_constant => lhs.instr.load_int_constant < bop.rhs,
-                    .less_equal_constant => lhs.instr.load_int_constant <= bop.rhs,
-                    .greater_constant => lhs.instr.load_int_constant > bop.rhs,
-                    .greater_equal_constant => lhs.instr.load_int_constant >= bop.rhs,
-                    .equals_constant => lhs.instr.load_int_constant == bop.rhs,
-                    .not_equal_constant => lhs.instr.load_int_constant != bop.rhs,
+                    .less_constant => lhs.instr.load_int_constant.value < bop.rhs,
+                    .less_equal_constant => lhs.instr.load_int_constant.value <= bop.rhs,
+                    .greater_constant => lhs.instr.load_int_constant.value > bop.rhs,
+                    .greater_equal_constant => lhs.instr.load_int_constant.value >= bop.rhs,
+                    .equals_constant => lhs.instr.load_int_constant.value == bop.rhs,
+                    .not_equal_constant => lhs.instr.load_int_constant.value != bop.rhs,
                     else => unreachable,
                 }};
                 return true;
@@ -1000,7 +1125,7 @@ fn ssaBlockStatementIntoBasicBlock(
 
                 if(decl.stack_offset) |offset| {
                     const stack_ref = try appendToBlock(current_basic_block, .none, .{.stack_ref = offset});
-                    _ = try appendToBlock(current_basic_block, .none, .{.store = .{.lhs = stack_ref, .rhs = value}});
+                    _ = try appendToBlock(current_basic_block, .none, .{.store = .{.dest = stack_ref, .value = value}});
                 }
             },
             .expression => |expr_idx| {
@@ -1114,25 +1239,32 @@ fn ssaValue(
     value_idx: sema.ValueIndex.Index,
     update_with_value: DeclIndex.OptIndex,
 ) !DeclIndex.Index {
-    switch(sema.values.get(value_idx).*) {
+    const value = sema.values.get(value_idx);
+    switch(value.*) {
         .runtime => |rt| {
-            const value = try ssaExpr(block_idx, sema.ExpressionIndex.unwrap(rt.expr).?, .none);
-            if(decls.get(value).instr == .stack_ref) {
+            const ir_value = try ssaExpr(block_idx, sema.ExpressionIndex.unwrap(rt.expr).?, .none);
+            if(decls.get(ir_value).instr == .stack_ref) {
                 if(DeclIndex.unwrap(update_with_value)) |target| {
-                    return try appendToBlock(block_idx, .none, .{.store = .{.lhs = value, .rhs = target}});
+                    return try appendToBlock(block_idx, .none, .{.store = .{.dest = ir_value, .value = target}});
                 }
-                return appendToBlock(block_idx, .none, .{.load = value});
+                return appendToBlock(block_idx, .none, .{.load = .{
+                    .source = ir_value,
+                    .type = typeFor(try value.getType()),
+                }});
             }
-            return value;
+            return ir_value;
         },
         .decl_ref => |decl_idx| {
             const rdecl = sema.decls.get(decl_idx);
             if(rdecl.stack_offset) |offset| {
                 const stack_ref = try appendToBlock(block_idx, .none, .{.stack_ref = offset});
                 if(decls.getOpt(update_with_value)) |update| {
-                    return appendToBlock(block_idx, .none, .{.store = .{.lhs = stack_ref, .rhs = decls.getIndex(update)}});
+                    return appendToBlock(block_idx, .none, .{.store = .{.dest = stack_ref, .value = decls.getIndex(update)}});
                 }
-                return appendToBlock(block_idx, .none, .{.load = stack_ref});
+                return appendToBlock(block_idx, .none, .{.load = .{
+                    .source = stack_ref,
+                    .type = typeFor(try sema.values.get(rdecl.init_value).getType()),
+                }});
             } else {
                 if(decls.getOpt(update_with_value)) |update| {
                     return appendToBlock(block_idx, sema.DeclIndex.toOpt(decl_idx), .{.copy = decls.getIndex(update)});
@@ -1140,29 +1272,43 @@ fn ssaValue(
                 return readVariable(block_idx, decl_idx);
             }
         },
-        .comptime_int => |value| {
+        .comptime_int => |c| {
             std.debug.assert(update_with_value == .none);
-            return appendToBlock(block_idx, .none, .{.load_int_constant = @intCast(u64, value)});
+            return appendToBlock(block_idx, .none, .{.load_int_constant = .{
+                .value = @intCast(u64, c),
+                .type = .u64, // TODO
+            }});
         },
-        .bool => |value| {
+        .bool => |b| {
             std.debug.assert(update_with_value == .none);
-            return appendToBlock(block_idx, .none, .{.load_bool_constant = value});
+            return appendToBlock(block_idx, .none, .{.load_bool_constant = b});
         },
-        .unsigned_int => |value| {
+        .unsigned_int => |int| {
             // TODO: Pass value bit width along too
             std.debug.assert(update_with_value == .none);
-            return appendToBlock(block_idx, .none, .{.load_int_constant = @intCast(u64, value.value)});
+            return appendToBlock(block_idx, .none, .{.load_int_constant = .{
+                .value = @intCast(u64, int.value),
+                .type = typeForBits(int.bits),
+            }});
         },
         .undefined => {
             std.debug.assert(update_with_value == .none);
             return appendToBlock(block_idx, .none, .{.undefined = {}});
         },
         .deref => |sidx| {
-            const value = try ssaValue(block_idx, sidx, .none);
+            const source = sema.values.get(sidx);
+            const source_type = sema.types.get(try source.getType());
+            const ir_value = try ssaValue(block_idx, sidx, .none);
             if(DeclIndex.unwrap(update_with_value)) |update| {
-                return appendToBlock(block_idx, .none, .{.store = .{.lhs = value, .rhs = update}});
+                return appendToBlock(block_idx, .none, .{.store = .{.dest = ir_value, .value = update}});
             }
-            return appendToBlock(block_idx, .none, .{.load = value});
+            return appendToBlock(block_idx, .none, .{.load = .{
+                .source = ir_value,
+                .type = switch(source_type.*) {
+                    .pointer, .reference => |ptr| typeFor(ptr.item),
+                    else => std.debug.panic("??? {s}", .{@tagName(source_type.*)}),
+                },
+            }});
         },
         else => |val| std.debug.panic("Unhandled ssaing of value {s}", .{@tagName(val)}),
     }
@@ -1237,7 +1383,10 @@ fn ssaFunction(func: *sema.Function) !BlockIndex.Index {
     var curr_param = sema.scopes.get(func.param_scope).first_decl;
     while(sema.decls.getOpt(curr_param)) |decl| {
         _ = try appendToBlock(first_basic_block, curr_param, .{
-            .param_ref = decl.function_param_idx.?,
+            .param_ref = .{
+                .param_idx = decl.function_param_idx.?,
+                .type = .u64, // typeFor(try sema.values.get(decl.init_value).getType()),
+            },
         });
 
         curr_param = decl.next;
@@ -1274,6 +1423,9 @@ pub fn dumpBlock(
     while(decls.getOpt(current_decl)) |decl| {
         std.debug.print("  ", .{});
         //if(decl.instr.isValue()) {
+            if(decl.instr.isValue()) {
+                std.debug.print("{s} ", .{@tagName(decl.instr.getOperationType())});
+            }
             std.debug.print("${d}", .{@enumToInt(current_decl)});
             const adecl = blk: { break :blk (uf orelse break :blk decl).findDeclByPtr(decl); };
             if(adecl != decl) {
@@ -1285,26 +1437,28 @@ pub fn dumpBlock(
             std.debug.print(" = ", .{});
         //}
         switch(decl.instr) {
-            .param_ref => |p| std.debug.print("@param({d})\n", .{p}),
+            .param_ref => |p| std.debug.print("@param({d})\n", .{p.param_idx}),
             .stack_ref => |p| std.debug.print("@stack({d})\n", .{p}),
             .enter_function => |size| std.debug.print("@enter_function({d})\n", .{size}),
-            .load_int_constant => |value| std.debug.print("{d}\n", .{value}),
+            .load_int_constant => |value| std.debug.print("{d}\n", .{value.value}),
             .load_bool_constant => |b| std.debug.print("{}\n", .{b}),
             .undefined => std.debug.print("undefined\n", .{}),
-            .load => |p| std.debug.print("@load(${d})\n", .{@enumToInt(p)}),
+            .load => |p| std.debug.print("@load(${d})\n", .{@enumToInt(p.source)}),
             inline
             .add, .add_mod, .sub, .sub_mod,
             .multiply, .multiply_mod, .divide, .modulus,
             .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
-            .less, .less_equal, .equals, .not_equal, .store,
+            .less, .less_equal, .equals, .not_equal,
             => |bop, tag| std.debug.print("{s}(${d}, ${d})\n", .{@tagName(tag), @enumToInt(bop.lhs), @enumToInt(bop.rhs)}),
             inline
             .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
             .multiply_constant, .multiply_mod_constant, .divide_constant, .modulus_constant,
             .shift_left_constant, .shift_right_constant, .bit_and_constant, .bit_or_constant, .bit_xor_constant,
             .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant,
-            .equals_constant, .not_equal_constant, .store_constant,
+            .equals_constant, .not_equal_constant,
             => |bop, tag| std.debug.print("{s}(${d}, #{d})\n", .{@tagName(tag)[0..@tagName(tag).len-9], @enumToInt(bop.lhs), bop.rhs}),
+            .store => |store| std.debug.print("store(${d}, ${d})\n", .{@enumToInt(store.dest), @enumToInt(store.value)}),
+            .store_constant => |store| std.debug.print("store(${d}, #{d})\n", .{@enumToInt(store.dest), store.value}),
             .incomplete_phi => std.debug.print("<incomplete phi node>\n", .{}),
             .copy => |c| std.debug.print("@copy(${d})\n", .{@enumToInt(c)}),
             .@"if" => |if_instr| {
@@ -1344,7 +1498,6 @@ pub fn memes(thing: *sema.Value) !void {
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 
-    const curr_backend = backend.x86_64;
     const blocks_to_dump = try allBlocksReachableFrom(arena.allocator(), bbidx);
 
     for(blocks_to_dump.items) |bb| {
@@ -1354,19 +1507,20 @@ pub fn memes(thing: *sema.Value) !void {
     const uf = try rega.doRegAlloc(
         arena.allocator(),
         &blocks_to_dump,
-        curr_backend.registers.return_reg,
-        &curr_backend.registers.param_regs,
-        &curr_backend.registers.gprs,
+        current_backend.registers.return_reg,
+        &current_backend.registers.param_regs,
+        &current_backend.registers.gprs,
     );
 
     for(blocks_to_dump.items) |bb| {
         try dumpBlock(bb, uf);
     }
 
-    var writer = backend.Writer(curr_backend){
+    var writer: current_backend.Writer = .{
         .allocator = optimization_allocator.allocator(),
         .uf = uf,
     };
+
     try writer.writeFunction(bbidx);
 }
 

@@ -385,7 +385,7 @@ pub fn doRegAlloc(
         while(ir.decls.getOpt(curr_instr)) |decl| : (curr_instr = decl.next) {
             const adecl = uf.findDecl(ir.decls.getIndex(decl));
             switch(decl.instr) {
-                .param_ref => |pr| adecl.reg_alloc_value = param_regs[pr],
+                .param_ref => |pr| adecl.reg_alloc_value = param_regs[pr.param_idx],
                 else => {},
             }
         }

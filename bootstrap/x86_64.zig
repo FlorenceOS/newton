@@ -29,6 +29,8 @@ pub const registers = struct {
     pub const param_regs = [_]u8{rdi, rsi, rdx, rcx, r8, r9};
 };
 
+pub const pointer_type: ir.InstrType = .u64;
+
 const cond_flags = struct {
     const not = 1;
 
@@ -172,65 +174,67 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
         },
         .load_int_constant => |c| {
             const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
-            if(c == 0) {
+            // TODO: Use type information
+            if(c.value == 0) {
                 try writer.writeInt(u8, 0x48 | @as(u8, @boolToInt(dest_reg >= 8)) * 5);
                 try writer.writeInt(u8, 0x31);
                 try writer.writeInt(u8, 0xC0 | (dest_reg & 0x7) * 9);
-            } else if(c <= 0x7F or c > 0xFFFFFFFFFFFFFF80) {
+            } else if(c.value <= 0x7F or c.value > 0xFFFFFFFFFFFFFF80) {
                 try writer.writeInt(u8, 0x6A);
-                try writer.writeInt(i8, @intCast(i8, @bitCast(i64, c)));
+                try writer.writeInt(i8, @intCast(i8, @bitCast(i64, c.value)));
                 if(dest_reg >= 8) {
                     try writer.writeInt(u8, 0x41);
                 }
                 try writer.writeInt(u8, 0x58 | (dest_reg & 0x7));
-            } else if(c <= 0x7FFFFFFF or c > 0xFFFFFFFF80000000) {
+            } else if(c.value <= 0x7FFFFFFF or c.value > 0xFFFFFFFF80000000) {
                 try writer.writeInt(u8, 0x48 | @as(u8, @boolToInt(dest_reg >= 8)));
                 try writer.writeInt(u8, 0xC7);
                 try writer.writeInt(u8, 0xC0 | (dest_reg & 0x7));
-                try writer.writeInt(i32, @intCast(i32, @bitCast(i64, c)));
+                try writer.writeInt(i32, @intCast(i32, @bitCast(i64, c.value)));
             } else {
                 try writer.writeInt(u8, 0x48 | @as(u8, @boolToInt(dest_reg >= 8)));
                 try writer.writeInt(u8, 0xB8 | (dest_reg & 0x7));
-                try writer.writeInt(u64, c);
+                try writer.writeInt(u64, c.value);
             }
         },
         .store_constant => |bop| {
-            const lhs = ir.decls.get(bop.lhs);
+            const lhs = ir.decls.get(bop.dest);
+            // TODO: Use type information
             switch(lhs.instr) {
                 .stack_ref => |offset| {
-                    if(bop.rhs <= 0x7F or bop.rhs > 0xFFFFFFFFFFFFFF80) {
+                    if(bop.value <= 0x7F or bop.value > 0xFFFFFFFFFFFFFF80) {
                         // push imm8
                         try writer.writeInt(u8, 0x6A);
-                        try writer.writeInt(i8, @intCast(i8, @bitCast(i64, bop.rhs)));
+                        try writer.writeInt(i8, @intCast(i8, @bitCast(i64, bop.value)));
                         // pop [rbp - offset]
                         try writer.writeInt(u8, 0x8F);
                         try writer.writeInt(u8, 0x85);
                         try writer.writeInt(u32, ~offset + 1);
-                    } else if(bop.rhs <= 0x7FFFFFFF or bop.rhs > 0xFFFFFFFF80000000) {
+                    } else if(bop.value <= 0x7FFFFFFF or bop.value > 0xFFFFFFFF80000000) {
                         // mov [rbp - offset], imm32
                         try writer.writeInt(u8, 0x48);
                         try writer.writeInt(u8, 0xC7);
                         try writer.writeInt(u8, 0x85);
                         try writer.writeInt(u32, ~offset + 1);
-                        try writer.writeInt(i32, @intCast(i32, @bitCast(i64, bop.rhs)));
+                        try writer.writeInt(i32, @intCast(i32, @bitCast(i64, bop.value)));
                     } else {
                         @panic(":(");
                     }
                 },
                 else => {
                     const lhs_reg = uf.findDeclByPtr(lhs).reg_alloc_value.?;
-                    if(bop.rhs <= 0x7F or bop.rhs > 0xFFFFFFFFFFFFFF80) {
+                    if(bop.value <= 0x7F or bop.value > 0xFFFFFFFFFFFFFF80) {
                         try writer.writeInt(u8, 0x6A);
-                        try writer.writeInt(i8, @intCast(i8, @bitCast(i64, bop.rhs)));
+                        try writer.writeInt(i8, @intCast(i8, @bitCast(i64, bop.value)));
                         if(lhs_reg >= 8) {
                             try writer.writeInt(u8, 0x41);
                         }
                         try writer.writeInt(u8, 0x58 | (lhs_reg & 0x7));
-                    } else if(bop.rhs <= 0x7FFFFFFF or bop.rhs > 0xFFFFFFFF80000000) {
+                    } else if(bop.value <= 0x7FFFFFFF or bop.value > 0xFFFFFFFF80000000) {
                         try writer.writeInt(u8, 0x48 | @as(u8, @boolToInt(lhs_reg >= 8)));
                         try writer.writeInt(u8, 0xC7);
                         try writer.writeInt(u8, 0x00 | (lhs_reg & 0x7));
-                        try writer.writeInt(i32, @intCast(i32, @bitCast(i64, bop.rhs)));
+                        try writer.writeInt(i32, @intCast(i32, @bitCast(i64, bop.value)));
                     } else {
                         @panic(":(");
                     }
@@ -324,8 +328,8 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
             try writer.writeInt(u8, 0xC3);
         },
         .store => |bop| {
-            const lhs = ir.decls.get(bop.lhs);
-            const rhs_reg = uf.findDecl(bop.rhs).reg_alloc_value.?;
+            const lhs = ir.decls.get(bop.dest);
+            const rhs_reg = uf.findDecl(bop.value).reg_alloc_value.?;
             switch(lhs.instr) {
                 .stack_ref => |offset| {
                     try writer.writeInt(u8, 0x48 | @as(u8, @boolToInt(rhs_reg >= 8)) << 2);
@@ -344,8 +348,9 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
                 },
             }
         },
-        .load => |idx| {
-            const source = ir.decls.get(idx);
+        .load => |load| {
+            // TODO: Use type information
+            const source = ir.decls.get(load.source);
             const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
             switch(source.instr) {
                 .stack_ref => |offset| {

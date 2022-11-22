@@ -464,7 +464,7 @@ fn evaluateWithoutTypeHint(
             }});
             const ptr_expr = try values.insert(.{.runtime = .{
                 .expr = ExpressionIndex.toOpt(try expressions.insert(.{.add = .{.lhs = lhs_idx, .rhs = offset_expr}})),
-                .value_type = u64_type,
+                .value_type = try values.addDedupLinear(.{.type_idx = types.getIndex(lhs_type)}),
             }});
             return putValueIn(value_out, .{.deref = ptr_expr});
         },
