@@ -4,6 +4,7 @@ const ast = @import("ast.zig");
 const backend = @import("backend.zig");
 const ir = @import("ir.zig");
 const indexed_list = @import("indexed_list.zig");
+const sources = @import("sources.zig");
 
 pub const TypeIndex = indexed_list.Indices(u32, opaque{}, .{
     .void = .{.void = {}},
@@ -427,8 +428,9 @@ fn evaluateWithoutTypeHint(
                 else => blk: {
                     const callee_idx = try evaluateWithoutTypeHint(scope_idx, .none, call.callee);
                     const callee = values.get(callee_idx);
+                    try callee.analyze();
                     if(callee.* != .function) {
-                        return error.CallOnNonFunctionValue;
+                        std.debug.panic("Cannot call non-function: {any}", .{callee});
                     }
                     var curr_param_decl = scopes.get(callee.function.param_scope).first_decl;
                     while(ast.expressions.getOpt(curr_ast_arg)) |ast_arg| {
@@ -547,22 +549,39 @@ fn evaluateWithoutTypeHint(
             var lhs = try evaluateWithoutTypeHint(scope_idx, .none, bop.lhs);
             const lhs_value = values.get(lhs);
             const rhs_expr = ast.expressions.get(bop.rhs);
-            std.debug.assert(lhs_value.* == .decl_ref);
             std.debug.assert(rhs_expr.* == .identifier);
-            const lhs_type = types.get(try lhs_value.getType());
-            std.debug.assert(lhs_type.* == .struct_idx);
-            const lhs_struct = structs.get(lhs_type.struct_idx);
-            const token = try rhs_expr.identifier.retokenize();
-            defer token.deinit();
-            if(try lhs_struct.lookupField(token.identifier_value())) |field| {
-                return putValueIn(value_out, .{.runtime = .{
-                    .expr = .none, // TODO: Member access expression
-                    .value_type = try values.addDedupLinear(.{
-                        .type_idx = try values.get(field.init_value).getType(),
-                    }),
-                }});
-            } else {
-                return error.MemberNotFound;
+            switch(lhs_value.*) {
+                .decl_ref => {
+                    const lhs_type = types.get(try lhs_value.getType());
+                    std.debug.assert(lhs_type.* == .struct_idx);
+                    const lhs_struct = structs.get(lhs_type.struct_idx);
+                    const token = try rhs_expr.identifier.retokenize();
+                    defer token.deinit();
+                    if(try lhs_struct.lookupField(token.identifier_value())) |field| {
+                        return putValueIn(value_out, .{.runtime = .{
+                            .expr = .none, // TODO: Member access expression
+                            .value_type = try values.addDedupLinear(.{
+                                .type_idx = try values.get(field.init_value).getType(),
+                            }),
+                        }});
+                    } else {
+                        return error.MemberNotFound;
+                    }
+                },
+                .type_idx => |idx| {
+                    const lhs_type = types.get(idx);
+                    std.debug.assert(lhs_type.* == .struct_idx);
+                    const lhs_struct = structs.get(lhs_type.struct_idx);
+                    const token = try rhs_expr.identifier.retokenize();
+                    defer token.deinit();
+                    if(try scopes.get(lhs_struct.scope).lookupDecl(token.identifier_value())) |member_decl| {
+                        std.debug.assert(!member_decl.mutable);
+                        return member_decl.init_value;
+                    } else {
+                        return error.MemberNotFound;
+                    }
+                },
+                else => |other| std.debug.panic("TODO member_access of {s}", .{@tagName(other)}),
             }
         },
         .array_subscript => |bop| {
@@ -590,6 +609,7 @@ fn evaluateWithoutTypeHint(
             }});
             return putValueIn(value_out, .{.deref = ptr_expr});
         },
+        .import_call => |import| return evaluateWithTypeHint(scope_idx, .none, sources.source_files.get(import).top_level_struct, .type),
         else => |expr| std.debug.panic("TODO: Sema {s} expression", .{@tagName(expr)}),
     }
 }
