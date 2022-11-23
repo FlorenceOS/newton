@@ -169,6 +169,7 @@ pub fn doRegAlloc(
     return_reg: u8,
     param_regs: []const u8,
     gprs: []const u8,
+    caller_saved: []const u8,
 ) !UnionFind {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
@@ -206,6 +207,13 @@ pub fn doRegAlloc(
                         });
                         op.* = new_op;
                         ir.decls.get(new_op).reg_alloc_value = param_regs[arg_idx];
+                    }
+                    const next = ir.DeclIndex.unwrap(instr.next).?;
+                    for(caller_saved) |reg| {
+                        const clob = try ir.insertBefore(next, .{
+                            .clobber = ir.decls.getIndex(instr),
+                        });
+                        ir.decls.get(clob).reg_alloc_value = reg;
                     }
                 },
                 else => {},

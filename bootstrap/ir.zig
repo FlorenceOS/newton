@@ -70,6 +70,7 @@ const DeclInstr = union(enum) {
         value: u64,
         type: InstrType,
     },
+    clobber: DeclIndex.Index,
     zero_extend: Cast,
     sign_extend: Cast,
     truncate: Cast,
@@ -203,6 +204,8 @@ const DeclInstr = union(enum) {
 
             .zero_extend, .sign_extend, .truncate => |*cast| bounded_result.value.bounded_iterator.appendAssumeCapacity(&cast.value),
 
+            .clobber => |*clob| bounded_result.value.bounded_iterator.appendAssumeCapacity(clob),
+
             .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
             .multiply_constant, .multiply_mod_constant, .divide_constant, .modulus_constant,
             .shift_left_constant, .shift_right_constant, .bit_and_constant, .bit_or_constant, .bit_xor_constant,
@@ -277,7 +280,7 @@ const DeclInstr = union(enum) {
             .param_ref, .load_int_constant, .load, .store_constant,
             .zero_extend, .sign_extend, .truncate,
             => |cast| return cast.type,
-
+            .clobber => return .u64,
             .add, .add_mod, .sub, .sub_mod,
             .multiply, .multiply_mod, .divide, .modulus,
             .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
@@ -1481,7 +1484,8 @@ pub fn dumpBlock(
 ) !void {
     std.debug.print("Block#{d}:\n", .{@enumToInt(bb)});
     var current_decl = blocks.get(bb).first_decl;
-    while(decls.getOpt(current_decl)) |decl| {
+    while(decls.getOpt(current_decl)) |decl| : (current_decl = decl.next) {
+        if(decl.instr == .clobber) continue;
         std.debug.print("  ", .{});
         std.debug.print("${d}", .{@enumToInt(current_decl)});
         const adecl = blk: { break :blk (uf orelse break :blk decl).findDeclByPtr(decl); };
@@ -1553,8 +1557,8 @@ pub fn dumpBlock(
                 }
                 std.debug.print(")\n", .{});
             },
+            .clobber => unreachable,
         }
-        current_decl = decl.next;
     }
     std.debug.print("\n", .{});
 }

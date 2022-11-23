@@ -19,6 +19,7 @@ pub const registers = struct {
     pub const return_reg = rax;
     pub const gprs = [_]u8{rax, rcx, rdx, rbx, rsi, rdi, 8, 9, 10, 11, 12, 13, 14, 15};
     pub const param_regs = [_]u8{rdi, rsi, rdx, rcx, 8, 9};
+    pub const caller_saved = param_regs ++ [_]u8{10, 11};
 };
 
 pub const pointer_type: ir.InstrType = .u64;
@@ -221,7 +222,7 @@ fn subImm(writer: *Writer, operation_type: ir.InstrType, dest_reg: u8, value: i3
 pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFind) !?ir.BlockIndex.Index {
     const decl = ir.decls.get(decl_idx);
     switch(decl.instr) {
-        .param_ref, .stack_ref, .undefined => {},
+        .param_ref, .stack_ref, .undefined, .clobber => {},
         .enter_function => |stack_size| if(stack_size > 0) {
             try pushReg(writer, registers.rbp);
             try movRegToReg(writer, .u64, registers.rbp, registers.rsp);

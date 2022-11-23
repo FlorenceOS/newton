@@ -247,6 +247,7 @@ pub fn Writer(comptime Platform: type) type {
                 current_backend.registers.return_reg,
                 &current_backend.registers.param_regs,
                 &current_backend.registers.gprs,
+                &current_backend.registers.caller_saved,
             );
 
             for(blocks_to_dump.items) |bb| {
