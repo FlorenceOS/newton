@@ -2,6 +2,7 @@ const std = @import("std");
 
 const ast = @import("ast.zig");
 const backend = @import("backend.zig");
+const elf = @import("elf.zig");
 const parser = @import("parser.zig");
 const sema = @import("sema.zig");
 const sources = @import("sources.zig");
@@ -54,6 +55,13 @@ pub fn main() !void {
         }
 
         try backend.writer.writeFunction(main_decl.init_value);
+        const main_offset = backend.writer.placed_functions.get(main_decl.init_value).?;
+        var elf_writer = try elf.Writer.init(std.heap.page_allocator);
+        // try elf_writer.addSymbol("cock", 69);
+        // try elf_writer.addSymbol("balls", 420);
+        var file = try std.fs.cwd().createFile("a.out", .{.mode = 0o777});
+        defer file.close();
+        try elf_writer.finalize(&file, backend.writer.output_bytes.items, main_offset);
     } else {
         std.debug.print("Missing root file path!\n", .{});
     }

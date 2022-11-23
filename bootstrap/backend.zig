@@ -5,8 +5,8 @@ const rega = @import("rega.zig");
 const sema = @import("sema.zig");
 
 pub const backends = struct {
-    const aarch64 = @import("aarch64.zig");
-    const x86_64 = @import("x86_64.zig");
+    pub const aarch64 = @import("aarch64.zig");
+    pub const x86_64 = @import("x86_64.zig");
 };
 
 comptime {
