@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const backend = @import("backend.zig");
+const backends = @import("backends.zig");
 const indexed_list = @import("indexed_list.zig");
 const sema = @import("sema.zig");
 const rega = @import("rega.zig");
@@ -45,7 +45,7 @@ fn typeForBits(bits: u32) InstrType {
 fn typeFor(type_idx: sema.TypeIndex.Index) InstrType {
     return switch(sema.types.get(type_idx).*) {
         .signed_int, .unsigned_int => |bits| typeForBits(bits),
-        .reference, .pointer => backend.current_backend.pointer_type,
+        .reference, .pointer => backends.current_backend.pointer_type,
         else => |other| std.debug.panic("TODO: typeFor {s}", .{@tagName(other)}),
     };
 }
@@ -283,7 +283,7 @@ const DeclInstr = union(enum) {
             .zero_extend, .sign_extend, .truncate,
             => |cast| return cast.type,
             .clobber => return .u64,
-            .addr_of => return backend.current_backend.pointer_type,
+            .addr_of => return backends.current_backend.pointer_type,
             .add, .add_mod, .sub, .sub_mod,
             .multiply, .multiply_mod, .divide, .modulus,
             .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
@@ -1506,7 +1506,7 @@ pub fn dumpBlock(
             std.debug.print(" (-> ${d})", .{@enumToInt(decls.getIndex(adecl))});
         }
         if(adecl.reg_alloc_value) |reg| {
-            std.debug.print(" ({s})", .{backend.current_backend.registerName(reg)});
+            std.debug.print(" ({s})", .{backends.current_backend.register_name(reg)});
         }
         std.debug.print(" = ", .{});
         if(decl.instr.isValue()) {

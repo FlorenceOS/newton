@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const ast = @import("ast.zig");
-const backend = @import("backend.zig");
+const backends = @import("backends.zig");
 const ir = @import("ir.zig");
 const indexed_list = @import("indexed_list.zig");
 const sources = @import("sources.zig");
@@ -275,9 +275,9 @@ fn evaluateWithoutTypeHint(
         .string_literal => |sr| {
             const token = try sr.retokenize();
             defer token.deinit();
-            const offset = backend.writer.currentOffset();
-            try backend.writer.write(token.string_literal.value);
-            try backend.writer.writeInt(u8, 0);
+            const offset = backends.writer.currentOffset();
+            try backends.writer.write(token.string_literal.value);
+            try backends.writer.writeInt(u8, 0);
             // TODO: Slice types
             return putValueIn(value_out, .{.runtime = .{
                 .expr = ExpressionIndex.toOpt(try expressions.insert(.{.offset = @intCast(u32, offset)})),

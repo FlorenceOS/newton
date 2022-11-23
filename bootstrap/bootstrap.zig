@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const ast = @import("ast.zig");
-const backend = @import("backend.zig");
+const backends = @import("backends.zig");
 const elf = @import("elf.zig");
 const parser = @import("parser.zig");
 const sema = @import("sema.zig");
@@ -15,6 +15,7 @@ pub fn main() !void {
     try ir.init();
 
     var output_path: [:0]const u8 = "a.out";
+    var target: [:0]const u8 = "x86_64-linux";
     var root_path: ?[:0]u8 = null;
 
     const argv = std.os.argv;
@@ -24,11 +25,40 @@ pub fn main() !void {
         if(std.mem.eql(u8, arg, "-o")) {
             i += 1;
             output_path = std.mem.span(argv[i]);
+            continue;
         }
-        else {
-            root_path = std.mem.span(argv[i]);
+        if(std.mem.eql(u8, arg, "-target")) {
+            i += 1;
+            target = std.mem.span(argv[i]);
+            continue;
+        }
+        root_path = std.mem.span(argv[i]);
+    }
+
+    var target_it = std.mem.split(u8, target, "-");
+    const arch_str = target_it.next().?;
+    const os_str = target_it.next().?;
+    std.debug.assert(target_it.next() == null);
+
+    var target_arch: ?*const backends.Backend = null;
+    var target_os: ?*const backends.Os = null;
+
+    inline for(@typeInfo(backends.backends).Struct.decls) |arch_decl| {
+        const platform = &@field(backends.backends, arch_decl.name);
+        if(std.mem.eql(u8, arch_str, arch_decl.name)) {
+            target_arch = &platform.backend;
+            inline for(@typeInfo(platform.oses).Struct.decls) |os_decl| {
+                const os = &@field(platform.oses, os_decl.name);
+
+                if(std.mem.eql(u8, os_str, os_decl.name)) {
+                    target_os = os;
+                }
+            }
         }
     }
+
+    backends.current_backend = target_arch.?;
+    backends.current_os = target_os.?;
 
     if(root_path) |rp| {
         const root_ast = try parser.parseRootFile(rp);
@@ -49,24 +79,24 @@ pub fn main() !void {
         try main_decl.analyze();
         std.debug.print("{any}\n", .{sema.values.get(main_decl.init_value)});
 
-        try backend.writer.output_bytes.appendNTimes(backend.writer.allocator, 0xCC, 6);
-        while((backend.writer.output_bytes.items.len & 3) != 0) {
-            try backend.writer.output_bytes.append(backend.writer.allocator, 0xCC);
+        try backends.writer.output_bytes.appendNTimes(backends.writer.allocator, 0xCC, 6);
+        while((backends.writer.output_bytes.items.len & 3) != 0) {
+            try backends.writer.output_bytes.append(backends.writer.allocator, 0xCC);
         }
 
-        try backend.writer.writeFunction(main_decl.init_value);
+        try backends.writer.writeFunction(main_decl.init_value);
         var elf_writer = try elf.Writer.init(std.heap.page_allocator);
         for(sema.decls.elements.items[1..]) |decl| {
-            if(backend.writer.placed_functions.get(decl.init_value)) |offset| {
+            if(backends.writer.placed_functions.get(decl.init_value)) |offset| {
                 const token = try decl.name.retokenize();
                 defer token.deinit();
                 try elf_writer.addSymbol(token.identifier_value(), offset);
             }
         }
-        const main_offset = backend.writer.placed_functions.get(main_decl.init_value).?;
+        const main_offset = backends.writer.placed_functions.get(main_decl.init_value).?;
         var file = try std.fs.cwd().createFile("a.out", .{.mode = 0o777});
         defer file.close();
-        try elf_writer.finalize(&file, backend.writer.output_bytes.items, main_offset);
+        try elf_writer.finalize(&file, backends.writer.output_bytes.items, main_offset);
     } else {
         std.debug.print("Missing root file path!\n", .{});
     }

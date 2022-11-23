@@ -1,12 +1,10 @@
 const std = @import("std");
 
-const backend = @import("backend.zig");
+const backends = @import("backends.zig");
 const ir = @import("ir.zig");
 const rega = @import("rega.zig");
 
-const Writer = backend.Writer(@This());
-
-pub const registers = struct {
+const registers = struct {
     const rax = 0;
     const rcx = 1;
     const rdx = 2;
@@ -17,10 +15,17 @@ pub const registers = struct {
     const rdi = 7;
 };
 
+pub const backend = backends.Backend{
+    .elf_machine = .X86_64,
+    .pointer_type = .u64,
+    .register_name = registerName,
+    .write_decl = writeDecl,
+};
+
 pub const oses = struct {
-    pub const linux = struct {
-        pub const return_reg = registers.rax;
-        pub const gprs = [_]u8{
+    pub const linux = backends.Os{
+        .return_reg = registers.rax,
+        .gprs = &.{
             registers.rax,
             registers.rcx,
             registers.rdx,
@@ -28,17 +33,15 @@ pub const oses = struct {
             registers.rsi,
             registers.rdi,
             8, 9, 10, 11, 12, 13, 14, 15,
-        };
-        pub const param_regs = [_]u8{registers.rdi, registers.rsi, registers.rdx, registers.rcx, 8, 9};
-        pub const syscall_param_regs = [_]u8{registers.rax, registers.rdi, registers.rsi, registers.rdx, 10, 8, 9};
-        pub const caller_saved = param_regs ++ [_]u8{10, 11};
-        pub const syscall_clobbers = [_]u8{registers.rcx, 11};
+        },
+        .param_regs =         &.{registers.rdi, registers.rsi, registers.rdx, registers.rcx, 8, 9},
+        .syscall_param_regs = &.{registers.rax, registers.rdi, registers.rsi, registers.rdx, 10, 8, 9},
+        .caller_saved =       &.{registers.rdi, registers.rsi, registers.rdx, registers.rcx, 8, 9, 10, 11},
+        .syscall_clobbers =   &.{registers.rcx, 11},
     };
 };
 
-pub const pointer_type: ir.InstrType = .u64;
-
-pub fn registerName(reg: u8) []const u8 {
+fn registerName(reg: u8) []const u8 {
     return switch(reg) {
         registers.rax => "rax",
         registers.rcx => "rcx",
@@ -60,7 +63,7 @@ const cond_flags = struct {
     const below_equal = 6; // Less than unsigned or equal
 };
 
-fn rexPrefix(writer: *Writer, w: bool, r: bool, x: bool, b: bool) !void {
+fn rexPrefix(writer: *backends.Writer, w: bool, r: bool, x: bool, b: bool) !void {
     var result: u8 = 0;
     if(w) result |= 1 << 3;
     if(r) result |= 1 << 2;
@@ -71,7 +74,7 @@ fn rexPrefix(writer: *Writer, w: bool, r: bool, x: bool, b: bool) !void {
     }
 }
 
-fn prefix(writer: *Writer, operation_type: ir.InstrType, r: bool, x: bool, b: bool) !void {
+fn prefix(writer: *backends.Writer, operation_type: ir.InstrType, r: bool, x: bool, b: bool) !void {
     if(operation_type == .u16) {
         try writer.writeInt(u8, 0x66);
     }
@@ -111,12 +114,12 @@ fn rmStackOffset(stack_offset: i32, reg: u8) Rm {
     return rmRegIndirect(registers.rbp, reg, -stack_offset);
 }
 
-fn pushReg(writer: *Writer, reg: u8) !void {
+fn pushReg(writer: *backends.Writer, reg: u8) !void {
     try rexPrefix(writer, false, false, false, reg >= 8);
     try writer.writeInt(u8, 0x50 | (reg & 0x7));
 }
 
-fn pushImm(writer: *Writer, value: i32) !void {
+fn pushImm(writer: *backends.Writer, value: i32) !void {
     if(std.math.cast(i8, value)) |i8_value| {
         try writer.writeInt(u8, 0x6A);
         try writer.writeInt(i8, i8_value);
@@ -126,18 +129,18 @@ fn pushImm(writer: *Writer, value: i32) !void {
     }
 }
 
-fn popReg(writer: *Writer, reg: u8) !void {
+fn popReg(writer: *backends.Writer, reg: u8) !void {
     try rexPrefix(writer, false, false, false, reg >= 8);
     try writer.writeInt(u8, 0x58 | (reg & 0x7));
 }
 
-fn popRm(writer: *Writer, rm: Rm) !void {
+fn popRm(writer: *backends.Writer, rm: Rm) !void {
     try rexPrefix(writer, false, rm.rex_r, false, rm.rex_b);
     try writer.writeInt(u8, 0x8F);
     try writer.write(rm.encoded.slice());
 }
 
-fn movRegToReg(writer: *Writer, operation_type: ir.InstrType, dest_reg: u8, src_reg: u8) !void {
+fn movRegToReg(writer: *backends.Writer, operation_type: ir.InstrType, dest_reg: u8, src_reg: u8) !void {
     if(dest_reg == src_reg) return;
     const rm = rmRegDirect(dest_reg, src_reg);
     try prefix(writer, operation_type, rm.rex_r, false, rm.rex_b);
@@ -145,21 +148,21 @@ fn movRegToReg(writer: *Writer, operation_type: ir.InstrType, dest_reg: u8, src_
     try writer.write(rm.encoded.slice());
 }
 
-fn movRmToReg(writer: *Writer, operation_type: ir.InstrType, dest_reg: u8, rm: Rm) !void {
+fn movRmToReg(writer: *backends.Writer, operation_type: ir.InstrType, dest_reg: u8, rm: Rm) !void {
     const opcode: u8 = if(operation_type == .u8) 0x8A else 0x8B;
     try prefix(writer, operation_type, rm.rex_r, false, dest_reg >= 8);
     try writer.writeInt(u8, opcode);
     try writer.write(rm.encoded.slice());
 }
 
-fn movRegToRm(writer: *Writer, operation_type: ir.InstrType, rm: Rm, src_reg: u8) !void {
+fn movRegToRm(writer: *backends.Writer, operation_type: ir.InstrType, rm: Rm, src_reg: u8) !void {
     const opcode: u8 = if(operation_type == .u8) 0x88 else 0x89;
     try prefix(writer, operation_type, src_reg >= 8, false, rm.rex_r);
     try writer.writeInt(u8, opcode);
     try writer.write(rm.encoded.slice());
 }
 
-fn movImmToRm(writer: *Writer, operation_type: ir.InstrType, rm: Rm, value: i32) !void {
+fn movImmToRm(writer: *backends.Writer, operation_type: ir.InstrType, rm: Rm, value: i32) !void {
     if(operation_type == .u64 and value <= 0x7F or value > 0xFFFFFFFFFFFFFF80) {
         try pushImm(writer, value);
         try popRm(writer, rm);
@@ -177,7 +180,7 @@ fn movImmToRm(writer: *Writer, operation_type: ir.InstrType, rm: Rm, value: i32)
     }
 }
 
-fn movImmToReg(writer: *Writer, operation_type: ir.InstrType, dest_reg: u8, value: u64) !void {
+fn movImmToReg(writer: *backends.Writer, operation_type: ir.InstrType, dest_reg: u8, value: u64) !void {
     _ = operation_type;
     if(std.math.cast(i32, value)) |i32_value| {
         try pushImm(writer, i32_value);
@@ -187,7 +190,7 @@ fn movImmToReg(writer: *Writer, operation_type: ir.InstrType, dest_reg: u8, valu
     }
 }
 
-fn addRegReg(writer: *Writer, operation_type: ir.InstrType, dest_reg: u8, rhs_reg: u8) !void {
+fn addRegReg(writer: *backends.Writer, operation_type: ir.InstrType, dest_reg: u8, rhs_reg: u8) !void {
     const opcode: u8 = if(operation_type == .u8) 0x00 else 0x01;
     const rm = rmRegDirect(dest_reg, rhs_reg);
     try prefix(writer, operation_type, rm.rex_r, false, rm.rex_b);
@@ -195,7 +198,7 @@ fn addRegReg(writer: *Writer, operation_type: ir.InstrType, dest_reg: u8, rhs_re
     try writer.write(rm.encoded.slice());
 }
 
-fn addReg3(writer: *Writer, operation_type: ir.InstrType, dest_reg: u8, lhs_reg: u8, rhs_reg: u8) !void {
+fn addReg3(writer: *backends.Writer, operation_type: ir.InstrType, dest_reg: u8, lhs_reg: u8, rhs_reg: u8) !void {
     if(dest_reg == lhs_reg) {
         return addRegReg(writer, operation_type, dest_reg, rhs_reg);
     } else if (dest_reg == rhs_reg) {
@@ -213,7 +216,7 @@ fn addReg3(writer: *Writer, operation_type: ir.InstrType, dest_reg: u8, lhs_reg:
     }
 }
 
-fn subImm(writer: *Writer, operation_type: ir.InstrType, dest_reg: u8, value: i32) !void {
+fn subImm(writer: *backends.Writer, operation_type: ir.InstrType, dest_reg: u8, value: i32) !void {
     if(value == 1) {
         try prefix(writer, operation_type, false, false, dest_reg >= 8);
         try writer.writeInt(u8, 0xFF);
@@ -233,7 +236,7 @@ fn subImm(writer: *Writer, operation_type: ir.InstrType, dest_reg: u8, value: i3
     }
 }
 
-pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFind) !?ir.BlockIndex.Index {
+fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFind) !?ir.BlockIndex.Index {
     const decl = ir.decls.get(decl_idx);
     switch(decl.instr) {
         .param_ref, .stack_ref, .undefined, .clobber, .offset_ref => {},
@@ -341,7 +344,7 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
                     // TODO: RM encoding for RIP relative effective addresses
                     const dest_reg = uf.findRegByPtr(decl).?;
                     const disp = @bitCast(i64, @as(usize, offset) -% (writer.currentOffset() + 7));
-                    try prefix(writer, pointer_type, dest_reg >= 8, false, false);
+                    try prefix(writer, backend.pointer_type, dest_reg >= 8, false, false);
                     try writer.writeInt(u8, 0x8D);
                     try writer.writeInt(u8, 0x0D | ((dest_reg & 0x7) << 3));
                     try writer.writeInt(i32, @intCast(i32, disp));
@@ -477,7 +480,7 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
         },
         .@"return" => |ret| {
             const op_reg = uf.findReg(ret.value).?;
-            std.debug.assert(op_reg == backend.current_os.return_reg);
+            std.debug.assert(op_reg == backends.current_os.return_reg);
             if(ret.restore_stack) {
                 try movRegToReg(writer, .u64, registers.rsp, registers.rbp);
                 try popReg(writer, registers.rbp);

@@ -1,18 +1,23 @@
 const std = @import("std");
 
-const backend = @import("backend.zig");
+const backends = @import("backends.zig");
 const ir = @import("ir.zig");
 const rega = @import("rega.zig");
 
-const Writer = backend.Writer(@This());
-
-pub fn registerName(reg: u8) []const u8 {
+fn registerName(reg: u8) []const u8 {
     switch(reg) {
         inline else => |regnum| {
             return std.fmt.comptimePrint("X{d}", .{regnum});
         },
     }
 }
+
+pub const backend = backends.Backend{
+    .elf_machine = .AARCH64,
+    .pointer_type = .u64,
+    .register_name = registerName,
+    .write_decl = writeDecl,
+};
 
 pub const registers = struct {
     pub const fp = 29;
@@ -22,20 +27,20 @@ pub const registers = struct {
 };
 
 pub const oses = struct {
-    pub const linux = struct {
-        pub const return_reg = 0;
-        pub const gprs = [_]u8{
+    pub const linux = backends.Os{
+        .return_reg = 0,
+        .gprs = &.{
             0,  1,  2,  3,  4,  5,  6,  7,  8,  9,
             10, 11, 12, 13, 14, 15, 16, 17,     19,
             20, 21, 22, 23, 24, 25, 26, 27, 28,
-        };
-        pub const param_regs = [_]u8{0, 1, 2, 3, 4, 5, 6, 7};
-        pub const syscall_param_regs = param_regs;
-        pub const caller_saved = [_]u8{
+        },
+        .param_regs = &.{0, 1, 2, 3, 4, 5, 6, 7},
+        .syscall_param_regs = &.{0, 1, 2, 3, 4, 5, 6, 7},
+        .caller_saved = &.{
             1,  2,  3,  4,  5,  6,  7,  8,  9,
             10, 11, 12, 13, 14, 15,
-        };
-        pub const syscall_clobbers = [_]u8{};
+        },
+        .syscall_clobbers = &.{},
     };
 };
 
@@ -68,7 +73,7 @@ fn emulateMov(movs: []const std.meta.Tuple(&.{u16, u2, MovType})) u64 {
     return result;
 }
 
-fn movReg(writer: *Writer, dest_reg: u8, src_reg: u8) !void {
+fn movReg(writer: *backends.Writer, dest_reg: u8, src_reg: u8) !void {
     if(dest_reg == src_reg) return;
     return writer.writeInt(u32, 0xAA000000
         | @as(u32, dest_reg)
@@ -77,7 +82,7 @@ fn movReg(writer: *Writer, dest_reg: u8, src_reg: u8) !void {
     );
 }
 
-fn addImm(writer: *Writer, dest_reg: u8, src_reg: u8, imm: u12) !void {
+fn addImm(writer: *backends.Writer, dest_reg: u8, src_reg: u8, imm: u12) !void {
     try writer.writeInt(u32, 0x91000000
         | @as(u32, dest_reg)
         | @as(u32, src_reg) << 5
@@ -85,7 +90,7 @@ fn addImm(writer: *Writer, dest_reg: u8, src_reg: u8, imm: u12) !void {
     );
 }
 
-fn subImm(writer: *Writer, dest_reg: u8, src_reg: u8, imm: u12) !void {
+fn subImm(writer: *backends.Writer, dest_reg: u8, src_reg: u8, imm: u12) !void {
     try writer.writeInt(u32, 0xD1000000
         | @as(u32, dest_reg)
         | @as(u32, src_reg) << 5
@@ -93,7 +98,7 @@ fn subImm(writer: *Writer, dest_reg: u8, src_reg: u8, imm: u12) !void {
     );
 }
 
-fn ldp(writer: *Writer, ptr_reg: u8, r1: u8, r2: u8, imm: i7) !void {
+fn ldp(writer: *backends.Writer, ptr_reg: u8, r1: u8, r2: u8, imm: i7) !void {
     try writer.writeInt(u32, 0xA9400000
         | @as(u32, ptr_reg) << 5
         | @as(u32, r1) << 0
@@ -102,7 +107,7 @@ fn ldp(writer: *Writer, ptr_reg: u8, r1: u8, r2: u8, imm: i7) !void {
     );
 }
 
-fn stp(writer: *Writer, ptr_reg: u8, r1: u8, r2: u8, imm: i7) !void {
+fn stp(writer: *backends.Writer, ptr_reg: u8, r1: u8, r2: u8, imm: i7) !void {
     try writer.writeInt(u32, 0xA9000000
         | @as(u32, ptr_reg) << 5
         | @as(u32, r1) << 0
@@ -111,11 +116,11 @@ fn stp(writer: *Writer, ptr_reg: u8, r1: u8, r2: u8, imm: i7) !void {
     );
 }
 
-fn pushTwo(writer: *Writer, r1: u8, r2: u8) !void {
+fn pushTwo(writer: *backends.Writer, r1: u8, r2: u8) !void {
     return stp(writer, registers.sp, r1, r2, -2);
 }
 
-fn popTwo(writer: *Writer, r1: u8, r2: u8) !void {
+fn popTwo(writer: *backends.Writer, r1: u8, r2: u8) !void {
     return ldp(writer, registers.sp, r1, r2, 0);
 }
 
@@ -123,7 +128,7 @@ fn opSizeBit(decl: *ir.Decl) u32 {
     return if(decl.instr.getOperationType() == .u64) (1 << 31) else 0;
 }
 
-pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFind) !?ir.BlockIndex.Index {
+fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFind) !?ir.BlockIndex.Index {
     const decl = ir.decls.get(decl_idx);
 
     switch(decl.instr) {
@@ -302,7 +307,7 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
                 try movReg(writer, registers.sp, registers.fp);
                 try popTwo(writer, registers.fp, registers.lr);
             }
-            std.debug.assert(op_reg == backend.current_os.return_reg);
+            std.debug.assert(op_reg == backends.current_os.return_reg);
             try writer.writeInt(u32, 0xD65F0000 | @as(u32, registers.lr) << 5);
         },
         inline else => |_, tag| @panic("TODO: aarch64 decl " ++ @tagName(tag)),

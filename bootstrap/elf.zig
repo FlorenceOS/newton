@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const backend = @import("backend.zig");
+const backends = @import("backends.zig");
 
 pub const BASE_VADDR = 0x100000;
 
@@ -66,11 +66,7 @@ pub const Writer = struct {
         elf.header = .{
             .e_ident = "\x7FELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00".*,
             .e_type = .EXEC,
-            .e_machine = switch(backend.current_backend) {
-                backend.backends.x86_64 => .X86_64,
-                backend.backends.aarch64 => .AARCH64,
-                else => unreachable,
-            },
+            .e_machine = backends.current_backend.elf_machine,
             .e_version = 1,
             .e_entry = BASE_VADDR + entry,
             .e_phoff = @offsetOf(File, "phdrs"),
