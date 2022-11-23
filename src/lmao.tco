@@ -5,11 +5,11 @@ const SYS = struct {
     const EXIT = 60;
 };
 
-fn print(buf: *const u8) u64 {
-    return @syscall(SYS.WRITE, 1, buf, other.strlen(buf));
-}
-
 fn main() u64 {
+    const print = fn(buf: *const u8) u64 {
+        return @syscall(SYS.WRITE, 1, buf, other.strlen(buf));
+    };
+
     print("Hello, world!\n".&);
     return @syscall(SYS.EXIT, 0);
 }

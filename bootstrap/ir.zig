@@ -1131,7 +1131,7 @@ fn ssaBlockStatementIntoBasicBlock(
     var current_stack_offset = stack_offset;
 
     defer max_stack_usage.* = std.math.max(max_stack_usage.*, current_stack_offset);
-    while(sema.statements.getOpt(current_statement)) |stmt| {
+    while(sema.statements.getOpt(current_statement)) |stmt| : (current_statement = stmt.next) {
         switch(stmt.value) {
             .block => |b| {
                 // A freestanding block statement is part of the same basic block but with a different scope
@@ -1162,6 +1162,8 @@ fn ssaBlockStatementIntoBasicBlock(
                         if(decl.stack_offset == null) sema.DeclIndex.toOpt(decl_idx) else .none,
                     );
                 } else blk: {
+                    const val = sema.values.get(decl.init_value);
+                    if(val.* == .function) continue;
                     const value = try ssaValue(current_basic_block, decl.init_value, .none);
                     if(decl.stack_offset == null) decls.get(value).sema_decl = sema.DeclIndex.toOpt(decl_idx);
                     break :blk value;
@@ -1273,7 +1275,6 @@ fn ssaBlockStatementIntoBasicBlock(
                 _ = try appendToBlock(current_basic_block, .none, .{.@"goto" = exit_edge});
             },
         }
-        current_statement = stmt.next;
     }
     return current_basic_block;
 }
