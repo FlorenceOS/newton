@@ -1,2 +1,12 @@
 const root = @import("lmao.tco");
 const self = @import("otherfile.tco");
+
+fn strlen(ptr: *const u8) u64 {
+    var res: u64 = 0;
+    loop {
+        if(ptr[res] == 0) {
+            return res;
+        }
+        res += 1;
+    }
+}

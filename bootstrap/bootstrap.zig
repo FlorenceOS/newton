@@ -55,10 +55,15 @@ pub fn main() !void {
         }
 
         try backend.writer.writeFunction(main_decl.init_value);
-        const main_offset = backend.writer.placed_functions.get(main_decl.init_value).?;
         var elf_writer = try elf.Writer.init(std.heap.page_allocator);
-        // try elf_writer.addSymbol("cock", 69);
-        // try elf_writer.addSymbol("balls", 420);
+        for(sema.decls.elements.items[1..]) |decl| {
+            if(backend.writer.placed_functions.get(decl.init_value)) |offset| {
+                const token = try decl.name.retokenize();
+                defer token.deinit();
+                try elf_writer.addSymbol(token.identifier_value(), offset);
+            }
+        }
+        const main_offset = backend.writer.placed_functions.get(main_decl.init_value).?;
         var file = try std.fs.cwd().createFile("a.out", .{.mode = 0o777});
         defer file.close();
         try elf_writer.finalize(&file, backend.writer.output_bytes.items, main_offset);

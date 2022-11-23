@@ -35,13 +35,13 @@ pub const Writer = struct {
         return self;
     }
 
-    pub fn addSymbol(self: *@This(), name: []const u8, addr: u64) !void {
+    pub fn addSymbol(self: *@This(), name: []const u8, offset: u64) !void {
         try self.symtab.append(self.allocator, .{
             .st_name = @intCast(u32, self.symstrtab.items.len),
             .st_info = 0x2,
             .st_other = 0,
             .st_shndx = SH_TEXT,
-            .st_value = addr,
+            .st_value = BASE_VADDR + offset,
             .st_size = 0,
         });
         try self.symstrtab.appendSlice(self.allocator, name);

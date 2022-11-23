@@ -1,21 +1,15 @@
-fn strlen(ptr: *const u8) u64 {
-    var res: u64 = 0;
-    loop {
-        if(ptr[res] == 0) {
-            return res;
-        }
-        res += 1;
-    }
-}
+const other = @import("otherfile.tco");
 
-const SYS_WRITE = 1;
-const SYS_EXIT = 60;
+const SYS = struct {
+    const WRITE = 1;
+    const EXIT = 60;
+};
 
 fn print(buf: *const u8) u64 {
-    return @syscall(SYS_WRITE, 1, buf, strlen(buf));
+    return @syscall(SYS.WRITE, 1, buf, other.strlen(buf));
 }
 
 fn main() u64 {
     print("Hello, world!\n".&);
-    return @syscall(SYS_EXIT, 0);
+    return @syscall(SYS.EXIT, 0);
 }
