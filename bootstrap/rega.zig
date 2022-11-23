@@ -130,9 +130,16 @@ pub fn doRegAlloc(
     defer arena.deinit();
 
     for(block_list.items) |blk_idx| {
+        var param_replacement = std.AutoArrayHashMapUnmanaged(ir.DeclIndex.Index, ir.DeclIndex.Index){};
+
         const blk = ir.blocks.get(blk_idx);
         var curr_instr = blk.first_decl;
         while(ir.decls.getOpt(curr_instr)) |instr| : (curr_instr = instr.next) {
+            var it = instr.instr.operands();
+            while(it.next()) |op| {
+                op.* = param_replacement.get(op.*) orelse continue;
+            }
+
             switch(instr.instr) {
                 .phi => {
                     var pop = instr.instr.phi;
@@ -144,6 +151,12 @@ pub fn doRegAlloc(
                         });
                         op.decl = new_op;
                     }
+                },
+                .param_ref => {
+                    const copy = try ir.insertBefore(ir.DeclIndex.unwrap(instr.next).?, .{
+                        .copy = ir.decls.getIndex(instr),
+                    });
+                    try param_replacement.put(arena.allocator(), ir.decls.getIndex(instr), copy);
                 },
                 .function_call => {
                     var op_it = instr.instr.operands();
