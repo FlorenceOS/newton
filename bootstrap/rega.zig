@@ -129,15 +129,17 @@ pub fn doRegAlloc(
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
+    var param_replacement = std.AutoArrayHashMapUnmanaged(ir.DeclIndex.Index, ir.DeclIndex.Index){};
     for(block_list.items) |blk_idx| {
-        var param_replacement = std.AutoArrayHashMapUnmanaged(ir.DeclIndex.Index, ir.DeclIndex.Index){};
 
         const blk = ir.blocks.get(blk_idx);
         var curr_instr = blk.first_decl;
         while(ir.decls.getOpt(curr_instr)) |instr| : (curr_instr = instr.next) {
             var it = instr.instr.operands();
             while(it.next()) |op| {
-                op.* = param_replacement.get(op.*) orelse continue;
+                const replacement = param_replacement.get(op.*) orelse continue;
+                if(replacement != ir.decls.getIndex(instr))
+                    op.* = replacement;
             }
 
             switch(instr.instr) {
