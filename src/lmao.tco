@@ -1,29 +1,20 @@
-fn strlen(str: *const u8) u64 {
-    var result: u64 = 0;
+fn strlen(ptr: *const u8) u64 {
+    var res: u64 = 0;
     loop {
-        if(str[result] == 0) {
-            return result;
+        if(ptr[res] == 0) {
+            return res;
         }
-        result += 1;
+        res += 1;
     }
 }
 
 const SYS_WRITE = 1;
 
-fn print(str: *const u8) void {
-    const len = strlen(str);
-    @syscall(SYS_WRITE, str, len);
+fn print(buf: *const u8) u64 {
+    return @syscall(SYS_WRITE, buf, strlen(buf));
 }
 
-const main = fn(a: u32, b: u32) u32 {
-    var i: u32 = a + b;
-    loop {
-        i += b;
-        if (i > 10) {
-            break;
-        } else {
-            return i * a;
-        }
-    }
-    return i;
-};
+fn main() u64 {
+    print("Hello, world!\n".&);
+    return 0;
+}

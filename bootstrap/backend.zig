@@ -14,6 +14,7 @@ comptime {
 }
 
 pub const current_backend = backends.x86_64;
+pub const current_os = current_backend.oses.linux;
 
 pub const RelocationType = enum {
     rel8_post_0,
@@ -240,23 +241,19 @@ pub fn Writer(comptime Platform: type) type {
             try ir.optimizeFunction(head_block);
 
             var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-
-            const blocks_to_dump = try ir.allBlocksReachableFrom(arena.allocator(), head_block);
-
-            for(blocks_to_dump.items) |bb| {
-                try ir.dumpBlock(bb, null);
-            }
-
+            const func_blocks = try ir.allBlocksReachableFrom(arena.allocator(), head_block);
             const uf = try rega.doRegAlloc(
                 arena.allocator(),
-                &blocks_to_dump,
-                current_backend.registers.return_reg,
-                &current_backend.registers.param_regs,
-                &current_backend.registers.gprs,
-                &current_backend.registers.caller_saved,
+                &func_blocks,
+                current_os.return_reg,
+                &current_os.param_regs,
+                &current_os.syscall_param_regs,
+                &current_os.gprs,
+                &current_os.caller_saved,
+                &current_os.syscall_clobbers,
             );
 
-            for(blocks_to_dump.items) |bb| {
+            for(func_blocks.items) |bb| {
                 try ir.dumpBlock(bb, uf);
             }
 

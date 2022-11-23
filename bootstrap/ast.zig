@@ -29,6 +29,7 @@ pub const ExprIndex = indexed_list.Indices(u32, opaque{}, .{
     .i64 = .{ .signed_int = 64 },
 
     .import = .{.import = {}},
+    .syscall_func = .{.syscall_func = {}},
 
     // _ = a;
     // ^ This thing
@@ -96,6 +97,8 @@ pub const ExpressionNode = union(enum) {
 
     // @import
     import,
+    // @syscall
+    syscall_func,
     // @import("whatever")
     import_call: sources.SourceIndex.Index,
 

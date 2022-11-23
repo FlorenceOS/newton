@@ -84,6 +84,7 @@ const DeclInstr = union(enum) {
         callee: sema.ValueIndex.Index,
         first_argument: FunctionArgumentIndex.OptIndex,
     },
+    syscall: FunctionArgumentIndex.OptIndex,
 
     add: Bop,
     add_mod: Bop,
@@ -188,12 +189,9 @@ const DeclInstr = union(enum) {
         switch(self.*) {
             .incomplete_phi => unreachable,
 
-            .phi => |p| return OperandIterator{.value = .{.phi_iterator = phi_operands.getOpt(p)}},
-            .function_call => |fcall| {
-                return OperandIterator{.value = .{
-                    .arg_iterator = function_arguments.getOpt(fcall.first_argument),
-                }};
-            },
+            .phi => |p| return .{.value = .{.phi_iterator = phi_operands.getOpt(p)}},
+            .function_call => |fcall| return .{.value = .{.arg_iterator = function_arguments.getOpt(fcall.first_argument)}},
+            .syscall => |farg| return .{.value = .{.arg_iterator = function_arguments.getOpt(farg)}},
 
             .add, .add_mod, .sub, .sub_mod,
             .multiply, .multiply_mod, .divide, .modulus,
@@ -239,7 +237,7 @@ const DeclInstr = union(enum) {
     pub fn isVolatile(self: *const @This()) bool {
         switch(self.*) {
             .incomplete_phi => unreachable,
-            .@"if", .@"return", .goto, .enter_function, .store, .store_constant, .function_call,
+            .@"if", .@"return", .goto, .enter_function, .store, .store_constant, .function_call, .syscall,
             => return true,
             else => return false,
         }
@@ -302,6 +300,7 @@ const DeclInstr = union(enum) {
                 const rt = sema.values.get(fcall.callee).function.return_type;
                 return typeFor(sema.values.get(rt).type_idx);
             },
+            .syscall => return .u64,
             .store => |val| return decls.get(val.value).instr.getOperationType(),
             .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
             .multiply_constant, .multiply_mod_constant, .divide_constant, .modulus_constant,
@@ -1440,6 +1439,7 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index, up
                 const farg = arg.function_arg;
                 _ = try builder.insert(.{.value = try ssaValue(block_idx, farg.value, .none)});
             }
+            if(fcall.callee == .syscall_func) return appendToBlock(block_idx, update_decl, .{.syscall = builder.first});
             return appendToBlock(block_idx, update_decl, .{.function_call = .{
                 .callee = fcall.callee,
                 .first_argument = builder.first,
@@ -1535,11 +1535,24 @@ pub fn dumpBlock(
             .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant,
             .equals_constant, .not_equal_constant,
             => |bop, tag| std.debug.print("{s}(${d}, #{d})\n", .{@tagName(tag)[0..@tagName(tag).len-9], @enumToInt(bop.lhs), bop.rhs}),
-            .function_call => |_| {
+            .function_call => {
                 std.debug.print("@call(<?>", .{});
                 var ops = decl.instr.operands();
                 while(ops.next()) |op| {
                     std.debug.print(", ${d}", .{@enumToInt(op.*)});
+                }
+                std.debug.print(")\n", .{});
+            },
+            .syscall => {
+                std.debug.print("@syscall(", .{});
+                var first = true;
+                var ops = decl.instr.operands();
+                while(ops.next()) |op| {
+                    if (!first) {
+                        std.debug.print(", ", .{});
+                    }
+                    std.debug.print("${d}", .{@enumToInt(op.*)});
+                    first = false;
                 }
                 std.debug.print(")\n", .{});
             },

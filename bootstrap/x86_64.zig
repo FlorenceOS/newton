@@ -15,11 +15,25 @@ pub const registers = struct {
     const rbp = 5;
     const rsi = 6;
     const rdi = 7;
+};
 
-    pub const return_reg = rax;
-    pub const gprs = [_]u8{rax, rcx, rdx, rbx, rsi, rdi, 8, 9, 10, 11, 12, 13, 14, 15};
-    pub const param_regs = [_]u8{rdi, rsi, rdx, rcx, 8, 9};
-    pub const caller_saved = param_regs ++ [_]u8{10, 11};
+pub const oses = struct {
+    pub const linux = struct {
+        pub const return_reg = registers.rax;
+        pub const gprs = [_]u8{
+            registers.rax,
+            registers.rcx,
+            registers.rdx,
+            registers.rbx,
+            registers.rsi,
+            registers.rdi,
+            8, 9, 10, 11, 12, 13, 14, 15,
+        };
+        pub const param_regs = [_]u8{registers.rdi, registers.rsi, registers.rdx, registers.rcx, 8, 9};
+        pub const syscall_param_regs = [_]u8{registers.rax, registers.rdi, registers.rsi, registers.rdx, 10, 8, 9};
+        pub const caller_saved = param_regs ++ [_]u8{10, 11};
+        pub const syscall_clobbers = [_]u8{registers.rcx, 11};
+    };
 };
 
 pub const pointer_type: ir.InstrType = .u64;
@@ -457,9 +471,13 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
             try writer.writeInt(u8, 0xE8);
             try writer.writeRelocatedFunction(fcall.callee, .rel32_post_0);
         },
+        .syscall => {
+            try writer.writeInt(u8, 0x0F);
+            try writer.writeInt(u8, 0x05);
+        },
         .@"return" => |ret| {
             const op_reg = uf.findReg(ret.value).?;
-            std.debug.assert(op_reg == registers.rax);
+            std.debug.assert(op_reg == backend.current_os.return_reg);
             if(ret.restore_stack) {
                 try movRegToReg(writer, .u64, registers.rsp, registers.rbp);
                 try popReg(writer, registers.rbp);

@@ -12,6 +12,9 @@ pub const TypeIndex = indexed_list.Indices(u32, opaque{}, .{
     .undefined = .{.undefined = {}},
     .comptime_int = .{.comptime_int = {}},
     .u8 = .{.unsigned_int = 8},
+    .u16 = .{.unsigned_int = 16},
+    .u32 = .{.unsigned_int = 32},
+    .u64 = .{.unsigned_int = 64},
 });
 pub const ValueIndex = indexed_list.Indices(u32, opaque{}, .{
     .void = .{.type_idx = .void},
@@ -19,6 +22,15 @@ pub const ValueIndex = indexed_list.Indices(u32, opaque{}, .{
     .type = .{.type_idx = .type},
     .undefined = .{.undefined = {}},
     .discard_underscore = .{.discard_underscore = {}},
+    .u8_type = .{.type_idx = .u8},
+    .u16_type = .{.type_idx = .u16},
+    .u32_type = .{.type_idx = .u32},
+    .u64_type = .{.type_idx = .u64},
+    .syscall_func = .{.function = .{
+        .return_type = .u64_type,
+        .param_scope = undefined,
+        .body = undefined,
+    }},
 });
 pub const DeclIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const StructFieldIndex = indexed_list.Indices(u32, opaque{}, .{});
@@ -390,27 +402,52 @@ fn evaluateWithoutTypeHint(
         },
         .undefined => return putValueIn(value_out, .{.undefined = {}}),
         .function_call => |call| {
-            const callee_idx = try evaluateWithoutTypeHint(scope_idx, .none, call.callee);
-            const callee = values.get(callee_idx);
-            if(callee.* != .function) {
-                return error.CallOnNonFunctionValue;
-            }
             var arg_builder = expressions.builderWithPath("function_arg.next");
             var curr_ast_arg = call.first_arg;
-            var curr_param_decl = scopes.get(callee.function.param_scope).first_decl;
-            while(ast.expressions.getOpt(curr_ast_arg)) |ast_arg| {
-                const func_arg = ast_arg.function_argument;
-                const curr_param = decls.getOpt(curr_param_decl) orelse return error.TooManyArguments;
-                _ = try arg_builder.insert(.{.function_arg = .{.value = try evaluateWithTypeHint(
-                    scope_idx,
-                    .none,
-                    func_arg.value,
-                    values.get(values.get(curr_param.init_value).runtime.value_type).type_idx,
-                )}});
-                curr_ast_arg = func_arg.next;
-                curr_param_decl = curr_param.next;
-            }
-            if(curr_param_decl != .none) return error.NotEnoughArguments;
+            const ast_callee = ast.expressions.get(call.callee);
+            const callee_idx = switch(ast_callee.*) {
+                .syscall_func => blk: {
+                    while(ast.expressions.getOpt(curr_ast_arg)) |ast_arg| {
+                        const func_arg = ast_arg.function_argument;
+                        const arg_value = evaluateWithoutTypeHint(
+                            scope_idx,
+                            .none,
+                            func_arg.value
+                        ) catch try evaluateWithTypeHint(scope_idx, .none, func_arg.value, .u64);
+                        const arg_value_type = try values.get(arg_value).getType();
+                        switch(types.get(arg_value_type).*) {
+                            .pointer, .unsigned_int, .signed_int, .comptime_int => {},
+                            else => |other| std.debug.panic("Can't pass {s} to syscall", .{@tagName(other)}),
+                        }
+                        _ = try arg_builder.insert(.{.function_arg = .{.value = arg_value}});
+                        curr_ast_arg = func_arg.next;
+                    }
+                    break :blk .syscall_func;
+                },
+                else => blk: {
+                    const callee_idx = try evaluateWithoutTypeHint(scope_idx, .none, call.callee);
+                    const callee = values.get(callee_idx);
+                    if(callee.* != .function) {
+                        return error.CallOnNonFunctionValue;
+                    }
+                    var curr_param_decl = scopes.get(callee.function.param_scope).first_decl;
+                    while(ast.expressions.getOpt(curr_ast_arg)) |ast_arg| {
+                        const func_arg = ast_arg.function_argument;
+                        const curr_param = decls.getOpt(curr_param_decl) orelse return error.TooManyArguments;
+                        _ = try arg_builder.insert(.{.function_arg = .{.value = try evaluateWithTypeHint(
+                            scope_idx,
+                            .none,
+                            func_arg.value,
+                            values.get(values.get(curr_param.init_value).runtime.value_type).type_idx,
+                        )}});
+                        curr_ast_arg = func_arg.next;
+                        curr_param_decl = curr_param.next;
+                    }
+                    if(curr_param_decl != .none) return error.NotEnoughArguments;
+                    break :blk callee_idx;
+                },
+            };
+            const callee = values.get(callee_idx);
             return putValueIn(value_out, .{.runtime = .{
                 .expr = ExpressionIndex.toOpt(try expressions.insert(.{.function_call = .{
                     .callee = callee_idx,

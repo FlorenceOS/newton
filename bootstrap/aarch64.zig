@@ -19,17 +19,23 @@ pub const registers = struct {
     pub const lr = 30;
     pub const sp = 31;
     pub const zero = 31;
+};
 
-    pub const return_reg = 0;
-    pub const gprs = [_]u8{
-        0,  1,  2,  3,  4,  5,  6,  7,  8,  9,
-        10, 11, 12, 13, 14, 15, 16, 17,     19,
-        20, 21, 22, 23, 24, 25, 26, 27, 28,
-    };
-    pub const param_regs = [_]u8{0, 1, 2, 3, 4, 5, 6, 7};
-    pub const caller_saved = [_]u8{
+pub const oses = struct {
+    pub const linux = struct {
+        pub const return_reg = 0;
+        pub const gprs = [_]u8{
+            0,  1,  2,  3,  4,  5,  6,  7,  8,  9,
+            10, 11, 12, 13, 14, 15, 16, 17,     19,
+            20, 21, 22, 23, 24, 25, 26, 27, 28,
+        };
+        pub const param_regs = [_]u8{0, 1, 2, 3, 4, 5, 6, 7};
+        pub const syscall_param_regs = param_regs;
+        pub const caller_saved = [_]u8{
             1,  2,  3,  4,  5,  6,  7,  8,  9,
-        10, 11, 12, 13, 14, 15,
+            10, 11, 12, 13, 14, 15,
+        };
+        pub const syscall_clobbers = [_]u8{};
     };
 };
 
@@ -289,13 +295,14 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
         .function_call => |fcall| {
             try writer.writeIntWithFunctionRelocation(u32, 0x94000000, fcall.callee, .imm26_div4);
         },
+        .syscall => try writer.writeInt(u32, 0xD4000001),
         .@"return" => |op| {
             const op_reg = uf.findDecl(op.value).reg_alloc_value.?;
             if(op.restore_stack) {
                 try movReg(writer, registers.sp, registers.fp);
                 try popTwo(writer, registers.fp, registers.lr);
             }
-            std.debug.assert(op_reg == registers.return_reg);
+            std.debug.assert(op_reg == backend.current_os.return_reg);
             try writer.writeInt(u32, 0xD65F0000 | @as(u32, registers.lr) << 5);
         },
         inline else => |_, tag| @panic("TODO: aarch64 decl " ++ @tagName(tag)),
