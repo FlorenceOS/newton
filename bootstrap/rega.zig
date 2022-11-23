@@ -212,10 +212,14 @@ pub fn doRegAlloc(
                     }
                     const next = ir.DeclIndex.unwrap(instr.next).?;
                     for(caller_saved) |reg| {
-                        const clob = try ir.insertBefore(next, .{
+                        const clob1 = try ir.insertBefore(next, .{
                             .clobber = ir.decls.getIndex(instr),
                         });
-                        ir.decls.get(clob).reg_alloc_value = reg;
+                        ir.decls.get(clob1).reg_alloc_value = reg;
+                        const clob2 = try ir.insertBefore(next, .{
+                            .clobber = clob1,
+                        });
+                        ir.decls.get(clob2).reg_alloc_value = reg;
                     }
                 },
                 .syscall => {
@@ -230,10 +234,14 @@ pub fn doRegAlloc(
                     }
                     const next = ir.DeclIndex.unwrap(instr.next).?;
                     for(syscall_clobbers) |reg| {
-                        const clob = try ir.insertBefore(next, .{
+                        const clob1 = try ir.insertBefore(next, .{
                             .clobber = ir.decls.getIndex(instr),
                         });
-                        ir.decls.get(clob).reg_alloc_value = reg;
+                        ir.decls.get(clob1).reg_alloc_value = reg;
+                        const clob2 = try ir.insertBefore(next, .{
+                            .clobber = clob1,
+                        });
+                        ir.decls.get(clob2).reg_alloc_value = reg;
                     }
                 },
                 else => {},
