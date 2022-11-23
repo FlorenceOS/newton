@@ -51,6 +51,11 @@ fn typeFor(type_idx: sema.TypeIndex.Index) InstrType {
     };
 }
 
+const Cast = struct {
+    value: DeclIndex.Index,
+    type: InstrType,
+};
+
 const DeclInstr = union(enum) {
     param_ref: struct {
         param_idx: u8,
@@ -61,6 +66,9 @@ const DeclInstr = union(enum) {
         value: u64,
         type: InstrType,
     },
+    zero_extend: Cast,
+    sign_extend: Cast,
+    truncate: Cast,
     load_bool_constant: bool,
     enter_function: u32,
     undefined,
@@ -170,6 +178,8 @@ const DeclInstr = union(enum) {
                 bounded_result.value.bounded_iterator.appendAssumeCapacity(&bop.rhs);
             },
 
+            .zero_extend, .sign_extend, .truncate => |*cast| bounded_result.value.bounded_iterator.appendAssumeCapacity(&cast.value),
+
             .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
             .multiply_constant, .multiply_mod_constant, .divide_constant, .modulus_constant,
             .shift_left_constant, .shift_right_constant, .bit_and_constant, .bit_or_constant, .bit_xor_constant,
@@ -239,7 +249,11 @@ const DeclInstr = union(enum) {
 
     pub fn getOperationType(self: *const @This()) InstrType {
         switch(self.*) {
-            inline .param_ref, .load_int_constant, .load, .store_constant => |val| return val.type,
+            inline
+            .param_ref, .load_int_constant, .load, .store_constant,
+            .zero_extend, .sign_extend, .truncate,
+            => |cast| return cast.type,
+
             .add, .add_mod, .sub, .sub_mod,
             .multiply, .multiply_mod, .divide, .modulus,
             .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
@@ -1370,6 +1384,18 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index, up
             .runtime => @panic("whooops"),
             else => unreachable,
         },
+        .zero_extend => |cast| return appendToBlock(block_idx, update_decl, .{.zero_extend = .{
+            .value = try ssaValue(block_idx, cast.value, .none),
+            .type = typeFor(cast.type),
+        }}),
+        .sign_extend => |cast| return appendToBlock(block_idx, update_decl, .{.sign_extend = .{
+            .value = try ssaValue(block_idx, cast.value, .none),
+            .type = typeFor(cast.type),
+        }}),
+        .truncate => |cast| return appendToBlock(block_idx, update_decl, .{.truncate = .{
+            .value = try ssaValue(block_idx, cast.value, .none),
+            .type = typeFor(cast.type),
+        }}),
         else => |expr| std.debug.panic("Unhandled ssaing of expr {s}", .{@tagName(expr)}),
     }
 }
@@ -1385,7 +1411,7 @@ fn ssaFunction(func: *sema.Function) !BlockIndex.Index {
         _ = try appendToBlock(first_basic_block, curr_param, .{
             .param_ref = .{
                 .param_idx = decl.function_param_idx.?,
-                .type = .u64, // typeFor(try sema.values.get(decl.init_value).getType()),
+                .type = typeFor(try sema.values.get(decl.init_value).getType()),
             },
         });
 
@@ -1422,25 +1448,24 @@ pub fn dumpBlock(
     var current_decl = blocks.get(bb).first_decl;
     while(decls.getOpt(current_decl)) |decl| {
         std.debug.print("  ", .{});
-        //if(decl.instr.isValue()) {
-            if(decl.instr.isValue()) {
-                std.debug.print("{s} ", .{@tagName(decl.instr.getOperationType())});
-            }
-            std.debug.print("${d}", .{@enumToInt(current_decl)});
-            const adecl = blk: { break :blk (uf orelse break :blk decl).findDeclByPtr(decl); };
-            if(adecl != decl) {
-                std.debug.print(" (union with ${d})", .{@enumToInt(decls.getIndex(adecl))});
-            }
-            if(adecl.reg_alloc_value) |reg| {
-                std.debug.print(" (reg #{d})", .{reg});
-            }
-            std.debug.print(" = ", .{});
-        //}
+        std.debug.print("${d}", .{@enumToInt(current_decl)});
+        const adecl = blk: { break :blk (uf orelse break :blk decl).findDeclByPtr(decl); };
+        if(adecl != decl) {
+            std.debug.print(" (-> ${d})", .{@enumToInt(decls.getIndex(adecl))});
+        }
+        if(adecl.reg_alloc_value) |reg| {
+            std.debug.print(" ({s})", .{current_backend.registerName(reg)});
+        }
+        std.debug.print(" = ", .{});
+        if(decl.instr.isValue()) {
+            std.debug.print("{s} ", .{@tagName(decl.instr.getOperationType())});
+        }
         switch(decl.instr) {
             .param_ref => |p| std.debug.print("@param({d})\n", .{p.param_idx}),
             .stack_ref => |p| std.debug.print("@stack({d})\n", .{p}),
             .enter_function => |size| std.debug.print("@enter_function({d})\n", .{size}),
             .load_int_constant => |value| std.debug.print("{d}\n", .{value.value}),
+            .zero_extend, .sign_extend, .truncate => |cast| std.debug.print("@{s}(${d})\n", .{@tagName(decl.instr), @enumToInt(cast.value)}),
             .load_bool_constant => |b| std.debug.print("{}\n", .{b}),
             .undefined => std.debug.print("undefined\n", .{}),
             .load => |p| std.debug.print("@load(${d})\n", .{@enumToInt(p.source)}),

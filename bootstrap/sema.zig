@@ -52,25 +52,26 @@ fn canFitNumber(value: i65, requested_type: TypeIndex.Index) bool {
             if(value > std.math.pow(u65, 2, bits - 1) - 1) return false;
             return true;
         },
+        .reference => |ref| return canFitNumber(value, ref.item),
         else => return false,
     }
 }
 
 fn promoteInteger(value: i65, value_out: ValueIndex.OptIndex, requested_type: TypeIndex.Index) !ValueIndex.Index {
-    if(!canFitNumber(value, requested_type)) return error.CannotPromote;
+    if(!canFitNumber(value, requested_type)) return error.IncompatibleTypes;
 
     switch(types.get(requested_type).*) {
         .comptime_int => return putValueIn(value_out, .{.comptime_int = value}),
         .unsigned_int => |bits| return putValueIn(value_out, .{.unsigned_int = .{.bits = bits, .value = value}}),
         .signed_int => |bits| return putValueIn(value_out, .{.signed_int = .{.bits = bits, .value = value}}),
-        else => return error.CannotPromote,
+        .reference => |ref| return promoteInteger(value, value_out, ref.item),
+        else => return error.IncompatibleTypes,
     }
 }
 
-fn promoteToBiggest(lhs_idx: *ValueIndex.Index, rhs_idx: *ValueIndex.Index) !void {
+fn promoteToBiggest(lhs_idx: *ValueIndex.Index, rhs_idx: *ValueIndex.Index, promote_lhs: bool) !void {
     const lhs = values.get(lhs_idx.*);
     const rhs = values.get(rhs_idx.*);
-
     if(lhs.* == .comptime_int) {
         lhs_idx.* = try promoteInteger(lhs.comptime_int, .none, try rhs.getType());
         return;
@@ -78,6 +79,61 @@ fn promoteToBiggest(lhs_idx: *ValueIndex.Index, rhs_idx: *ValueIndex.Index) !voi
     if(rhs.* == .comptime_int) {
         rhs_idx.* = try promoteInteger(rhs.comptime_int, .none, try lhs.getType());
         return;
+    }
+
+    const lhs_type_idx = try lhs.getType();
+    const rhs_type_idx = try rhs.getType();
+    const lhs_type = types.get(lhs_type_idx);
+    const rhs_type = types.get(rhs_type_idx);
+    if(std.meta.activeTag(lhs_type.*) != std.meta.activeTag(rhs_type.*)) {
+        return error.IncompatibleTypes;
+    }
+
+    std.debug.print("{any} {any}\n", .{lhs_type, rhs_type});
+    switch(lhs_type.*) {
+        .unsigned_int => |lhs_bits| {
+            if(lhs_bits < rhs_type.unsigned_int) {
+                if(promote_lhs) {
+                    lhs_idx.* = try values.insert(.{.runtime = .{
+                        .expr = ExpressionIndex.toOpt(try expressions.insert(.{.zero_extend = .{
+                            .value = lhs_idx.*,
+                            .type = types.getIndex(rhs_type),
+                        }})),
+                        .value_type = try values.addDedupLinear(.{.type_idx = rhs_type_idx}),
+                    }});
+                } else return error.IncompatibleTypes;
+            } else if (lhs_bits > rhs_type.unsigned_int) {
+                rhs_idx.* = try values.insert(.{.runtime = .{
+                    .expr = ExpressionIndex.toOpt(try expressions.insert(.{.zero_extend = .{
+                        .value = rhs_idx.*,
+                        .type = types.getIndex(lhs_type),
+                    }})),
+                    .value_type = try values.addDedupLinear(.{.type_idx = lhs_type_idx}),
+                }});
+            }
+        },
+        .signed_int => |lhs_bits| {
+            if(lhs_bits < rhs_type.signed_int) {
+                if(promote_lhs) {
+                    lhs_idx.* = try values.insert(.{.runtime = .{
+                        .expr = ExpressionIndex.toOpt(try expressions.insert(.{.sign_extend = .{
+                            .value = lhs_idx.*,
+                            .type = types.getIndex(rhs_type),
+                        }})),
+                        .value_type = try values.addDedupLinear(.{.type_idx = rhs_type_idx}),
+                    }});
+                } else return error.IncompatibleTypes;
+            } else if (lhs_bits > rhs_type.signed_int) {
+                rhs_idx.* = try values.insert(.{.runtime = .{
+                    .expr = ExpressionIndex.toOpt(try expressions.insert(.{.sign_extend = .{
+                        .value = rhs_idx.*,
+                        .type = types.getIndex(lhs_type),
+                    }})),
+                    .value_type = try values.addDedupLinear(.{.type_idx = lhs_type_idx}),
+                }});
+            }
+        },
+        else => return error.IncompatibleTypes,
     }
 }
 
@@ -364,15 +420,21 @@ fn evaluateWithoutTypeHint(
             var rhs = try evaluateWithoutTypeHint(scope_idx, .none, bop.rhs);
             const value_type = switch(tag) {
                 .multiply_eq, .multiply_mod_eq, .divide_eq, .modulus_eq, .plus_eq, .plus_mod_eq, .minus_eq,
-                .minus_mod_eq, .shift_left_eq, .shift_right_eq, .bitand_eq, .bitxor_eq, .bitor_eq, .assign,
-                => .void,
+                .minus_mod_eq, .shift_left_eq, .shift_right_eq, .bitand_eq, .bitxor_eq, .bitor_eq, .assign
+                => blk: {
+                    try promoteToBiggest(&lhs, &rhs, false);
+                    break :blk .void;
+                },
                 .less, .less_equal, .greater, .greater_equal,
                 .equals, .not_equal, .logical_and, .logical_or,
-                => .bool,
+                => blk: {
+                    try promoteToBiggest(&lhs, &rhs, true);
+                    break :blk .bool;
+                },
                 .multiply, .multiply_mod, .divide, .modulus, .plus, .plus_mod,
                 .minus, .minus_mod, .shift_left, .shift_right, .bitand, .bitor, .bitxor,
                 => blk: {
-                    try promoteToBiggest(&lhs, &rhs);
+                    try promoteToBiggest(&lhs, &rhs, true);
                     break :blk try values.addDedupLinear(.{.type_idx = try values.get(lhs).getType()});
                 },
                 else => std.debug.panic("TODO: {s}", .{@tagName(tag)}),
@@ -737,8 +799,16 @@ pub const FunctionCall = struct {
     first_arg: ExpressionIndex.OptIndex,
 };
 
+pub const Cast = struct {
+    value: ValueIndex.Index,
+    type: TypeIndex.Index,
+};
+
 pub const Expression = union(enum) {
     value: ValueIndex.Index,
+    sign_extend: Cast,
+    zero_extend: Cast,
+    truncate: Cast,
 
     addr_of: ValueIndex.Index,
     // deref: ValueIndex.Index,

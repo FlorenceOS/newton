@@ -138,6 +138,14 @@ pub const UnionFind = struct {
         return self.findDecl(ir.decls.getIndex(decl_ptr));
     }
 
+    pub fn findReg(self: @This(), decl: ir.DeclIndex.Index) ?u8 {
+        return self.findDecl(decl).reg_alloc_value;
+    }
+
+    pub fn findRegByPtr(self: @This(), decl_ptr: *ir.Decl) ?u8 {
+        return self.findDeclByPtr(decl_ptr).reg_alloc_value;
+    }
+
     fn join(self: @This(), a_c: ir.DeclIndex.Index, b_c: ir.DeclIndex.Index) bool {
         var a = self.findI(@intCast(i32, @enumToInt(a_c)));
         var b = self.findI(@intCast(i32, @enumToInt(b_c)));

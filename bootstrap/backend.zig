@@ -129,6 +129,10 @@ pub fn Writer(comptime Platform: type) type {
             });
         }
 
+        pub fn write(self: *@This(), bytes: []const u8) !void {
+            try self.output_bytes.appendSlice(self.allocator, bytes);
+        }
+
         pub fn writeInt(self: *@This(), comptime T: type, value: T) !void {
             try self.output_bytes.appendSlice(self.allocator, &std.mem.toBytes(value));
         }
