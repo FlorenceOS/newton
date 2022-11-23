@@ -2,53 +2,6 @@ const std = @import("std");
 
 const ir = @import("ir.zig");
 
-const SuccessorBlocks = std.AutoArrayHashMapUnmanaged(ir.BlockIndex.Index, std.ArrayListUnmanaged(ir.BlockIndex.Index));
-
-fn findPredBlocks(
-    allocator: std.mem.Allocator,
-    arena: std.mem.Allocator,
-    succ_block: ir.BlockIndex.Index,
-    succ_dict: *SuccessorBlocks,
-    num_blks: usize,
-) !void {
-    var visited = std.AutoArrayHashMapUnmanaged(ir.BlockIndex.Index, void){};
-    defer visited.deinit(allocator);
-    try visited.ensureTotalCapacity(allocator, num_blks);
-    var queue = try std.ArrayListUnmanaged(ir.BlockIndex.Index).initCapacity(allocator, num_blks);
-    defer queue.deinit(allocator);
-    queue.appendAssumeCapacity(succ_block);
-
-    while(queue.items.len > 0) {
-        const blk_idx = queue.swapRemove(0);
-        const blk = ir.blocks.get(blk_idx);
-
-        var curr_pred = blk.first_predecessor;
-        while(ir.edges.getOpt(curr_pred)) |edge| : (curr_pred = edge.next) {
-            if(!visited.contains(edge.source_block)) {
-                visited.putAssumeCapacity(edge.source_block, {});
-                queue.appendAssumeCapacity(edge.source_block);
-                try succ_dict.getPtr(edge.source_block).?.append(arena, succ_block);
-            }
-        }
-    }
-}
-
-fn findSuccessorBlocks(
-    allocator: std.mem.Allocator,
-    arena: std.mem.Allocator,
-    block_list: *const std.ArrayListUnmanaged(ir.BlockIndex.Index),
-) !SuccessorBlocks {
-    var result = SuccessorBlocks{};
-    try result.ensureTotalCapacity(allocator, block_list.items.len);
-    for(block_list.items) |blk_idx| {
-        result.putAssumeCapacity(blk_idx, .{});
-    }
-    for(block_list.items) |blk_idx| {
-        try findPredBlocks(allocator, arena, blk_idx, &result, block_list.items.len);
-    }
-    return result;
-}
-
 const DeclSet = std.AutoArrayHashMapUnmanaged(ir.DeclIndex.Index, void);
 
 fn copyInto(
@@ -175,14 +128,6 @@ pub fn doRegAlloc(
 ) !UnionFind {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
-    var succ = try findSuccessorBlocks(allocator, arena.allocator(), block_list);
-
-    var it = succ.iterator();
-    while(it.next()) |succ_src| {
-        for(succ_src.value_ptr.items) |succ_blk| {
-            std.debug.print("{d} is a successor of {d}\n", .{@enumToInt(succ_blk), @enumToInt(succ_src.key_ptr.*)});
-        }
-    }
 
     for(block_list.items) |blk_idx| {
         const blk = ir.blocks.get(blk_idx);
