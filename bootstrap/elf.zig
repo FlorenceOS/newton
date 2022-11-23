@@ -48,7 +48,13 @@ pub const Writer = struct {
         try self.symstrtab.append(self.allocator, 0);
     }
 
+    fn compareSyms(_: void, lhs: std.elf.Elf64_Sym, rhs: std.elf.Elf64_Sym) bool {
+        return lhs.st_value < rhs.st_value;
+    }
+
     pub fn finalize(self: *const @This(), file: *std.fs.File, code: []const u8, entry: u64) !void {
+        std.sort.sort(std.elf.Elf64_Sym, self.symtab.items, {}, compareSyms);
+
         var current_offset: usize = @sizeOf(File);
         var elf: File = .{
             .header = undefined,
