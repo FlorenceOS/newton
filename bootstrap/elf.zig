@@ -31,6 +31,7 @@ pub const Writer = struct {
 
     pub fn init(allocator: std.mem.Allocator) !@This() {
         var self: @This() = .{.allocator = allocator};
+        try self.symtab.append(self.allocator, std.mem.zeroes(std.elf.Elf64_Sym));
         try self.symstrtab.append(self.allocator, 0);
         return self;
     }
@@ -75,7 +76,7 @@ pub const Writer = struct {
             .e_phoff = @offsetOf(File, "phdrs"),
             .e_shoff = @offsetOf(File, "shdrs"),
             .e_flags = 0,
-            .e_ehsize = 0,
+            .e_ehsize = @sizeOf(std.elf.Elf64_Ehdr),
             .e_phentsize = @sizeOf(std.elf.Elf64_Phdr),
             .e_phnum = elf.phdrs.len,
             .e_shentsize = @sizeOf(std.elf.Elf64_Shdr),
