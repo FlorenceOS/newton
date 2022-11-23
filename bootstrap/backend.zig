@@ -4,10 +4,16 @@ const ir = @import("ir.zig");
 const rega = @import("rega.zig");
 const sema = @import("sema.zig");
 
-pub const aarch64 = @import("aarch64.zig");
-pub const x86_64 = @import("x86_64.zig");
+pub const backends = struct {
+    const aarch64 = @import("aarch64.zig");
+    const x86_64 = @import("x86_64.zig");
+};
 
-pub const current_backend = x86_64;
+comptime {
+    std.testing.refAllDeclsRecursive(backends);
+}
+
+pub const current_backend = backends.x86_64;
 
 pub const RelocationType = enum {
     rel8_post_0,
