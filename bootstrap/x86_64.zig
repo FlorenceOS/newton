@@ -222,7 +222,7 @@ fn subImm(writer: *Writer, operation_type: ir.InstrType, dest_reg: u8, value: i3
 pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFind) !?ir.BlockIndex.Index {
     const decl = ir.decls.get(decl_idx);
     switch(decl.instr) {
-        .param_ref, .stack_ref, .undefined, .clobber => {},
+        .param_ref, .stack_ref, .undefined, .clobber, .offset_ref => {},
         .enter_function => |stack_size| if(stack_size > 0) {
             try pushReg(writer, registers.rbp);
             try movRegToReg(writer, .u64, registers.rbp, registers.rsp);
@@ -319,6 +319,21 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
                 else => rmRegIndirect(uf.findRegByPtr(dest).?, value_reg, 0),
             };
             try movRegToRm(writer, operation_type, rm, value_reg);
+        },
+        .addr_of => |op| {
+            const operand = ir.decls.get(op);
+            switch(operand.instr) {
+                .offset_ref => |offset| {
+                    // TODO: RM encoding for RIP relative effective addresses
+                    const dest_reg = uf.findRegByPtr(decl).?;
+                    const disp = @bitCast(i64, @as(usize, offset) -% (writer.currentOffset() + 7));
+                    try prefix(writer, pointer_type, dest_reg >= 8, false, false);
+                    try writer.writeInt(u8, 0x8D);
+                    try writer.writeInt(u8, 0x0D | ((dest_reg & 0x7) << 3));
+                    try writer.writeInt(i32, @intCast(i32, disp));
+                },
+                else => |other| std.debug.panic("x86_64: TODO addr_of {s}", .{@tagName(other)}),
+            }
         },
         .store_constant => |op| {
             const dest = ir.decls.get(op.dest);

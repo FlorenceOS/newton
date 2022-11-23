@@ -66,11 +66,13 @@ const DeclInstr = union(enum) {
         type: InstrType,
     },
     stack_ref: u32,
+    offset_ref: u32,
     load_int_constant: struct {
         value: u64,
         type: InstrType,
     },
     clobber: DeclIndex.Index,
+    addr_of: DeclIndex.Index,
     zero_extend: Cast,
     sign_extend: Cast,
     truncate: Cast,
@@ -203,8 +205,7 @@ const DeclInstr = union(enum) {
             },
 
             .zero_extend, .sign_extend, .truncate => |*cast| bounded_result.value.bounded_iterator.appendAssumeCapacity(&cast.value),
-
-            .clobber => |*clob| bounded_result.value.bounded_iterator.appendAssumeCapacity(clob),
+            .clobber, .addr_of => |*op| bounded_result.value.bounded_iterator.appendAssumeCapacity(op),
 
             .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
             .multiply_constant, .multiply_mod_constant, .divide_constant, .modulus_constant,
@@ -225,7 +226,10 @@ const DeclInstr = union(enum) {
             .load => |*p| bounded_result.value.bounded_iterator.appendAssumeCapacity(&p.source),
             .@"if" => |*instr| bounded_result.value.bounded_iterator.appendAssumeCapacity(&instr.condition),
             .@"return" => |*value| bounded_result.value.bounded_iterator.appendAssumeCapacity(&value.value),
-            .param_ref, .stack_ref, .load_int_constant, .load_bool_constant, .undefined, .goto, .enter_function,
+
+            .param_ref, .stack_ref, .offset_ref,
+            .load_int_constant, .load_bool_constant,
+            .undefined, .goto, .enter_function,
             => {}, // No operands
         }
 
@@ -244,7 +248,7 @@ const DeclInstr = union(enum) {
     pub fn isValue(self: *const @This()) bool {
         switch(self.*) {
             .incomplete_phi => unreachable,
-            .@"if", .@"return", .goto, .stack_ref, .enter_function, .store, .store_constant
+            .@"if", .@"return", .goto, .stack_ref, .offset_ref, .enter_function, .store, .store_constant
             => return false,
             else => return true,
         }
@@ -281,6 +285,7 @@ const DeclInstr = union(enum) {
             .zero_extend, .sign_extend, .truncate,
             => |cast| return cast.type,
             .clobber => return .u64,
+            .addr_of => return backend.current_backend.pointer_type,
             .add, .add_mod, .sub, .sub_mod,
             .multiply, .multiply_mod, .divide, .modulus,
             .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
@@ -1407,7 +1412,13 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index, up
                 const decl = sema.decls.get(dr);
                 return appendToBlock(block_idx, update_decl, .{.stack_ref = decl.stack_offset.?});
             },
-            .runtime => @panic("whooops"),
+            .runtime => |rt| {
+                const value_type = sema.types.get(sema.values.get(rt.value_type).type_idx);
+                std.debug.assert(value_type.* == .reference);
+                return appendToBlock(block_idx, update_decl, .{
+                    .addr_of = try ssaExpr(block_idx, sema.ExpressionIndex.unwrap(rt.expr).?, .none),
+                });
+            },
             else => unreachable,
         },
         .zero_extend => |cast| return appendToBlock(block_idx, update_decl, .{.zero_extend = .{
@@ -1434,6 +1445,7 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index, up
                 .first_argument = builder.first,
             }});
         },
+        .offset => |offset| return appendToBlock(block_idx, update_decl, .{.offset_ref = offset}),
         else => |expr| std.debug.panic("Unhandled ssaing of expr {s}", .{@tagName(expr)}),
     }
 }
@@ -1502,6 +1514,8 @@ pub fn dumpBlock(
         switch(decl.instr) {
             .param_ref => |p| std.debug.print("@param({d})\n", .{p.param_idx}),
             .stack_ref => |p| std.debug.print("@stack({d})\n", .{p}),
+            .offset_ref => |p| std.debug.print("@offset({d})\n", .{p}),
+            .addr_of => |p| std.debug.print("@addr_of(${d})\n", .{@enumToInt(p)}),
             .enter_function => |size| std.debug.print("@enter_function({d})\n", .{size}),
             .load_int_constant => |value| std.debug.print("{d}\n", .{value.value}),
             .zero_extend, .sign_extend, .truncate => |cast| std.debug.print("@{s}(${d})\n", .{@tagName(decl.instr), @enumToInt(cast.value)}),

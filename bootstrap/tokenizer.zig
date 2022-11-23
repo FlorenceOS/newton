@@ -19,7 +19,6 @@ pub const Token = union(enum) {
             try writer.print("'{s}'", .{std.fmt.fmtSliceEscapeUpper(self.value)});
         }
 
-
         pub fn deinit(self: @This()) void {
             if(self.owned) {
                 gpa.allocator().free(self.value);
@@ -259,15 +258,21 @@ var gpa = std.heap.GeneralPurposeAllocator(.{}){.backing_allocator = std.heap.pa
 fn parseLiteralChar(input: *[*:0]const u8) !u8 {
     switch(input.*[0]) {
         '\\' => {
-            if(input.*[1] == 'x') {
-                const retval = std.fmt.parseUnsigned(u8, input.*[2..4], 16);
-                input.* += 4;
-                return retval;
-            }
-            else {
-                const retval = input.*[1];
-                input.* += 2;
-                return retval;
+            switch(input.*[1]) {
+                'x' => {
+                    const retval = std.fmt.parseUnsigned(u8, input.*[2..4], 16);
+                    input.* += 4;
+                    return retval;
+                },
+                'n' => {
+                    input.* += 2;
+                    return '\n';
+                },
+                else => {
+                    const retval = input.*[1];
+                    input.* += 2;
+                    return retval;
+                },
             }
         },
         0 => return error.UnterminatedLiteral,

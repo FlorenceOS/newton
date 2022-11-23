@@ -48,8 +48,12 @@ pub fn main() !void {
         try main_decl.analyze();
         std.debug.print("{any}\n", .{sema.values.get(main_decl.init_value)});
 
-        var writer: backend.Writer(backend.current_backend) = .{};
-        try writer.writeFunction(main_decl.init_value);
+        try backend.writer.output_bytes.appendNTimes(backend.writer.allocator, 0xCC, 6);
+        while((backend.writer.output_bytes.items.len & 3) != 0) {
+            try backend.writer.output_bytes.append(backend.writer.allocator, 0xCC);
+        }
+
+        try backend.writer.writeFunction(main_decl.init_value);
     } else {
         std.debug.print("Missing root file path!\n", .{});
     }

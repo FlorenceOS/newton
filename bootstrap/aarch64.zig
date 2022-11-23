@@ -121,7 +121,7 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
     const decl = ir.decls.get(decl_idx);
 
     switch(decl.instr) {
-        .param_ref, .undefined, .clobber => {},
+        .param_ref, .undefined, .clobber, .offset_ref => {},
         .load_int_constant => |value| {
             const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
             const mov_ops: [4]std.meta.Tuple(&.{u16, u2, MovType}) = .{
@@ -175,6 +175,20 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
                 | @as(u32, uf.findReg(s.value).?) << 0
                 | @as(u32, uf.findReg(s.dest).?) << 5
             );
+        },
+        .addr_of => |op| {
+            const operand = ir.decls.get(op);
+            switch(operand.instr) {
+                .offset_ref => |offset| {
+                    const disp = @bitCast(u21, @intCast(i21, @bitCast(i64, offset -% writer.currentOffset())));
+                    try writer.writeInt(u32, 0x10000000
+                        | @as(u32, uf.findRegByPtr(decl).?) << 0
+                        | @as(u32, disp >> 2) << 5
+                        | @as(u32, @truncate(u2, disp)) << 29
+                    );
+                },
+                else => |other| std.debug.panic("aarch64: TODO addr_of {s}", .{@tagName(other)}),
+            }
         },
         .copy => |target| {
             const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;

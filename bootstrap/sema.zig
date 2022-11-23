@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const ast = @import("ast.zig");
+const backend = @import("backend.zig");
 const ir = @import("ir.zig");
 const indexed_list = @import("indexed_list.zig");
 
@@ -10,6 +11,7 @@ pub const TypeIndex = indexed_list.Indices(u32, opaque{}, .{
     .type = .{.type = {}},
     .undefined = .{.undefined = {}},
     .comptime_int = .{.comptime_int = {}},
+    .u8 = .{.unsigned_int = 8},
 });
 pub const ValueIndex = indexed_list.Indices(u32, opaque{}, .{
     .void = .{.type_idx = .void},
@@ -257,6 +259,20 @@ fn evaluateWithoutTypeHint(
         .type => return putValueIn(value_out, .{.type_idx = .type}),
         .unsigned_int => |bits| return putValueIn(value_out, .{.type_idx = try types.addDedupLinear(.{.unsigned_int = bits})}),
         .signed_int => |bits| return putValueIn(value_out, .{.type_idx = try types.addDedupLinear(.{.signed_int = bits})}),
+        .string_literal => |sr| {
+            const token = try sr.retokenize();
+            defer token.deinit();
+            const offset = backend.writer.currentOffset();
+            try backend.writer.write(token.string_literal.value);
+            try backend.writer.writeInt(u8, 0);
+            // TODO: Slice types
+            return putValueIn(value_out, .{.runtime = .{
+                .expr = ExpressionIndex.toOpt(try expressions.insert(.{.offset = @intCast(u32, offset)})),
+                .value_type = try values.addDedupLinear(.{.type_idx = try types.addDedupLinear(.{
+                    .reference = .{.is_const = true, .is_volatile = false, .item = .u8},
+                })}),
+            }});
+        },
         .function_expression => |func_idx| {
             const func = ast.functions.get(func_idx);
             const param_scope_idx = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx)});
@@ -468,8 +484,14 @@ fn evaluateWithoutTypeHint(
                         }}),
                     });
                 },
-                .runtime => |_| @panic(":("),
-                else => std.debug.panic("Can't take the addr of {s}", .{@tagName(operand.*)}),
+                .runtime => |rt| blk: {
+                    const value_type = types.get(values.get(rt.value_type).type_idx);
+                    std.debug.assert(value_type.* == .reference);
+                    break :blk try values.addDedupLinear(.{
+                        .type_idx = try types.addDedupLinear(.{.pointer = value_type.reference}),
+                    });
+                },
+                else => |other| std.debug.panic("Can't take the addr of {s}", .{@tagName(other)}),
             };
 
             return putValueIn(value_out, .{.runtime = .{
@@ -811,6 +833,7 @@ pub const Expression = union(enum) {
     zero_extend: Cast,
     truncate: Cast,
 
+    offset: u32,
     addr_of: ValueIndex.Index,
     // deref: ValueIndex.Index,
 

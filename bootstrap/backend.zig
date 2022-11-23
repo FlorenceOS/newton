@@ -146,7 +146,7 @@ pub fn Writer(comptime Platform: type) type {
         pub fn writeRelocatedValue(self: *@This(), edge: ir.BlockEdgeIndex.Index, reloc_type: RelocationType) !void {
             try self.output_bytes.appendNTimes(self.allocator, 0xCC, reloc_type.byteSize());
             return self.addRelocation(edge, .{
-                .output_offset = self.output_bytes.items.len - reloc_type.byteSize(),
+                .output_offset = self.currentOffset() - reloc_type.byteSize(),
                 .relocation_type = reloc_type,
             });
         }
@@ -154,7 +154,7 @@ pub fn Writer(comptime Platform: type) type {
         pub fn writeRelocatedFunction(self: *@This(), function: sema.ValueIndex.Index, reloc_type: RelocationType) !void {
             try self.output_bytes.appendNTimes(self.allocator, 0xCC, reloc_type.byteSize());
             return self.addFunctionRelocation(function, .{
-                .output_offset = self.output_bytes.items.len - reloc_type.byteSize(),
+                .output_offset = self.currentOffset() - reloc_type.byteSize(),
                 .relocation_type = reloc_type,
             });
         }
@@ -176,7 +176,7 @@ pub fn Writer(comptime Platform: type) type {
         ) !void {
             try self.writeInt(T, value);
             return self.addRelocation(edge, .{
-                .output_offset = self.output_bytes.items.len - @sizeOf(T),
+                .output_offset = self.currentOffset() - @sizeOf(T),
                 .relocation_type = reloc_type,
             });
         }
@@ -190,7 +190,7 @@ pub fn Writer(comptime Platform: type) type {
         ) !void {
             try self.writeInt(T, value);
             return self.addFunctionRelocation(function, .{
-                .output_offset = self.output_bytes.items.len - @sizeOf(T),
+                .output_offset = self.currentOffset() - @sizeOf(T),
                 .relocation_type = reloc_type,
             });
         }
@@ -199,7 +199,7 @@ pub fn Writer(comptime Platform: type) type {
             var block = ir.blocks.get(bidx);
             var current_instr = block.first_decl;
 
-            try self.placed_blocks.put(self.allocator, bidx, self.output_bytes.items.len);
+            try self.placed_blocks.put(self.allocator, bidx, self.currentOffset());
             while(ir.decls.getOpt(current_instr)) |instr| {
                 const next_block: ?ir.BlockIndex.Index = try Platform.writeDecl(self, ir.decls.getIndex(instr), uf);
                 if(next_block) |nb| return nb;
@@ -227,7 +227,7 @@ pub fn Writer(comptime Platform: type) type {
                 }
 
                 for(block_relocs.items) |reloc| {
-                    reloc.resolve(self.output_bytes.items, self.output_bytes.items.len);
+                    reloc.resolve(self.output_bytes.items, self.currentOffset());
                 }
                 block_relocs.deinit(self.allocator);
 
@@ -281,3 +281,5 @@ pub fn Writer(comptime Platform: type) type {
         }
     };
 }
+
+pub var writer: Writer(current_backend) = .{};
