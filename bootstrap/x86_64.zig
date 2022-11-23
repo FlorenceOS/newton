@@ -233,6 +233,30 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
             uf.findRegByPtr(decl).?,
             uf.findReg(source).?,
         ),
+        .truncate => |t| try movRegToReg(
+            writer,
+            t.type,
+            uf.findRegByPtr(decl).?,
+            uf.findReg(t.value).?,
+        ),
+        .zero_extend => |zext| {
+            const dest_reg = uf.findRegByPtr(decl).?;
+            const src_reg = uf.findReg(zext.value).?;
+
+            const dest_type = decl.instr.getOperationType();
+            const src_type = ir.decls.get(zext.value).instr.getOperationType();
+
+            if(dest_type == .u64 and src_type == .u32) {
+                try movRegToReg(writer, .u32, dest_reg, src_reg);
+            } else {
+                // movzx rM r/mN
+                const rm = rmRegDirect(src_reg, dest_reg);
+                const opcode: u8 = if(src_type == .u8) 0xB6 else 0xB7;
+                try prefix(writer, dest_type, rm.rex_r, false, rm.rex_b);
+                try writer.writeInt(u8, opcode);
+                try writer.write(rm.encoded.slice());
+            }
+        },
         .load_int_constant => |constant| try movImmToReg(
             writer,
             constant.type,
