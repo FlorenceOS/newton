@@ -5,12 +5,11 @@ const indexed_list = @import("indexed_list.zig");
 const sema = @import("sema.zig");
 const rega = @import("rega.zig");
 
-const current_backend = backend.x86_64;
-
 pub const DeclIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const BlockIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const BlockEdgeIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const PhiOperandIndex = indexed_list.Indices(u32, opaque{}, .{});
+pub const FunctionArgumentIndex = indexed_list.Indices(u32, opaque{}, .{});
 
 // Based on
 // "Simple and Efficient Construction of Static Single Assignment Form"
@@ -46,7 +45,7 @@ fn typeForBits(bits: u32) InstrType {
 fn typeFor(type_idx: sema.TypeIndex.Index) InstrType {
     return switch(sema.types.get(type_idx).*) {
         .signed_int, .unsigned_int => |bits| typeForBits(bits),
-        .reference, .pointer => current_backend.pointer_type,
+        .reference, .pointer => backend.current_backend.pointer_type,
         else => |other| std.debug.panic("TODO: typeFor {s}", .{@tagName(other)}),
     };
 }
@@ -54,6 +53,11 @@ fn typeFor(type_idx: sema.TypeIndex.Index) InstrType {
 const Cast = struct {
     value: DeclIndex.Index,
     type: InstrType,
+};
+
+const FunctionArgument = struct {
+    value: DeclIndex.Index,
+    next: FunctionArgumentIndex.OptIndex = .none,
 };
 
 const DeclInstr = union(enum) {
@@ -72,6 +76,11 @@ const DeclInstr = union(enum) {
     load_bool_constant: bool,
     enter_function: u32,
     undefined,
+
+    function_call: struct {
+        callee: sema.ValueIndex.Index,
+        first_argument: FunctionArgumentIndex.OptIndex,
+    },
 
     add: Bop,
     add_mod: Bop,
@@ -143,6 +152,7 @@ const DeclInstr = union(enum) {
     const OperandIterator = struct {
         value: union(enum) {
             bounded_iterator: std.BoundedArray(*DeclIndex.Index, 2),
+            arg_iterator: ?*FunctionArgument,
             phi_iterator: ?*PhiOperand,
         },
 
@@ -157,6 +167,14 @@ const DeclInstr = union(enum) {
                         return null;
                     }
                 },
+                .arg_iterator => |*curr_opt| {
+                    if(curr_opt.*) |curr| {
+                        curr_opt.* = function_arguments.getOpt(curr.next);
+                        return &curr.value;
+                    } else {
+                        return null;
+                    }
+                }
             }
         }
     };
@@ -168,6 +186,11 @@ const DeclInstr = union(enum) {
             .incomplete_phi => unreachable,
 
             .phi => |p| return OperandIterator{.value = .{.phi_iterator = phi_operands.getOpt(p)}},
+            .function_call => |fcall| {
+                return OperandIterator{.value = .{
+                    .arg_iterator = function_arguments.getOpt(fcall.first_argument),
+                }};
+            },
 
             .add, .add_mod, .sub, .sub_mod,
             .multiply, .multiply_mod, .divide, .modulus,
@@ -209,7 +232,8 @@ const DeclInstr = union(enum) {
     pub fn isVolatile(self: *const @This()) bool {
         switch(self.*) {
             .incomplete_phi => unreachable,
-            .@"if", .@"return", .goto, .enter_function, .store, .store_constant => return true,
+            .@"if", .@"return", .goto, .enter_function, .store, .store_constant, .function_call,
+            => return true,
             else => return false,
         }
     }
@@ -265,6 +289,10 @@ const DeclInstr = union(enum) {
                 const rhs_type = rhs.instr.getOperationType();
                 std.debug.assert(lhs_type == rhs_type);
                 return lhs_type;
+            },
+            .function_call => |fcall| {
+                const rt = sema.values.get(fcall.callee).function.return_type;
+                return typeFor(sema.values.get(rt).type_idx);
             },
             .store => |val| return decls.get(val.value).instr.getOperationType(),
             .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
@@ -353,11 +381,6 @@ pub const BasicBlock = struct {
         self.is_filled = true;
     }
 };
-
-pub var decls: DeclIndex.List(Decl) = undefined;
-pub var blocks: BlockIndex.List(BasicBlock) = undefined;
-pub var edges: BlockEdgeIndex.List(InstructionToBlockEdge) = undefined;
-pub var phi_operands: PhiOperandIndex.List(PhiOperand) = undefined;
 
 // Name from paper
 fn readVariable(block_idx: BlockIndex.Index, decl: sema.DeclIndex.Index) anyerror!DeclIndex.Index {
@@ -512,7 +535,7 @@ const DiscoverContext = struct {
 pub const BlockList = std.ArrayListUnmanaged(BlockIndex.Index);
 
 // Assumes an arena allocator is passed
-fn allBlocksReachableFrom(allocator: std.mem.Allocator, head_block: BlockIndex.Index) !BlockList {
+pub fn allBlocksReachableFrom(allocator: std.mem.Allocator, head_block: BlockIndex.Index) !BlockList {
     var context = try DiscoverContext.init(allocator, head_block);
 
     while(context.nextBlock()) |block| {
@@ -549,7 +572,7 @@ const peephole_optimizations = .{
 
 var optimization_allocator = std.heap.GeneralPurposeAllocator(.{}){.backing_allocator = std.heap.page_allocator};
 
-fn optimizeFunction(head_block: BlockIndex.Index) !void {
+pub fn optimizeFunction(head_block: BlockIndex.Index) !void {
     var arena = std.heap.ArenaAllocator.init(optimization_allocator.allocator());
     defer arena.deinit();
     var fn_blocks = try allBlocksReachableFrom(arena.allocator(), head_block);
@@ -1396,11 +1419,23 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index, up
             .value = try ssaValue(block_idx, cast.value, .none),
             .type = typeFor(cast.type),
         }}),
+        .function_call => |fcall| {
+            var builder = function_arguments.builder();
+            var curr_arg = fcall.first_arg;
+            while(sema.expressions.getOpt(curr_arg)) |arg| : (curr_arg = arg.function_arg.next) {
+                const farg = arg.function_arg;
+                _ = try builder.insert(.{.value = try ssaValue(block_idx, farg.value, .none)});
+            }
+            return appendToBlock(block_idx, update_decl, .{.function_call = .{
+                .callee = fcall.callee,
+                .first_argument = builder.first,
+            }});
+        },
         else => |expr| std.debug.panic("Unhandled ssaing of expr {s}", .{@tagName(expr)}),
     }
 }
 
-fn ssaFunction(func: *sema.Function) !BlockIndex.Index {
+pub fn ssaFunction(func: *sema.Function) !BlockIndex.Index {
     const first_basic_block = try blocks.insert(.{});
     const enter_decl = try appendToBlock(first_basic_block, .none, .{.enter_function = undefined});
     try blocks.get(first_basic_block).seal();
@@ -1454,7 +1489,7 @@ pub fn dumpBlock(
             std.debug.print(" (-> ${d})", .{@enumToInt(decls.getIndex(adecl))});
         }
         if(adecl.reg_alloc_value) |reg| {
-            std.debug.print(" ({s})", .{current_backend.registerName(reg)});
+            std.debug.print(" ({s})", .{backend.current_backend.registerName(reg)});
         }
         std.debug.print(" = ", .{});
         if(decl.instr.isValue()) {
@@ -1482,6 +1517,14 @@ pub fn dumpBlock(
             .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant,
             .equals_constant, .not_equal_constant,
             => |bop, tag| std.debug.print("{s}(${d}, #{d})\n", .{@tagName(tag)[0..@tagName(tag).len-9], @enumToInt(bop.lhs), bop.rhs}),
+            .function_call => |_| {
+                std.debug.print("@call(<?>", .{});
+                var ops = decl.instr.operands();
+                while(ops.next()) |op| {
+                    std.debug.print(", ${d}", .{@enumToInt(op.*)});
+                }
+                std.debug.print(")\n", .{});
+            },
             .store => |store| std.debug.print("store(${d}, ${d})\n", .{@enumToInt(store.dest), @enumToInt(store.value)}),
             .store_constant => |store| std.debug.print("store(${d}, #{d})\n", .{@enumToInt(store.dest), store.value}),
             .incomplete_phi => std.debug.print("<incomplete phi node>\n", .{}),
@@ -1516,42 +1559,16 @@ pub fn dumpBlock(
     std.debug.print("\n", .{});
 }
 
-pub fn memes(thing: *sema.Value) !void {
-    const bbidx = try ssaFunction(&thing.function);
-
-    try optimizeFunction(bbidx);
-
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-
-    const blocks_to_dump = try allBlocksReachableFrom(arena.allocator(), bbidx);
-
-    for(blocks_to_dump.items) |bb| {
-        try dumpBlock(bb, null);
-    }
-
-    const uf = try rega.doRegAlloc(
-        arena.allocator(),
-        &blocks_to_dump,
-        current_backend.registers.return_reg,
-        &current_backend.registers.param_regs,
-        &current_backend.registers.gprs,
-    );
-
-    for(blocks_to_dump.items) |bb| {
-        try dumpBlock(bb, uf);
-    }
-
-    var writer: current_backend.Writer = .{
-        .allocator = optimization_allocator.allocator(),
-        .uf = uf,
-    };
-
-    try writer.writeFunction(bbidx);
-}
+pub var decls: DeclIndex.List(Decl) = undefined;
+pub var blocks: BlockIndex.List(BasicBlock) = undefined;
+pub var edges: BlockEdgeIndex.List(InstructionToBlockEdge) = undefined;
+pub var phi_operands: PhiOperandIndex.List(PhiOperand) = undefined;
+pub var function_arguments: FunctionArgumentIndex.List(FunctionArgument) = undefined;
 
 pub fn init() !void {
     decls = try DeclIndex.List(Decl).init(std.heap.page_allocator);
     blocks = try BlockIndex.List(BasicBlock).init(std.heap.page_allocator);
     edges = try BlockEdgeIndex.List(InstructionToBlockEdge).init(std.heap.page_allocator);
     phi_operands = try PhiOperandIndex.List(PhiOperand).init(std.heap.page_allocator);
+    function_arguments = try FunctionArgumentIndex.List(FunctionArgument).init(std.heap.page_allocator);
 }

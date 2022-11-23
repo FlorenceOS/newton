@@ -4,7 +4,7 @@ const backend = @import("backend.zig");
 const ir = @import("ir.zig");
 const rega = @import("rega.zig");
 
-pub const Writer = backend.Writer(@This());
+const Writer = backend.Writer(@This());
 
 pub const registers = struct {
     pub const fp = 29;

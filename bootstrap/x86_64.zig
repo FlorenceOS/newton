@@ -4,7 +4,7 @@ const backend = @import("backend.zig");
 const ir = @import("ir.zig");
 const rega = @import("rega.zig");
 
-pub const Writer = backend.Writer(@This());
+const Writer = backend.Writer(@This());
 
 pub const registers = struct {
     const rax = 0;
@@ -436,6 +436,10 @@ pub fn writeDecl(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFi
                 }));
                 try writer.writeRelocatedValue(edge, reloc_type);
             }
+        },
+        .function_call => |fcall| {
+            try writer.writeInt(u8, 0xE8);
+            try writer.writeRelocatedFunction(fcall.callee, .rel32_post_0);
         },
         .@"return" => |ret| {
             const op_reg = uf.findReg(ret.value).?;

@@ -185,16 +185,30 @@ pub fn doRegAlloc(
         const blk = ir.blocks.get(blk_idx);
         var curr_instr = blk.first_decl;
         while(ir.decls.getOpt(curr_instr)) |instr| : (curr_instr = instr.next) {
-            if(instr.instr == .phi) {
-                var pop = instr.instr.phi;
-                while(ir.phi_operands.getOpt(pop)) |op| : (pop = op.next) {
-                    const edge = ir.edges.get(op.edge);
-                    const source_instr = ir.blocks.get(edge.source_block).last_decl;
-                    const new_op = try ir.insertBefore(ir.DeclIndex.unwrap(source_instr).?, .{
-                        .copy = op.decl,
-                    });
-                    op.decl = new_op;
-                }
+            switch(instr.instr) {
+                .phi => {
+                    var pop = instr.instr.phi;
+                    while(ir.phi_operands.getOpt(pop)) |op| : (pop = op.next) {
+                        const edge = ir.edges.get(op.edge);
+                        const source_instr = ir.blocks.get(edge.source_block).last_decl;
+                        const new_op = try ir.insertBefore(ir.DeclIndex.unwrap(source_instr).?, .{
+                            .copy = op.decl,
+                        });
+                        op.decl = new_op;
+                    }
+                },
+                .function_call => {
+                    var op_it = instr.instr.operands();
+                    var arg_idx: u8 = 0;
+                    while(op_it.next()) |op| : (arg_idx += 1) {
+                        const new_op = try ir.insertBefore(ir.decls.getIndex(instr), .{
+                            .copy = op.*,
+                        });
+                        op.* = new_op;
+                        ir.decls.get(new_op).reg_alloc_value = param_regs[arg_idx];
+                    }
+                },
+                else => {},
             }
         }
     }
@@ -410,6 +424,7 @@ pub fn doRegAlloc(
                         adecl.reg_alloc_value = return_reg;
                     }
                 },
+                .function_call => decl.reg_alloc_value = return_reg,
                 else => {},
             }
         }

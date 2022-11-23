@@ -2,9 +2,12 @@ const std = @import("std");
 
 const ir = @import("ir.zig");
 const rega = @import("rega.zig");
+const sema = @import("sema.zig");
 
 pub const aarch64 = @import("aarch64.zig");
 pub const x86_64 = @import("x86_64.zig");
+
+pub const current_backend = x86_64;
 
 pub const RelocationType = enum {
     rel8_post_0,
@@ -71,7 +74,8 @@ pub fn Writer(comptime Platform: type) type {
         output_bytes: std.ArrayListUnmanaged(u8) = .{},
         enqueued_blocks: std.AutoArrayHashMapUnmanaged(ir.BlockIndex.Index, std.ArrayListUnmanaged(Relocation)) = .{},
         placed_blocks: std.AutoHashMapUnmanaged(ir.BlockIndex.Index, usize) = .{},
-        uf: rega.UnionFind,
+        enqueued_functions: std.AutoArrayHashMapUnmanaged(sema.ValueIndex.Index, std.ArrayListUnmanaged(Relocation)) = .{},
+        placed_functions: std.AutoHashMapUnmanaged(sema.ValueIndex.Index, usize) = .{},
 
         pub fn attemptInlineEdge(self: *@This(), edge: ir.BlockEdgeIndex.Index) !?ir.BlockIndex.Index {
             const target_block = ir.edges.get(edge).target_block;
@@ -121,9 +125,29 @@ pub fn Writer(comptime Platform: type) type {
             }
         }
 
+        fn addFunctionRelocation(self: *@This(), function: sema.ValueIndex.Index, reloc: Relocation) !void {
+            if(self.placed_functions.get(function)) |offset| {
+                reloc.resolve(self.output_bytes.items, offset);
+            } else if(self.enqueued_functions.getPtr(function)) |q| {
+                try q.append(self.allocator, reloc);
+            } else {
+                var queue: std.ArrayListUnmanaged(Relocation) = .{};
+                try queue.append(self.allocator, reloc);
+                try self.enqueued_functions.put(self.allocator, function, queue);
+            }
+        }
+
         pub fn writeRelocatedValue(self: *@This(), edge: ir.BlockEdgeIndex.Index, reloc_type: RelocationType) !void {
             try self.output_bytes.appendNTimes(self.allocator, 0xCC, reloc_type.byteSize());
             return self.addRelocation(edge, .{
+                .output_offset = self.output_bytes.items.len - reloc_type.byteSize(),
+                .relocation_type = reloc_type,
+            });
+        }
+
+        pub fn writeRelocatedFunction(self: *@This(), function: sema.ValueIndex.Index, reloc_type: RelocationType) !void {
+            try self.output_bytes.appendNTimes(self.allocator, 0xCC, reloc_type.byteSize());
+            return self.addFunctionRelocation(function, .{
                 .output_offset = self.output_bytes.items.len - reloc_type.byteSize(),
                 .relocation_type = reloc_type,
             });
@@ -151,20 +175,34 @@ pub fn Writer(comptime Platform: type) type {
             });
         }
 
-        fn writeBlock(self: *@This(), bidx: ir.BlockIndex.Index) !?ir.BlockIndex.Index {
+        pub fn writeIntWithFunctionRelocation(
+            self: *@This(),
+            comptime T: type,
+            value: T,
+            function: sema.ValueIndex.Index,
+            reloc_type: RelocationType,
+        ) !void {
+            try self.writeInt(T, value);
+            return self.addFunctionRelocation(function, .{
+                .output_offset = self.output_bytes.items.len - @sizeOf(T),
+                .relocation_type = reloc_type,
+            });
+        }
+
+        fn writeBlock(self: *@This(), bidx: ir.BlockIndex.Index, uf: rega.UnionFind) !?ir.BlockIndex.Index {
             var block = ir.blocks.get(bidx);
             var current_instr = block.first_decl;
 
             try self.placed_blocks.put(self.allocator, bidx, self.output_bytes.items.len);
             while(ir.decls.getOpt(current_instr)) |instr| {
-                const next_block: ?ir.BlockIndex.Index = try Platform.writeDecl(self, ir.decls.getIndex(instr), self.uf);
+                const next_block: ?ir.BlockIndex.Index = try Platform.writeDecl(self, ir.decls.getIndex(instr), uf);
                 if(next_block) |nb| return nb;
                 current_instr = instr.next;
             }
             return null;
         }
 
-        pub fn writeFunction(self: *@This(), head_block: ir.BlockIndex.Index) !void {
+        fn writeBlocks(self: *@This(), head_block: ir.BlockIndex.Index, uf: rega.UnionFind) !void {
             try self.enqueued_blocks.put(self.allocator, head_block, .{});
             var preferred_block: ?ir.BlockIndex.Index = null;
 
@@ -187,9 +225,51 @@ pub fn Writer(comptime Platform: type) type {
                 }
                 block_relocs.deinit(self.allocator);
 
-                preferred_block = try self.writeBlock(current_block);
+                preferred_block = try self.writeBlock(current_block, uf);
+            }
+        }
+
+        fn writeSingleFunction(self: *@This(), function: sema.ValueIndex.Index) !void {
+            const head_block = try ir.ssaFunction(&sema.values.get(function).function);
+            try ir.optimizeFunction(head_block);
+
+            var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+
+            const blocks_to_dump = try ir.allBlocksReachableFrom(arena.allocator(), head_block);
+
+            for(blocks_to_dump.items) |bb| {
+                try ir.dumpBlock(bb, null);
             }
 
+            const uf = try rega.doRegAlloc(
+                arena.allocator(),
+                &blocks_to_dump,
+                current_backend.registers.return_reg,
+                &current_backend.registers.param_regs,
+                &current_backend.registers.gprs,
+            );
+
+            for(blocks_to_dump.items) |bb| {
+                try ir.dumpBlock(bb, uf);
+            }
+
+            const function_offset = self.currentOffset();
+            try self.placed_functions.put(self.allocator, function, function_offset);
+            if(self.enqueued_functions.fetchSwapRemove(function)) |kv| {
+                for(kv.value.items) |reloc| {
+                    reloc.resolve(self.output_bytes.items, function_offset);
+                }
+                var value_copy = kv.value;
+                value_copy.deinit(self.allocator);
+            }
+            try self.writeBlocks(head_block, uf);
+        }
+
+        pub fn writeFunction(self: *@This(), function: sema.ValueIndex.Index) !void {
+            try self.writeSingleFunction(function);
+            while(self.enqueued_functions.keys().len > 0) {
+                try self.writeSingleFunction(self.enqueued_functions.keys()[0]);
+            }
             std.debug.print("Output: {}\n", .{std.fmt.fmtSliceHexUpper(self.output_bytes.items)});
         }
     };

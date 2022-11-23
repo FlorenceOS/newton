@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const ast = @import("ast.zig");
+const backend = @import("backend.zig");
 const parser = @import("parser.zig");
 const sema = @import("sema.zig");
 const sources = @import("sources.zig");
@@ -46,7 +47,9 @@ pub fn main() !void {
         const main_decl = (try root_scope.lookupDecl("main")).?;
         try main_decl.analyze();
         std.debug.print("{any}\n", .{sema.values.get(main_decl.init_value)});
-        try ir.memes(sema.values.get(main_decl.init_value));
+
+        var writer: backend.Writer(backend.current_backend) = .{};
+        try writer.writeFunction(main_decl.init_value);
     } else {
         std.debug.print("Missing root file path!\n", .{});
     }
