@@ -9,6 +9,7 @@ fn strlen(ptr: *const u8) u64 {
 }
 
 const SYS_WRITE = 1;
+const SYS_EXIT = 60;
 
 fn print(buf: *const u8) u64 {
     return @syscall(SYS_WRITE, 1, buf, strlen(buf));
@@ -16,5 +17,5 @@ fn print(buf: *const u8) u64 {
 
 fn main() u64 {
     print("Hello, world!\n".&);
-    return 0;
+    return @syscall(SYS_EXIT, 0);
 }

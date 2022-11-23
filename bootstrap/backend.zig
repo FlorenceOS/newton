@@ -274,7 +274,6 @@ pub fn Writer(comptime Platform: type) type {
             while(self.enqueued_functions.keys().len > 0) {
                 try self.writeSingleFunction(self.enqueued_functions.keys()[0]);
             }
-            std.debug.print("Output: {}\n", .{std.fmt.fmtSliceHexUpper(self.output_bytes.items)});
         }
     };
 }
