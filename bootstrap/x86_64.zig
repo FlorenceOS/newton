@@ -112,7 +112,7 @@ fn rmStackOffset(stack_offset: i32, reg: u8) Rm {
 }
 
 fn pushReg(writer: *Writer, reg: u8) !void {
-    try rexPrefix(writer, reg >= 8, false, false, false);
+    try rexPrefix(writer, false, false, false, reg >= 8);
     try writer.writeInt(u8, 0x50 | (reg & 0x7));
 }
 
@@ -127,7 +127,7 @@ fn pushImm(writer: *Writer, value: i32) !void {
 }
 
 fn popReg(writer: *Writer, reg: u8) !void {
-    try rexPrefix(writer, false, reg >= 8, false, false);
+    try rexPrefix(writer, false, false, false, reg >= 8);
     try writer.writeInt(u8, 0x58 | (reg & 0x7));
 }
 
