@@ -507,19 +507,20 @@ fn evaluateWithoutTypeHint(
             }
         },
         .array_subscript => |bop| {
-            const rhs_idx = try evaluateWithoutTypeHint(scope_idx, .none, bop.rhs);
-            const rhs = values.get(rhs_idx);
-            const rhs_type = types.get(try rhs.getType());
-            std.debug.assert(rhs_type.* == .signed_int or rhs_type.* == .unsigned_int or rhs_type.* == .comptime_int);
             const lhs_idx = try evaluateWithoutTypeHint(scope_idx, .none, bop.lhs);
             const lhs = values.get(lhs_idx);
             const lhs_type = types.get(try lhs.getType());
             std.debug.assert(lhs_type.* == .pointer);
-            const size_expr = try values.addDedupLinear(.{.unsigned_int = .{
+            const u64_type = try values.addDedupLinear(.{.type_idx = try types.addDedupLinear(.{.unsigned_int = 64})});
+            var rhs_idx = try evaluateWithoutTypeHint(scope_idx, .none, bop.rhs);
+            var size_expr = try values.addDedupLinear(.{.unsigned_int = .{
                 .bits = 64,
                 .value = @as(i65, @intCast(i64, types.get(lhs_type.pointer.item).getSize()))
             }});
-            const u64_type = try values.addDedupLinear(.{.type_idx = try types.addDedupLinear(.{.unsigned_int = 64})});
+            try promoteToBiggest(&size_expr, &rhs_idx, false);
+            const rhs = values.get(rhs_idx);
+            const rhs_type = types.get(try rhs.getType());
+            std.debug.assert(rhs_type.* == .signed_int or rhs_type.* == .unsigned_int or rhs_type.* == .comptime_int);
             const offset_expr = try values.insert(.{.runtime = .{
                 .expr = ExpressionIndex.toOpt(try expressions.insert(.{.multiply = .{.lhs = rhs_idx, .rhs = size_expr}})),
                 .value_type = u64_type,
