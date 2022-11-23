@@ -131,17 +131,9 @@ pub fn doRegAlloc(
 
     var param_replacement = std.AutoArrayHashMapUnmanaged(ir.DeclIndex.Index, ir.DeclIndex.Index){};
     for(block_list.items) |blk_idx| {
-
         const blk = ir.blocks.get(blk_idx);
         var curr_instr = blk.first_decl;
         while(ir.decls.getOpt(curr_instr)) |instr| : (curr_instr = instr.next) {
-            var it = instr.instr.operands();
-            while(it.next()) |op| {
-                const replacement = param_replacement.get(op.*) orelse continue;
-                if(replacement != ir.decls.getIndex(instr))
-                    op.* = replacement;
-            }
-
             switch(instr.instr) {
                 .phi => {
                     var pop = instr.instr.phi;
@@ -171,6 +163,10 @@ pub fn doRegAlloc(
                         ir.decls.get(new_op).reg_alloc_value = param_regs[arg_idx];
                     }
                     const next = ir.DeclIndex.unwrap(instr.next).?;
+                    const ret_copy = try ir.insertBefore(next, .{
+                        .copy = ir.decls.getIndex(instr),
+                    });
+                    try param_replacement.put(arena.allocator(), ir.decls.getIndex(instr), ret_copy);
                     for(caller_saved) |reg| {
                         const clob1 = try ir.insertBefore(next, .{
                             .clobber = ir.decls.getIndex(instr),
@@ -193,6 +189,10 @@ pub fn doRegAlloc(
                         ir.decls.get(new_op).reg_alloc_value = syscall_param_regs[arg_idx];
                     }
                     const next = ir.DeclIndex.unwrap(instr.next).?;
+                    const ret_copy = try ir.insertBefore(next, .{
+                        .copy = ir.decls.getIndex(instr),
+                    });
+                    try param_replacement.put(arena.allocator(), ir.decls.getIndex(instr), ret_copy);
                     for(syscall_clobbers) |reg| {
                         const clob1 = try ir.insertBefore(next, .{
                             .clobber = ir.decls.getIndex(instr),
@@ -205,6 +205,19 @@ pub fn doRegAlloc(
                     }
                 },
                 else => {},
+            }
+        }
+    }
+
+    for(block_list.items) |blk_idx| {
+        const blk = ir.blocks.get(blk_idx);
+        var curr_instr = blk.first_decl;
+        while(ir.decls.getOpt(curr_instr)) |instr| : (curr_instr = instr.next) {
+            var it = instr.instr.operands();
+            while(it.next()) |op| {
+                const replacement = param_replacement.get(op.*) orelse continue;
+                if(replacement != ir.decls.getIndex(instr))
+                    op.* = replacement;
             }
         }
     }
