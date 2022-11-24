@@ -9,11 +9,6 @@ const sources = @import("sources.zig");
 const ir = @import("ir.zig");
 
 pub fn main() !void {
-    try ast.init();
-    try sema.init();
-    try sources.init();
-    try ir.init();
-
     var output_path: [:0]const u8 = "a.out";
     var target: [:0]const u8 = "x86_64-linux";
     var root_path: ?[:0]u8 = null;
@@ -59,6 +54,11 @@ pub fn main() !void {
 
     backends.current_backend = target_arch.?;
     backends.current_os = target_os.?;
+
+    try ast.init();
+    try sema.init();
+    try sources.init();
+    try ir.init();
 
     if(root_path) |rp| {
         const root_ast = try parser.parseRootFile(rp);

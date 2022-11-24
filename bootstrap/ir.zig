@@ -1149,9 +1149,9 @@ fn ssaBlockStatementIntoBasicBlock(
                 const decl = sema.decls.get(decl_idx);
                 const init_value = sema.values.get(decl.init_value);
 
-                if(decl.stack_offset != null) {
-                    current_stack_offset += sema.types.get(try init_value.getType()).getSize();
-                    decl.stack_offset = current_stack_offset;
+                if(decl.stack_offset) |*offset| {
+                    current_stack_offset += try sema.types.get(try init_value.getType()).getSize();
+                    offset.* = current_stack_offset;
                 }
 
                 const value = if(init_value.* == .runtime) blk: {
@@ -1436,7 +1436,7 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index, up
             const source = sema.values.get(sidx);
             const source_type = sema.types.get(try source.getType());
             const ir_value = try ssaValue(block_idx, sidx, .none);
-            return appendToBlock(block_idx, update_decl, .{.load = .{
+            return appendToBlock(block_idx, .none, .{.load = .{
                 .source = ir_value,
                 .type = switch(source_type.*) {
                     .pointer, .reference => |ptr| typeFor(ptr.item),
