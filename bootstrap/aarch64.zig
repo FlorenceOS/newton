@@ -35,7 +35,7 @@ pub const oses = struct {
             20, 21, 22, 23, 24, 25, 26, 27, 28,
         },
         .param_regs = &.{0, 1, 2, 3, 4, 5, 6, 7},
-        .syscall_param_regs = &.{0, 1, 2, 3, 4, 5, 6, 7},
+        .syscall_param_regs = &.{8, 0, 1, 2, 3, 4, 5},
         .caller_saved = &.{
             1,  2,  3,  4,  5,  6,  7,  8,  9,
             10, 11, 12, 13, 14, 15,
@@ -98,8 +98,8 @@ fn subImm(writer: *backends.Writer, dest_reg: u8, src_reg: u8, imm: u12) !void {
     );
 }
 
-fn ldp(writer: *backends.Writer, ptr_reg: u8, r1: u8, r2: u8, imm: i7) !void {
-    try writer.writeInt(u32, 0xA9400000
+fn ldpPost(writer: *backends.Writer, ptr_reg: u8, r1: u8, r2: u8, imm: i7) !void {
+    try writer.writeInt(u32, 0xA8C00000
         | @as(u32, ptr_reg) << 5
         | @as(u32, r1) << 0
         | @as(u32, r2) << 10
@@ -107,8 +107,8 @@ fn ldp(writer: *backends.Writer, ptr_reg: u8, r1: u8, r2: u8, imm: i7) !void {
     );
 }
 
-fn stp(writer: *backends.Writer, ptr_reg: u8, r1: u8, r2: u8, imm: i7) !void {
-    try writer.writeInt(u32, 0xA9000000
+fn stpPre(writer: *backends.Writer, ptr_reg: u8, r1: u8, r2: u8, imm: i7) !void {
+    try writer.writeInt(u32, 0xA9800000
         | @as(u32, ptr_reg) << 5
         | @as(u32, r1) << 0
         | @as(u32, r2) << 10
@@ -117,11 +117,11 @@ fn stp(writer: *backends.Writer, ptr_reg: u8, r1: u8, r2: u8, imm: i7) !void {
 }
 
 fn pushTwo(writer: *backends.Writer, r1: u8, r2: u8) !void {
-    return stp(writer, registers.sp, r1, r2, -2);
+    return stpPre(writer, registers.sp, r1, r2, -2);
 }
 
 fn popTwo(writer: *backends.Writer, r1: u8, r2: u8) !void {
-    return ldp(writer, registers.sp, r1, r2, 0);
+    return ldpPost(writer, registers.sp, r1, r2, 2);
 }
 
 fn opSizeBit(decl: *ir.Decl) u32 {
@@ -292,8 +292,8 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             }
         },
         .enter_function => |stack_size| {
+            try pushTwo(writer, registers.fp, registers.lr);
             if(stack_size > 0) {
-                try pushTwo(writer, registers.fp, registers.lr);
                 try subImm(writer, registers.sp, registers.sp, @intCast(u12, stack_size));
             }
         },
@@ -303,11 +303,11 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
         .syscall => try writer.writeInt(u32, 0xD4000001),
         .@"return" => |op| {
             const op_reg = uf.findDecl(op.value).reg_alloc_value.?;
+            std.debug.assert(op_reg == backends.current_os.return_reg);
             if(op.restore_stack) {
                 try movReg(writer, registers.sp, registers.fp);
-                try popTwo(writer, registers.fp, registers.lr);
             }
-            std.debug.assert(op_reg == backends.current_os.return_reg);
+            try popTwo(writer, registers.fp, registers.lr);
             try writer.writeInt(u32, 0xD65F0000 | @as(u32, registers.lr) << 5);
         },
         inline else => |_, tag| @panic("TODO: aarch64 decl " ++ @tagName(tag)),
