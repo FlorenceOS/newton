@@ -543,7 +543,12 @@ fn evaluateWithoutTypeHint(
             const operand = values.get(operand_idx);
             const operand_type = types.get(try operand.getType());
             std.debug.assert(operand_type.* == .pointer);
-            return putValueIn(value_out, .{.deref = operand_idx});
+            return putValueIn(value_out, .{.runtime = .{
+                .expr = ExpressionIndex.toOpt(try expressions.insert(.{.deref = operand_idx})),
+                .value_type = try values.addDedupLinear(.{
+                    .type_idx = try types.addDedupLinear(.{.reference = operand_type.pointer})
+                }),
+            }});
         },
         .member_access => |bop| {
             var lhs = try evaluateWithoutTypeHint(scope_idx, .none, bop.lhs);
@@ -607,7 +612,12 @@ fn evaluateWithoutTypeHint(
                 .expr = ExpressionIndex.toOpt(try expressions.insert(.{.add = .{.lhs = lhs_idx, .rhs = offset_expr}})),
                 .value_type = try values.addDedupLinear(.{.type_idx = types.getIndex(lhs_type)}),
             }});
-            return putValueIn(value_out, .{.deref = ptr_expr});
+            return putValueIn(value_out, .{.runtime = .{
+                .expr = ExpressionIndex.toOpt(try expressions.insert(.{.deref = ptr_expr})),
+                .value_type = try values.addDedupLinear(.{
+                    .type_idx = try types.addDedupLinear(.{.reference = lhs_type.pointer})
+                }),
+            }});
         },
         .import_call => |import| return evaluateWithTypeHint(scope_idx, .none, sources.source_files.get(import).top_level_struct, .type),
         else => |expr| std.debug.panic("TODO: Sema {s} expression", .{@tagName(expr)}),
@@ -635,14 +645,16 @@ fn evaluateWithTypeHint(
             if(values.get(rt.value_type).type_idx == requested_type) return evaluated_idx;
             const evaluated_type = types.get(try evaluated.getType());
             if(evaluated_type.* == .reference and evaluated_type.reference.item == requested_type) {
-                return values.addDedupLinear(.{.deref = evaluated_idx});
+                return values.addDedupLinear(.{.runtime = .{
+                    .expr = ExpressionIndex.toOpt(try expressions.insert(.{.deref = evaluated_idx})),
+                    .value_type = try values.addDedupLinear(.{.type_idx = requested_type}),
+                }});
             }
         },
         .decl_ref => |dr| {
             const decl_type = try values.get(decls.get(dr).init_value).getType();
             if(decl_type == requested_type) return evaluated_idx;
         },
-        .deref => if(types.get(try evaluated.getType()).reference.item == requested_type) return evaluated_idx,
         else => {},
     }
 
@@ -712,9 +724,7 @@ pub const RuntimeValue = struct {
 
 pub const Value = union(enum) {
     unresolved: Unresolved,
-
     decl_ref: DeclIndex.Index,
-    deref: ValueIndex.Index,
 
     // Values of type `type`
     type_idx: TypeIndex.Index,
@@ -753,11 +763,6 @@ pub const Value = union(enum) {
             .signed_int => |int| try types.addDedupLinear(.{.signed_int = int.bits}),
             .runtime => |rt| values.get(rt.value_type).type_idx,
             .decl_ref => |dr| return values.get(decls.get(dr).init_value).getType(),
-            .deref => |val| {
-                const target = values.get(val);
-                const target_type = types.get(try target.getType());
-                return types.addDedupLinear(.{.reference = target_type.pointer});
-            },
             else => |other| std.debug.panic("TODO: Get type of {s}", .{@tagName(other)}),
         };
     }
@@ -892,7 +897,7 @@ pub const Expression = union(enum) {
 
     offset: u32,
     addr_of: ValueIndex.Index,
-    // deref: ValueIndex.Index,
+    deref: ValueIndex.Index,
 
     add: BinaryOp,
     add_eq: BinaryOp,

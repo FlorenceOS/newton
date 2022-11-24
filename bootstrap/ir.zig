@@ -1340,21 +1340,6 @@ fn ssaValue(
             std.debug.assert(update_with_value == .none);
             return appendToBlock(block_idx, .none, .{.undefined = {}});
         },
-        .deref => |sidx| {
-            const source = sema.values.get(sidx);
-            const source_type = sema.types.get(try source.getType());
-            const ir_value = try ssaValue(block_idx, sidx, .none);
-            if(DeclIndex.unwrap(update_with_value)) |update| {
-                return appendToBlock(block_idx, .none, .{.store = .{.dest = ir_value, .value = update}});
-            }
-            return appendToBlock(block_idx, .none, .{.load = .{
-                .source = ir_value,
-                .type = switch(source_type.*) {
-                    .pointer, .reference => |ptr| typeFor(ptr.item),
-                    else => std.debug.panic("??? {s}", .{@tagName(source_type.*)}),
-                },
-            }});
-        },
         else => |val| std.debug.panic("Unhandled ssaing of value {s}", .{@tagName(val)}),
     }
 }
@@ -1447,6 +1432,18 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index, up
             }});
         },
         .offset => |offset| return appendToBlock(block_idx, update_decl, .{.offset_ref = offset}),
+        .deref => |sidx| {
+            const source = sema.values.get(sidx);
+            const source_type = sema.types.get(try source.getType());
+            const ir_value = try ssaValue(block_idx, sidx, .none);
+            return appendToBlock(block_idx, update_decl, .{.load = .{
+                .source = ir_value,
+                .type = switch(source_type.*) {
+                    .pointer, .reference => |ptr| typeFor(ptr.item),
+                    else => std.debug.panic("??? {s}", .{@tagName(source_type.*)}),
+                },
+            }});
+        },
         else => |expr| std.debug.panic("Unhandled ssaing of expr {s}", .{@tagName(expr)}),
     }
 }
