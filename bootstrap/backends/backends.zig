@@ -1,8 +1,8 @@
 const std = @import("std");
 
-const ir = @import("ir.zig");
-const rega = @import("rega.zig");
-const sema = @import("sema.zig");
+const ir = @import("../ir.zig");
+const rega = @import("../rega.zig");
+const sema = @import("../sema.zig");
 
 pub const backends = struct {
     pub const aarch64 = @import("aarch64.zig");

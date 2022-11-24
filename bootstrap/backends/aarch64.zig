@@ -1,8 +1,8 @@
 const std = @import("std");
 
 const backends = @import("backends.zig");
-const ir = @import("ir.zig");
-const rega = @import("rega.zig");
+const ir = @import("../ir.zig");
+const rega = @import("../rega.zig");
 
 fn registerName(reg: u8) []const u8 {
     switch(reg) {

@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const backends = @import("backends.zig");
+const backends = @import("backends/backends.zig");
 
 pub const BASE_VADDR = 0x100000;
 

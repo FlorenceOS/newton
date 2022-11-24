@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const ast = @import("ast.zig");
-const backends = @import("backends.zig");
+const backends = @import("backends/backends.zig");
 const ir = @import("ir.zig");
 const indexed_list = @import("indexed_list.zig");
 const sources = @import("sources.zig");

@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const backends = @import("backends.zig");
+const backends = @import("backends/backends.zig");
 const indexed_list = @import("indexed_list.zig");
 const sema = @import("sema.zig");
 const rega = @import("rega.zig");

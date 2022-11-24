@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const ast = @import("ast.zig");
-const backends = @import("backends.zig");
+const backends = @import("backends/backends.zig");
 const elf = @import("elf.zig");
 const parser = @import("parser.zig");
 const sema = @import("sema.zig");
