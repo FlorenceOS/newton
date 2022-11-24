@@ -1,5 +1,5 @@
-const root = @import("lmao.tco");
-const self = @import("otherfile.tco");
+const root = @import("lmao.n");
+const self = @import("other.n");
 
 fn strlen(ptr: *const u8) u64 {
     var res: u64 = 0;

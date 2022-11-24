@@ -1,8 +1,8 @@
-const other = @import("otherfile.tco");
+const other = @import("other.n");
 
 const SYS = struct {
-    const WRITE = 1;
-    const EXIT = 60;
+    const WRITE = 64;
+    const EXIT = 93;
 };
 
 fn main() u64 {
