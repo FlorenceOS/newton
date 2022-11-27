@@ -875,6 +875,9 @@ pub const Struct = struct {
             offset += try field_type.getSize();
         }
         std.debug.assert(field_idx == .none);
+        const alignment = try self.getAlignment();
+        offset += alignment - 1;
+        offset &= ~(alignment - 1);
         return offset;
     }
 };
