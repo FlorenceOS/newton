@@ -222,7 +222,7 @@ fn subImm(writer: *backends.Writer, operation_type: ir.InstrType, dest_reg: u8, 
         try writer.writeInt(u8, 0xFF);
         try writer.writeInt(u8, 0xC8 | (dest_reg & 0x7));
     } else {
-        const opcode: u8 = 0xE9 | (dest_reg & 0x7);
+        const opcode: u8 = 0xE8 | (dest_reg & 0x7);
         try prefix(writer, operation_type, false, false, dest_reg >= 8);
         if(std.math.cast(i8, value)) |i8_value| {
             try writer.writeInt(u8, 0x83);
