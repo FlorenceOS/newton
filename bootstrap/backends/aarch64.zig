@@ -132,7 +132,8 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
     const decl = ir.decls.get(decl_idx);
 
     switch(decl.instr) {
-        .param_ref, .undefined, .clobber, .offset_ref => {},
+        .param_ref, .undefined, .clobber, .offset_ref, .stack_ref, .reference_wrap,
+        => {},
         .load_int_constant => |value| {
             const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
             const mov_ops: [4]std.meta.Tuple(&.{u16, u2, MovType}) = .{
@@ -198,6 +199,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
                         | @as(u32, @truncate(u2, disp)) << 29
                     );
                 },
+                .stack_ref => |offset| try subImm(writer, uf.findRegByPtr(decl).?, registers.fp, @intCast(u12, offset)),
                 else => |other| std.debug.panic("aarch64: TODO addr_of {s}", .{@tagName(other)}),
             }
         },

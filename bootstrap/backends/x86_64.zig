@@ -239,7 +239,8 @@ fn subImm(writer: *backends.Writer, operation_type: ir.InstrType, dest_reg: u8, 
 fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFind) !?ir.BlockIndex.Index {
     const decl = ir.decls.get(decl_idx);
     switch(decl.instr) {
-        .param_ref, .stack_ref, .undefined, .clobber, .offset_ref => {},
+        .param_ref, .stack_ref, .undefined, .clobber, .offset_ref, .reference_wrap,
+        => {},
         .enter_function => |stack_size| if(stack_size > 0) {
             try pushReg(writer, registers.rbp);
             try movRegToReg(writer, .u64, registers.rbp, registers.rsp);
@@ -339,15 +340,21 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
         },
         .addr_of => |op| {
             const operand = ir.decls.get(op);
+            const dest_reg = uf.findRegByPtr(decl).?;
             switch(operand.instr) {
                 .offset_ref => |offset| {
                     // TODO: RM encoding for RIP relative effective addresses
-                    const dest_reg = uf.findRegByPtr(decl).?;
                     const disp = @bitCast(i64, @as(usize, offset) -% (writer.currentOffset() + 7));
                     try prefix(writer, backend.pointer_type, dest_reg >= 8, false, false);
                     try writer.writeInt(u8, 0x8D);
                     try writer.writeInt(u8, 0x0D | ((dest_reg & 0x7) << 3));
                     try writer.writeInt(i32, @intCast(i32, disp));
+                },
+                .stack_ref => |offset| {
+                    const rm = rmStackOffset(@intCast(i32, offset), dest_reg);
+                    try prefix(writer, backend.pointer_type, rm.rex_r, false, rm.rex_b);
+                    try writer.writeInt(u8, 0x8D);
+                    try writer.write(rm.encoded.slice());
                 },
                 else => |other| std.debug.panic("x86_64: TODO addr_of {s}", .{@tagName(other)}),
             }
@@ -364,8 +371,12 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
         .greater_constant, .greater_equal_constant,
         .equals_constant, .not_equal_constant,
         => |op| {
-            const reg = uf.findReg(op.lhs).?;
-            const rm = rmRegDirect(reg, 7);
+            const lhs_decl = ir.decls.get(op.lhs);
+            const rm = switch(lhs_decl.instr) {
+                .reference_wrap => |rr| rmRegIndirect(uf.findReg(rr.pointer_value).?, 7, 0),
+                else => rmRegDirect(uf.findReg(op.lhs).?, 7),
+            };
+
             const operation_type = decl.instr.getOperationType();
             try prefix(writer, operation_type, rm.rex_r, false, rm.rex_b);
             if(std.math.cast(i8, op.rhs)) |i8_value| {

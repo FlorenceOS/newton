@@ -573,13 +573,20 @@ fn evaluateWithoutTypeHint(
                     const token = try rhs_expr.identifier.retokenize();
                     defer token.deinit();
                     if(try lhs_struct.lookupField(token.identifier_value())) |field| {
+                        const member_ptr = try values.addDedupLinear(.{
+                            .type_idx = try types.addDedupLinear(.{.pointer = .{
+                                .is_const = !decl.mutable,
+                                .is_volatile = false,
+                                .item = try values.get(field.init_value).getType(),
+                            }}),
+                        });
                         const offset_expr = try values.insert(.{.unsigned_int = .{
                             .bits = 64,
                             .value = try lhs_struct.offsetOf(StructFieldIndex.toOpt(struct_fields.getIndex(field))),
                         }});
                         const addr_of_expr = try values.insert(.{.runtime = .{
                             .expr = ExpressionIndex.toOpt(try expressions.insert(.{.addr_of = lhs})),
-                            .value_type = .pointer_int_type,
+                            .value_type = member_ptr,
                         }});
                         const member_ref = try values.addDedupLinear(.{
                             .type_idx = try types.addDedupLinear(.{.reference = .{
@@ -590,7 +597,7 @@ fn evaluateWithoutTypeHint(
                         });
                         const add_expr = try values.insert(.{.runtime = .{
                             .expr = ExpressionIndex.toOpt(try expressions.insert(.{.add = .{.lhs = addr_of_expr, .rhs = offset_expr}})),
-                            .value_type = member_ref,
+                            .value_type = member_ptr,
                         }});
                         return putValueIn(value_out, .{.runtime = .{
                             .expr = ExpressionIndex.toOpt(try expressions.insert(.{.deref = add_expr})),
@@ -620,28 +627,53 @@ fn evaluateWithoutTypeHint(
             const lhs_idx = try evaluateWithoutTypeHint(scope_idx, .none, bop.lhs);
             const lhs = values.get(lhs_idx);
             const lhs_type = types.get(try lhs.getType());
-            std.debug.assert(lhs_type.* == .pointer);
+
+            const child_type = switch(lhs_type.*) {
+                .pointer => |ptr| ptr.item,
+                .array => |arr| arr.child,
+                else => std.debug.panic("TODO: array subscript of {s}", .{@tagName(lhs_type.*)}), // ref(ptr|arr)
+            };
+
+            const child_ptr = switch(lhs_type.*) {
+                .pointer => |ptr| ptr,
+                .array => blk: {
+                    const decl = decls.get(lhs.decl_ref);
+                    break :blk PointerType{
+                        .is_const = !decl.mutable,
+                        .is_volatile = false,
+                        .item = child_type,
+                    };
+                },
+                else => unreachable,
+            };
+
             var rhs_idx = try evaluateWithoutTypeHint(scope_idx, .none, bop.rhs);
             var size_expr = try values.addDedupLinear(.{.unsigned_int = .{
                 .bits = 64,
-                .value = @as(i65, @intCast(i64, try types.get(lhs_type.pointer.item).getSize()))
+                .value = @as(i65, @intCast(i64, try types.get(child_type).getSize())),
             }});
             try promoteToBiggest(&size_expr, &rhs_idx, false);
             const rhs = values.get(rhs_idx);
             const rhs_type = types.get(try rhs.getType());
             std.debug.assert(rhs_type.* == .signed_int or rhs_type.* == .unsigned_int or rhs_type.* == .comptime_int);
+            const pointer_expr = if(lhs_type.* != .pointer) blk: {
+                break :blk try values.insert(.{.runtime = .{
+                    .expr = ExpressionIndex.toOpt(try expressions.insert(.{.addr_of = lhs_idx})),
+                    .value_type = try values.addDedupLinear(.{.type_idx = try types.addDedupLinear(.{.pointer = child_ptr})}),
+                }});
+            } else lhs_idx;
             const offset_expr = try values.insert(.{.runtime = .{
                 .expr = ExpressionIndex.toOpt(try expressions.insert(.{.multiply = .{.lhs = rhs_idx, .rhs = size_expr}})),
                 .value_type = .pointer_int_type,
             }});
             const ptr_expr = try values.insert(.{.runtime = .{
-                .expr = ExpressionIndex.toOpt(try expressions.insert(.{.add = .{.lhs = lhs_idx, .rhs = offset_expr}})),
-                .value_type = .pointer_int_type,
+                .expr = ExpressionIndex.toOpt(try expressions.insert(.{.add = .{.lhs = pointer_expr, .rhs = offset_expr}})),
+                .value_type = try values.addDedupLinear(.{.type_idx = try types.addDedupLinear(.{.pointer = child_ptr})}),
             }});
             return putValueIn(value_out, .{.runtime = .{
                 .expr = ExpressionIndex.toOpt(try expressions.insert(.{.deref = ptr_expr})),
                 .value_type = try values.addDedupLinear(.{
-                    .type_idx = try types.addDedupLinear(.{.reference = lhs_type.pointer})
+                    .type_idx = try types.addDedupLinear(.{.reference = child_ptr})
                 }),
             }});
         },
@@ -723,7 +755,7 @@ const SizedInt = struct {
     value: i65,
 };
 
-const PointerType = struct {
+pub const PointerType = struct {
     is_const: bool,
     is_volatile: bool,
     item: TypeIndex.Index,

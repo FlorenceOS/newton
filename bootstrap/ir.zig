@@ -34,6 +34,33 @@ pub const InstrType = enum {
     u64,
 };
 
+const MemoryReference = struct {
+    pointer_value: DeclIndex.Index,
+    sema_pointer_type: sema.PointerType,
+
+    fn instrType(self: @This()) InstrType {
+        return typeFor(self.sema_pointer_type.item);
+    }
+
+    pub fn load(self: @This(), block_idx: BlockIndex.Index) !DeclIndex.Index {
+        std.debug.assert(!self.sema_pointer_type.is_volatile); // Not yet implemented
+
+        return appendToBlock(block_idx, .{.load = .{
+            .source = self.pointer_value,
+            .type = self.instrType(),
+        }});
+    }
+
+    pub fn store(self: @This(), block_idx: BlockIndex.Index, value: DeclIndex.Index) !DeclIndex.Index {
+        std.debug.assert(!self.sema_pointer_type.is_volatile); // Not yet implemented
+        std.debug.assert(!self.sema_pointer_type.is_const);
+        return appendToBlock(block_idx, .{.store = .{
+            .dest = self.pointer_value,
+            .value = value,
+        }});
+    }
+};
+
 fn typeForBits(bits: u32) InstrType {
     if(bits <= 8) return .u8;
     if(bits <= 16) return .u16;
@@ -117,6 +144,7 @@ const DeclInstr = union(enum) {
         source: DeclIndex.Index,
         type: InstrType,
     },
+    reference_wrap: MemoryReference,
 
     add_constant: VariableConstantBop,
     add_mod_constant: VariableConstantBop,
@@ -202,6 +230,10 @@ const DeclInstr = union(enum) {
                 bounded_result.value.bounded_iterator.appendAssumeCapacity(&bop.rhs);
             },
 
+            .reference_wrap => |*rr| {
+                bounded_result.value.bounded_iterator.appendAssumeCapacity(&rr.pointer_value);
+            },
+
             .zero_extend, .sign_extend, .truncate => |*cast| bounded_result.value.bounded_iterator.appendAssumeCapacity(&cast.value),
             .clobber, .addr_of => |*op| bounded_result.value.bounded_iterator.appendAssumeCapacity(op),
 
@@ -234,6 +266,15 @@ const DeclInstr = union(enum) {
         return bounded_result;
     }
 
+    pub fn memoryReference(self: *const @This()) ?MemoryReference {
+        switch(self.*) {
+            .stack_ref => @panic("AAAA"),
+            .offset_ref => @panic("AAAA"),
+            .reference_wrap => |rr| return rr,
+            else => return null,
+        }
+    }
+
     pub fn isVolatile(self: *const @This()) bool {
         switch(self.*) {
             .incomplete_phi => unreachable,
@@ -246,7 +287,8 @@ const DeclInstr = union(enum) {
     pub fn isValue(self: *const @This()) bool {
         switch(self.*) {
             .incomplete_phi => unreachable,
-            .@"if", .@"return", .goto, .stack_ref, .offset_ref, .enter_function, .store, .store_constant
+            .@"if", .@"return", .goto, .stack_ref, .offset_ref, .enter_function,
+            .store, .store_constant, .reference_wrap,
             => return false,
             else => return true,
         }
@@ -283,7 +325,9 @@ const DeclInstr = union(enum) {
             .zero_extend, .sign_extend, .truncate,
             => |cast| return cast.type,
             .clobber => return .u64,
-            .addr_of => return backends.current_backend.pointer_type,
+            .addr_of, .stack_ref, .offset_ref,
+            => return backends.current_backend.pointer_type,
+            .reference_wrap => |rr| return rr.instrType(),
             .add, .add_mod, .sub, .sub_mod,
             .multiply, .multiply_mod, .divide, .modulus,
             .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
@@ -300,7 +344,7 @@ const DeclInstr = union(enum) {
                 const rt = sema.values.get(fcall.callee).function.return_type;
                 return typeFor(sema.values.get(rt).type_idx);
             },
-            .syscall => return .u64,
+            .syscall, .undefined => return .u64,
             .store => |val| return decls.get(val.value).instr.getOperationType(),
             .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
             .multiply_constant, .multiply_mod_constant, .divide_constant, .modulus_constant,
@@ -406,9 +450,10 @@ fn readVariableRecursive(block_idx: BlockIndex.Index, decl: sema.DeclIndex.Index
     const odecl = sema.DeclIndex.toOpt(decl);
     const block = blocks.get(block_idx);
     if(!block.is_sealed) {
-        const new_phi = try appendToBlock(block_idx, odecl, .{
+        const new_phi = try appendToBlock(block_idx, .{
             .incomplete_phi = block.first_incomplete_phi_node,
         });
+        decls.get(new_phi).sema_decl = odecl;
         block.first_incomplete_phi_node = DeclIndex.toOpt(new_phi);
         return new_phi;
     } else {
@@ -417,9 +462,10 @@ fn readVariableRecursive(block_idx: BlockIndex.Index, decl: sema.DeclIndex.Index
 
         if(edges.getOpt(first_edge.next)) |_| {
             // Block gets new phi node
-            const new_phi = try appendToBlock(block_idx, odecl, .{
+            const new_phi = try appendToBlock(block_idx, .{
                 .incomplete_phi = undefined,
             });
+            decls.get(new_phi).sema_decl = odecl;
             return addPhiOperands(decl, block_idx, new_phi, true);
         } else {
             std.debug.assert(blocks.get(first_edge.source_block).is_filled);
@@ -645,6 +691,7 @@ fn deduplicateDecls(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
         while(decls.getOpt(current_decl)) |decl| : (current_decl = decl.next) {
             switch(decl.instr) {
                 .stack_ref, .load_int_constant, .load_bool_constant, .undefined,
+                .addr_of,
 
                 .add, .add_mod, .sub, .sub_mod,
                 .multiply, .multiply_mod, .divide, .modulus,
@@ -906,6 +953,10 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
                 bop.rhs +%= lhs_instr.rhs;
                 return true;
             }
+            if(lhs_decl.instr == .stack_ref) {
+                decl.instr = .{.stack_ref = lhs_decl.instr.stack_ref - @intCast(u32, bop.rhs)};
+                return true;
+            }
         },
         .bit_or_constant, .bit_xor_constant,
         => |bop| {
@@ -1073,7 +1124,6 @@ pub fn insertBefore(before: DeclIndex.Index, instr: DeclInstr) !DeclIndex.Index 
 
 fn appendToBlock(
     block_idx: BlockIndex.Index,
-    sema_decl: sema.DeclIndex.OptIndex,
     instr: DeclInstr,
 ) !DeclIndex.Index {
     const block = blocks.get(block_idx);
@@ -1081,7 +1131,7 @@ fn appendToBlock(
     const retval = try decls.insert(.{
         .block = block_idx,
         .instr = instr,
-        .sema_decl = sema_decl,
+        .sema_decl = .none,
     });
     const oretval = DeclIndex.toOpt(retval);
 
@@ -1150,7 +1200,11 @@ fn ssaBlockStatementIntoBasicBlock(
                 const init_value = sema.values.get(decl.init_value);
 
                 if(decl.stack_offset) |*offset| {
-                    current_stack_offset += try sema.types.get(try init_value.getType()).getSize();
+                    const decl_type = sema.types.get(try init_value.getType());
+                    const alignment = try decl_type.getAlignment();
+                    current_stack_offset += alignment - 1;
+                    current_stack_offset &= ~@as(u32, alignment - 1);
+                    current_stack_offset += try decl_type.getSize();
                     offset.* = current_stack_offset;
                 }
 
@@ -1159,28 +1213,26 @@ fn ssaBlockStatementIntoBasicBlock(
                     break :blk try ssaExpr(
                         current_basic_block,
                         sema.ExpressionIndex.unwrap(expr).?,
-                        if(decl.stack_offset == null) sema.DeclIndex.toOpt(decl_idx) else .none,
                     );
                 } else blk: {
                     const val = sema.values.get(decl.init_value);
                     if(val.* == .function) continue;
-                    const value = try ssaValue(current_basic_block, decl.init_value, .none);
-                    if(decl.stack_offset == null) decls.get(value).sema_decl = sema.DeclIndex.toOpt(decl_idx);
-                    break :blk value;
+                    break :blk try ssaValue(current_basic_block, decl.init_value);
                 };
+                decls.get(value).sema_decl = sema.DeclIndex.toOpt(decl_idx);
 
                 if(decl.stack_offset) |offset| {
-                    const stack_ref = try appendToBlock(current_basic_block, .none, .{.stack_ref = offset});
-                    _ = try appendToBlock(current_basic_block, .none, .{.store = .{.dest = stack_ref, .value = value}});
+                    const stack_ref = try appendToBlock(current_basic_block, .{.stack_ref = offset});
+                    _ = try appendToBlock(current_basic_block, .{.store = .{.dest = stack_ref, .value = value}});
                 }
             },
             .expression => |expr_idx| {
-                _ = try ssaExpr(current_basic_block, expr_idx, .none);
+                _ = try ssaExpr(current_basic_block, expr_idx);
             },
             .if_statement => |if_stmt| {
-                const condition_value = try ssaValue(current_basic_block, if_stmt.condition, .none);
+                const condition_value = try ssaValue(current_basic_block, if_stmt.condition);
 
-                const if_branch = try appendToBlock(current_basic_block, .none, .{.@"if" = .{
+                const if_branch = try appendToBlock(current_basic_block, .{.@"if" = .{
                     .condition = condition_value,
                     .taken = undefined,
                     .not_taken = undefined,
@@ -1204,7 +1256,7 @@ fn ssaBlockStatementIntoBasicBlock(
                     max_stack_usage,
                 );
                 if(if_stmt.taken.reaches_end) {
-                    const taken_exit_branch = try appendToBlock(taken_exit, .none, .{.goto = undefined});
+                    const taken_exit_branch = try appendToBlock(taken_exit, .{.goto = undefined});
                     decls.get(taken_exit_branch).instr.goto = try addEdge(taken_exit, if_exit);
                 }
                 try blocks.get(taken_exit).filled();
@@ -1218,7 +1270,7 @@ fn ssaBlockStatementIntoBasicBlock(
                     max_stack_usage,
                 );
                 if (if_stmt.not_taken.reaches_end) {
-                    const not_taken_exit_branch = try appendToBlock(not_taken_exit, .none, .{.goto = undefined});
+                    const not_taken_exit_branch = try appendToBlock(not_taken_exit, .{.goto = undefined});
                     decls.get(not_taken_exit_branch).instr.goto = try addEdge(not_taken_exit, if_exit);
                 }
                 try blocks.get(not_taken_exit).filled();
@@ -1228,7 +1280,7 @@ fn ssaBlockStatementIntoBasicBlock(
                 current_basic_block = if_exit;
             },
             .loop_statement => |loop| {
-                const loop_enter_branch = try appendToBlock(current_basic_block, .none, .{.goto = undefined});
+                const loop_enter_branch = try appendToBlock(current_basic_block, .{.goto = undefined});
                 const loop_body_entry = try blocks.insert(.{});
                 decls.get(loop_enter_branch).instr.goto = try addEdge(current_basic_block, loop_body_entry);
                 try blocks.get(current_basic_block).filled();
@@ -1245,7 +1297,7 @@ fn ssaBlockStatementIntoBasicBlock(
                 );
                 try blocks.get(exit_block).seal();
                 if(loop.body.reaches_end) {
-                    const loop_instr = try appendToBlock(loop_body_end, .none, .{.goto = undefined});
+                    const loop_instr = try appendToBlock(loop_body_end, .{.goto = undefined});
                     decls.get(loop_instr).instr.goto = try addEdge(loop_body_end, loop_body_entry);
                 }
                 try blocks.get(loop_body_end).filled();
@@ -1255,13 +1307,13 @@ fn ssaBlockStatementIntoBasicBlock(
             },
             .break_statement => |break_block| {
                 const goto_block = BlockIndex.unwrap(sema.statements.get(break_block).ir_block).?;
-                _ = try appendToBlock(current_basic_block, .none, .{.goto = try addEdge(current_basic_block, goto_block)});
+                _ = try appendToBlock(current_basic_block, .{.goto = try addEdge(current_basic_block, goto_block)});
             },
             .return_statement => |return_stmt| {
                 var value = if(sema.ValueIndex.unwrap(return_stmt.value)) |sema_value| blk: {
-                    break :blk try ssaValue(current_basic_block, sema_value, .none);
+                    break :blk try ssaValue(current_basic_block, sema_value);
                 } else blk: {
-                    break :blk try appendToBlock(current_basic_block, .none, .{.undefined = {}});
+                    break :blk try appendToBlock(current_basic_block, .{.undefined = {}});
                 };
 
                 const phi_decl = decls.get(return_phi_node);
@@ -1272,7 +1324,7 @@ fn ssaBlockStatementIntoBasicBlock(
                     .next = phi_decl.instr.phi,
                 }));
 
-                _ = try appendToBlock(current_basic_block, .none, .{.@"goto" = exit_edge});
+                _ = try appendToBlock(current_basic_block, .{.@"goto" = exit_edge});
             },
         }
     }
@@ -1282,82 +1334,64 @@ fn ssaBlockStatementIntoBasicBlock(
 fn ssaValue(
     block_idx: BlockIndex.Index,
     value_idx: sema.ValueIndex.Index,
-    update_with_value: DeclIndex.OptIndex,
 ) !DeclIndex.Index {
     const value = sema.values.get(value_idx);
     switch(value.*) {
-        .runtime => |rt| {
-            const ir_value = try ssaExpr(block_idx, sema.ExpressionIndex.unwrap(rt.expr).?, .none);
-            if(decls.get(ir_value).instr == .stack_ref) {
-                if(DeclIndex.unwrap(update_with_value)) |target| {
-                    return try appendToBlock(block_idx, .none, .{.store = .{.dest = ir_value, .value = target}});
-                }
-                return appendToBlock(block_idx, .none, .{.load = .{
-                    .source = ir_value,
-                    .type = typeFor(try value.getType()),
-                }});
-            }
-            return ir_value;
-        },
+        .runtime => |rt| return ssaExpr(block_idx, sema.ExpressionIndex.unwrap(rt.expr).?),
         .decl_ref => |decl_idx| {
             const rdecl = sema.decls.get(decl_idx);
             if(rdecl.stack_offset) |offset| {
-                const stack_ref = try appendToBlock(block_idx, .none, .{.stack_ref = offset});
-                if(decls.getOpt(update_with_value)) |update| {
-                    return appendToBlock(block_idx, .none, .{.store = .{.dest = stack_ref, .value = decls.getIndex(update)}});
-                }
-                return appendToBlock(block_idx, .none, .{.load = .{
-                    .source = stack_ref,
-                    .type = typeFor(try sema.values.get(rdecl.init_value).getType()),
-                }});
+                return appendToBlock(block_idx, .{.stack_ref = offset});
             } else {
-                if(decls.getOpt(update_with_value)) |update| {
-                    return appendToBlock(block_idx, sema.DeclIndex.toOpt(decl_idx), .{.copy = decls.getIndex(update)});
-                }
                 return readVariable(block_idx, decl_idx);
             }
         },
         .comptime_int => |c| {
-            std.debug.assert(update_with_value == .none);
-            return appendToBlock(block_idx, .none, .{.load_int_constant = .{
+            return appendToBlock(block_idx, .{.load_int_constant = .{
                 .value = @intCast(u64, c),
                 .type = .u64, // TODO
             }});
         },
-        .bool => |b| {
-            std.debug.assert(update_with_value == .none);
-            return appendToBlock(block_idx, .none, .{.load_bool_constant = b});
-        },
+        .bool => |b| return appendToBlock(block_idx, .{.load_bool_constant = b}),
         .unsigned_int => |int| {
             // TODO: Pass value bit width along too
-            std.debug.assert(update_with_value == .none);
-            return appendToBlock(block_idx, .none, .{.load_int_constant = .{
+            return appendToBlock(block_idx, .{.load_int_constant = .{
                 .value = @intCast(u64, int.value),
                 .type = typeForBits(int.bits),
             }});
         },
-        .undefined => {
-            std.debug.assert(update_with_value == .none);
-            return appendToBlock(block_idx, .none, .{.undefined = {}});
-        },
+        .undefined => return appendToBlock(block_idx, .{.undefined = {}}),
         else => |val| std.debug.panic("Unhandled ssaing of value {s}", .{@tagName(val)}),
     }
 }
 
-fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index, update_decl: sema.DeclIndex.OptIndex) anyerror!DeclIndex.Index {
+fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index) anyerror!DeclIndex.Index {
     switch(sema.expressions.get(expr_idx).*) {
-        .value => |val_idx| return ssaValue(block_idx, val_idx, .none),
+        .value => |val_idx| return ssaValue(block_idx, val_idx),
         .assign => |ass| {
             // Evaluate rhs first because it makes more lifetime sense for assignment ops
-            const rhs = try ssaValue(block_idx, ass.rhs, .none);
+            const rhs = try ssaValue(block_idx, ass.rhs);
+            const rhs_decl = decls.get(rhs);
+
+            const rhs_value = if(rhs_decl.instr.memoryReference()) |mr|
+                try mr.load(block_idx) else rhs;
 
             if(ass.lhs != .discard_underscore) {
-                _ = try ssaValue(block_idx, ass.lhs, DeclIndex.toOpt(rhs));
-
-                // TODO: Handle reference types on lhs
-                return undefined;
+                const lhs_sema = sema.values.get(ass.lhs);
+                if(lhs_sema.* == .decl_ref) {
+                    const rhs_value_decl = decls.get(rhs_value);
+                    if(rhs_value_decl.sema_decl != .none) {
+                        const new_rhs = try appendToBlock(block_idx, rhs_value_decl.instr);
+                        decls.get(new_rhs).sema_decl = sema.DeclIndex.toOpt(lhs_sema.decl_ref);
+                    } else {
+                        rhs_value_decl.sema_decl = sema.DeclIndex.toOpt(lhs_sema.decl_ref);
+                    }
+                } else {
+                    const lhs = try ssaValue(block_idx, ass.lhs);
+                    const lhs_mr = decls.get(lhs).instr.memoryReference().?;
+                    _ = try lhs_mr.store(block_idx, rhs_value);
+                }
             }
-
             return undefined;
         },
         inline
@@ -1366,9 +1400,9 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index, up
         .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
         .less, .less_equal, .equals, .not_equal,
         => |bop, tag| {
-            return appendToBlock(block_idx, update_decl, @unionInit(DeclInstr, @tagName(tag), .{
-                .lhs = try ssaValue(block_idx, bop.lhs, .none),
-                .rhs = try ssaValue(block_idx, bop.rhs, .none),
+            return appendToBlock(block_idx, @unionInit(DeclInstr, @tagName(tag), .{
+                .lhs = try ssaValue(block_idx, bop.lhs),
+                .rhs = try ssaValue(block_idx, bop.rhs),
             }));
         },
         inline
@@ -1376,46 +1410,48 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index, up
         .multiply_eq, .multiply_mod_eq, .divide_eq, .modulus_eq,
         .shift_left_eq, .shift_right_eq, .bit_and_eq, .bit_or_eq, .bit_xor_eq,
         => |bop, tag| {
-            const lhs_ref = try ssaValue(block_idx, bop.lhs, .none);
-            const rhs_ref = try ssaValue(block_idx, bop.rhs, .none);
-            const value = try appendToBlock(block_idx, .none, @unionInit(DeclInstr, @tagName(tag)[0..@tagName(tag).len - 3], .{
-                .lhs = lhs_ref,
-                .rhs = rhs_ref,
-            }));
-            return ssaValue(block_idx, bop.lhs, DeclIndex.toOpt(value));
+            _ = bop;
+            _ = tag;
+            @panic("TODO: IR Inplace ops");
+            // const lhs_ref = try ssaValue(block_idx, bop.lhs);
+            // const rhs_ref = try ssaValue(block_idx, bop.rhs);
+            // const value = try appendToBlock(block_idx, @unionInit(DeclInstr, @tagName(tag)[0..@tagName(tag).len - 3], .{
+            //     .lhs = lhs_ref,
+            //     .rhs = rhs_ref,
+            // }));
+            // return ssaValue(block_idx, bop.lhs);
         },
-        .greater => |bop| return appendToBlock(block_idx, update_decl, .{.less_equal = .{
-            .lhs = try ssaValue(block_idx, bop.rhs, .none),
-            .rhs = try ssaValue(block_idx, bop.lhs, .none),
+        .greater => |bop| return appendToBlock(block_idx, .{.less_equal = .{
+            .lhs = try ssaValue(block_idx, bop.rhs),
+            .rhs = try ssaValue(block_idx, bop.lhs),
         }}),
-        .greater_equal => |bop| return appendToBlock(block_idx, update_decl, .{.less = .{
-            .lhs = try ssaValue(block_idx, bop.rhs, .none),
-            .rhs = try ssaValue(block_idx, bop.lhs, .none),
+        .greater_equal => |bop| return appendToBlock(block_idx, .{.less = .{
+            .lhs = try ssaValue(block_idx, bop.rhs),
+            .rhs = try ssaValue(block_idx, bop.lhs),
         }}),
         .addr_of => |uop| switch(sema.values.get(uop).*) {
             .decl_ref => |dr| {
                 const decl = sema.decls.get(dr);
-                return appendToBlock(block_idx, update_decl, .{.stack_ref = decl.stack_offset.?});
+                const stack_ref = try appendToBlock(block_idx, .{.stack_ref = decl.stack_offset.?});
+                return appendToBlock(block_idx, .{.addr_of = stack_ref});
             },
             .runtime => |rt| {
-                const value_type = sema.types.get(sema.values.get(rt.value_type).type_idx);
-                std.debug.assert(value_type.* == .reference);
-                return appendToBlock(block_idx, update_decl, .{
-                    .addr_of = try ssaExpr(block_idx, sema.ExpressionIndex.unwrap(rt.expr).?, .none),
-                });
+                const pointer = try ssaExpr(block_idx, sema.ExpressionIndex.unwrap(rt.expr).?);
+                const mr = decls.get(pointer).instr.memoryReference().?;
+                return appendToBlock(block_idx, decls.get(mr.pointer_value).instr);
             },
             else => unreachable,
         },
-        .zero_extend => |cast| return appendToBlock(block_idx, update_decl, .{.zero_extend = .{
-            .value = try ssaValue(block_idx, cast.value, .none),
+        .zero_extend => |cast| return appendToBlock(block_idx, .{.zero_extend = .{
+            .value = try ssaValue(block_idx, cast.value),
             .type = typeFor(cast.type),
         }}),
-        .sign_extend => |cast| return appendToBlock(block_idx, update_decl, .{.sign_extend = .{
-            .value = try ssaValue(block_idx, cast.value, .none),
+        .sign_extend => |cast| return appendToBlock(block_idx, .{.sign_extend = .{
+            .value = try ssaValue(block_idx, cast.value),
             .type = typeFor(cast.type),
         }}),
-        .truncate => |cast| return appendToBlock(block_idx, update_decl, .{.truncate = .{
-            .value = try ssaValue(block_idx, cast.value, .none),
+        .truncate => |cast| return appendToBlock(block_idx, .{.truncate = .{
+            .value = try ssaValue(block_idx, cast.value),
             .type = typeFor(cast.type),
         }}),
         .function_call => |fcall| {
@@ -1423,25 +1459,27 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index, up
             var curr_arg = fcall.first_arg;
             while(sema.expressions.getOpt(curr_arg)) |arg| : (curr_arg = arg.function_arg.next) {
                 const farg = arg.function_arg;
-                _ = try builder.insert(.{.value = try ssaValue(block_idx, farg.value, .none)});
+                const value = try ssaValue(block_idx, farg.value);
+                if(decls.get(value).instr.memoryReference()) |mr| {
+                    _ = try builder.insert(.{
+                        .value = try mr.load(block_idx),
+                    });
+                } else {
+                    _ = try builder.insert(.{.value = value });
+                }
             }
-            if(fcall.callee == .syscall_func) return appendToBlock(block_idx, update_decl, .{.syscall = builder.first});
-            return appendToBlock(block_idx, update_decl, .{.function_call = .{
+            if(fcall.callee == .syscall_func) return appendToBlock(block_idx, .{.syscall = builder.first});
+            return appendToBlock(block_idx, .{.function_call = .{
                 .callee = fcall.callee,
                 .first_argument = builder.first,
             }});
         },
-        .offset => |offset| return appendToBlock(block_idx, update_decl, .{.offset_ref = offset}),
+        .offset => |offset| return appendToBlock(block_idx, .{.offset_ref = offset}),
         .deref => |sidx| {
-            const source = sema.values.get(sidx);
-            const source_type = sema.types.get(try source.getType());
-            const ir_value = try ssaValue(block_idx, sidx, .none);
-            return appendToBlock(block_idx, .none, .{.load = .{
-                .source = ir_value,
-                .type = switch(source_type.*) {
-                    .pointer, .reference => |ptr| typeFor(ptr.item),
-                    else => std.debug.panic("??? {s}", .{@tagName(source_type.*)}),
-                },
+            const pointer_value = try ssaValue(block_idx, sidx);
+            return appendToBlock(block_idx, .{.reference_wrap = .{
+                .pointer_value = pointer_value,
+                .sema_pointer_type = sema.types.get(try sema.values.get(sidx).getType()).pointer,
             }});
         },
         else => |expr| std.debug.panic("Unhandled ssaing of expr {s}", .{@tagName(expr)}),
@@ -1450,25 +1488,26 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index, up
 
 pub fn ssaFunction(func: *sema.Function) !BlockIndex.Index {
     const first_basic_block = try blocks.insert(.{});
-    const enter_decl = try appendToBlock(first_basic_block, .none, .{.enter_function = undefined});
+    const enter_decl = try appendToBlock(first_basic_block, .{.enter_function = undefined});
     try blocks.get(first_basic_block).seal();
 
     // Loop over function params and add references to them
     var curr_param = sema.scopes.get(func.param_scope).first_decl;
     while(sema.decls.getOpt(curr_param)) |decl| {
-        _ = try appendToBlock(first_basic_block, curr_param, .{
+        const param = try appendToBlock(first_basic_block, .{
             .param_ref = .{
                 .param_idx = decl.function_param_idx.?,
                 .type = typeFor(try sema.values.get(decl.init_value).getType()),
             },
         });
+        decls.get(param).sema_decl = curr_param;
 
         curr_param = decl.next;
     }
 
     const exit_block = try blocks.insert(.{});
-    const phi = try appendToBlock(exit_block, .none, .{.phi = .none});
-    const exit_return = try appendToBlock(exit_block, .none, .{.@"return" = .{.restore_stack = false, .value = phi}});
+    const phi = try appendToBlock(exit_block, .{.phi = .none});
+    const exit_return = try appendToBlock(exit_block, .{.@"return" = .{.restore_stack = false, .value = phi}});
 
     var stack_offset: u32 = 0;
     const return_block = try ssaBlockStatementIntoBasicBlock(
@@ -1480,7 +1519,7 @@ pub fn ssaFunction(func: *sema.Function) !BlockIndex.Index {
         &stack_offset,
     );
     if(func.body.reaches_end) {
-        _ = try appendToBlock(return_block, .none, .{.goto = try addEdge(return_block, exit_block)});
+        _ = try appendToBlock(return_block, .{.goto = try addEdge(return_block, exit_block)});
     }
 
     decls.get(exit_return).instr.@"return".restore_stack = stack_offset > 0;
@@ -1516,6 +1555,7 @@ pub fn dumpBlock(
             .addr_of => |p| std.debug.print("@addr_of(${d})\n", .{@enumToInt(p)}),
             .enter_function => |size| std.debug.print("@enter_function({d})\n", .{size}),
             .load_int_constant => |value| std.debug.print("{d}\n", .{value.value}),
+            .reference_wrap => |ref| std.debug.print("@deref(${d})\n", .{@enumToInt(ref.pointer_value)}),
             .zero_extend, .sign_extend, .truncate => |cast| std.debug.print("@{s}(${d})\n", .{@tagName(decl.instr), @enumToInt(cast.value)}),
             .load_bool_constant => |b| std.debug.print("{}\n", .{b}),
             .undefined => std.debug.print("undefined\n", .{}),
