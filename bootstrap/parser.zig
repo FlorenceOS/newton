@@ -275,6 +275,17 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
         .loop_keyword => @panic("TODO: Loop expressions"),
         .switch_keyword => @panic("TODO: Switch expressions"),
 
+        .@"[_ch" => {
+            const size = try self.parseExpression(null);
+            _ = try self.expect(.@"]_ch");
+            const child_type = try self.parseExpression(precedence_in);
+
+            return ast.expressions.insert(.{ .array_type = .{
+                .lhs = size,
+                .rhs = child_type,
+            }});
+        },
+
         // Type expressions
         .enum_keyword => @panic("TODO: Enum type expression"),
         .struct_keyword => blk: {
@@ -350,7 +361,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
         .@"-=_ch", .@"-%_ch", .@"-%=_ch",
         .@"*=_ch", .@"*%_ch", .@"*%=_ch",
         .@"/_ch", .@"/=_ch", .@"%_ch", .@"%=_ch",
-        .@"}_ch", .@")_ch", .@"[_ch", .@"]_ch",
+        .@"}_ch", .@")_ch", .@"]_ch",
         .@"<_ch", .@"<<_ch", .@"<=_ch", .@"<<=_ch",
         .@">_ch", .@">>_ch", .@">=_ch", .@">>=_ch",
         .@"|_ch", .@"|=_ch", .@"&_ch", .@"&=_ch",
@@ -814,6 +825,12 @@ fn dumpNode(index: anytype, node: anytype, indent_level: usize) anyerror!void {
                 std.debug.print("[", .{});
                 try dumpNode(bop.rhs, ast.expressions.get(bop.rhs), indent_level);
                 std.debug.print("]", .{});
+            },
+            .array_type => |bop| {
+                std.debug.print("[", .{});
+                try dumpNode(bop.lhs, ast.expressions.get(bop.lhs), indent_level);
+                std.debug.print("]", .{});
+                try dumpNode(bop.rhs, ast.expressions.get(bop.rhs), indent_level);
             },
             .syscall_func => std.debug.print("@syscall", .{}),
             else => |expr| std.debug.panic("Cannot dump expression of type {s}", .{@tagName(expr)}),
