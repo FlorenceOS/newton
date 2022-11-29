@@ -878,8 +878,8 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
         .bit_xor, .sub, .sub_mod => |bop| {
             if(bop.lhs == bop.rhs) {
                 decl.instr = .{.load_int_constant = .{
-                    .value = 0,
                     .type = decl.instr.getOperationType(),
+                    .value = 0,
                 }};
                 return true;
             }
@@ -918,8 +918,8 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
         => |bop| {
             if(bop.rhs == 0) {
                 decl.instr = .{.load_int_constant = .{
-                    .value = 0,
                     .type = decl.instr.getOperationType(),
+                    .value = 0,
                 }};
             } else if(bop.rhs == 1) {
                 decl.instr = .{.copy = bop.lhs};
@@ -970,8 +970,8 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
             // TODO: check value against type size to optimize more
             if(bop.rhs == 0) {
                 decl.instr = .{.load_int_constant = .{
-                    .value = 0,
                     .type = decl.instr.getOperationType(),
+                    .value = 0,
                 }};
                 return true;
             }
