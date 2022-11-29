@@ -184,7 +184,11 @@ fn analyzeStatementChain(
                     .name = decl.identifier,
                     .init_value = init_value_idx,
                 });
-                if(decl_type.* == .struct_idx) decls.get(new_decl).stack_offset = @as(u32, undefined);
+                switch(decl_type.*) {
+                    .struct_idx, .array,
+                    => decls.get(new_decl).stack_offset = @as(u32, undefined),
+                    else => {},
+                }
                 _ = try stmt_builder.insert(.{.value = .{.declaration = new_decl}});
                 if(block_scope.first_decl == .none) block_scope.first_decl = decl_builder.first;
             },
@@ -641,6 +645,16 @@ fn evaluateWithoutTypeHint(
                 }),
             }});
         },
+        .array_type => |bop| {
+            const size = try evaluateWithTypeHint(scope_idx, .none, bop.lhs, .pointer_int);
+            const child = try evaluateWithTypeHint(scope_idx, .none, bop.rhs, .type);
+            return putValueIn(value_out, .{
+                .type_idx = try types.addDedupLinear(.{.array = .{
+                    .child = values.get(child).type_idx,
+                    .size = @intCast(u32, values.get(size).unsigned_int.value),
+                }}),
+            });
+        },
         .import_call => |import| return evaluateWithTypeHint(scope_idx, .none, sources.source_files.get(import).top_level_struct, .type),
         else => |expr| std.debug.panic("TODO: Sema {s} expression", .{@tagName(expr)}),
     }
@@ -727,6 +741,10 @@ pub const Type = union(enum) {
     struct_idx: StructIndex.Index,
     pointer: PointerType,
     reference: PointerType,
+    array: struct {
+        child: TypeIndex.Index,
+        size: u32,
+    },
 
     pub fn getSize(self: @This()) !u32 {
         return switch(self) {
@@ -739,6 +757,7 @@ pub const Type = union(enum) {
                 .u16 => 2,
                 .u8 => 1,
             },
+            .array => |arr| try types.get(arr.child).getSize() * arr.size,
             .struct_idx => |struct_idx| try structs.get(struct_idx).offsetOf(.none),
             else => |other| std.debug.panic("TODO: getSize of type {s}", .{@tagName(other)}),
         };
@@ -749,6 +768,7 @@ pub const Type = union(enum) {
             .void, .undefined, .comptime_int, .type => 1,
             .bool, .unsigned_int, .signed_int, .pointer, .reference => self.getSize(),
             .struct_idx => |struct_idx| structs.get(struct_idx).getAlignment(),
+            .array => |arr| types.get(arr.child).getAlignment(),
             else => |other| std.debug.panic("TODO: getAlignment of type {s}", .{@tagName(other)}),
         };
     }
