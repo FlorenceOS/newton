@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-fn sliceIndex(comptime T: type, ptr: *T, slice: []T) usize {
+fn sliceIndex(comptime T: type, ptr: *const T, slice: []const T) usize {
     return @divExact((@ptrToInt(ptr) - @ptrToInt(slice.ptr)), @sizeOf(T));
 }
 
@@ -196,7 +196,7 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
         }
 
         /// Get a slot index by pointer
-        pub fn getIndex(self: *@This(), val: *T) Index {
+        pub fn getIndex(self: *@This(), val: *const T) Index {
             return @intToEnum(Index, sliceIndex(T, val, self.elements.items));
         }
 
