@@ -29,6 +29,7 @@ pub const Os = struct {
 
 pub const Optimizations = struct {
     has_nonzero_constant_store: bool,
+    max_memory_operands_fn: std.meta.FnPtr(fn(*const ir.Decl) usize),
 };
 
 pub var current_backend: *const Backend = undefined;

@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const backends = @import("backends/backends.zig");
 const ir = @import("ir.zig");
 
 const DeclSet = std.AutoArrayHashMapUnmanaged(ir.DeclIndex.Index, void);
@@ -218,6 +219,24 @@ pub fn doRegAlloc(
                 const replacement = param_replacement.get(op.*) orelse continue;
                 if(replacement != ir.decls.getIndex(instr))
                     op.* = replacement;
+            }
+        }
+    }
+
+    for(block_list.items) |blk_idx| {
+        const blk = ir.blocks.get(blk_idx);
+        var curr_instr = blk.first_decl;
+        while(ir.decls.getOpt(curr_instr)) |instr| : (curr_instr = instr.next) {
+            const max_memory_operands = backends.current_backend.optimizations.max_memory_operands_fn(instr);
+            var memory_operands: usize = 0;
+            var it = instr.instr.operands();
+            while(it.next()) |op| {
+                if(ir.decls.get(op.*).instr.memoryReference()) |mr| {
+                    memory_operands += 1;
+                    if(memory_operands > max_memory_operands) {
+                        op.* = try ir.insertBefore(ir.decls.getIndex(instr), mr.load());
+                    }
+                }
             }
         }
     }
