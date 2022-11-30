@@ -310,7 +310,7 @@ fn evaluateWithoutTypeHint(
                     .stack_offset = null,
                     .function_param_idx = function_param_idx,
                     .name = ast_param.identifier,
-                    .init_value = try values.addDedupLinear(.{.runtime = .{.expr = .none, .value_type = param_type}}),
+                    .init_value = try values.insert(.{.runtime = .{.expr = .none, .value_type = param_type}}),
                 });
                 function_param_idx += 1;
                 curr_ast_param = ast_param.next;
@@ -705,16 +705,16 @@ fn evaluateWithTypeHint(
         .unsigned_int, .signed_int => |int| return promoteInteger(int.value, value_out, requested_type),
         .bool => if(requested_type == .bool) return evaluated_idx,
         .type_idx => if(requested_type == .type) return evaluated_idx,
-        .undefined => return values.addDedupLinear(.{.runtime = .{
-            .expr = ExpressionIndex.toOpt(try expressions.addDedupLinear(.{.value = .undefined})),
+        .undefined => return values.insert(.{.runtime = .{
+            .expr = ExpressionIndex.toOpt(try expressions.insert(.{.value = .undefined})),
             .value_type = try values.addDedupLinear(.{.type_idx = requested_type}),
         }}),
         .runtime => |rt| {
             if(values.get(rt.value_type).type_idx == requested_type) return evaluated_idx;
             const evaluated_type = types.get(try evaluated.getType());
             if(evaluated_type.* == .reference and evaluated_type.reference.item == requested_type) {
-                return values.addDedupLinear(.{.runtime = .{
-                    .expr = ExpressionIndex.toOpt(try expressions.insert(.{.deref = evaluated_idx})),
+                return values.insert(.{.runtime = .{
+                    .expr = ExpressionIndex.toOpt(try expressions.insert(.{.value = evaluated_idx})),
                     .value_type = try values.addDedupLinear(.{.type_idx = requested_type}),
                 }});
             }
