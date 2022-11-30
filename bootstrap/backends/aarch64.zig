@@ -17,6 +17,9 @@ pub const backend = backends.Backend{
     .pointer_type = .u64,
     .register_name = registerName,
     .write_decl = writeDecl,
+    .optimizations = .{
+        .has_nonzero_constant_store = false,
+    },
 };
 
 pub const registers = struct {
@@ -185,6 +188,19 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
 
             try writer.writeInt(u32, opcode
                 | @as(u32, uf.findReg(s.value).?) << 0
+                | @as(u32, uf.findReg(s.dest).?) << 5
+            );
+        },
+        .store_constant => |s| {
+            const opcode: u32 = switch(decl.instr.getOperationType()) {
+                .u8 =>  0x38000000,
+                .u16 => 0x78000000,
+                .u32 => 0xB8000000,
+                .u64 => 0xF8000000,
+            };
+
+            try writer.writeInt(u32, opcode
+                | @as(u32, registers.zero) << 0
                 | @as(u32, uf.findReg(s.dest).?) << 5
             );
         },

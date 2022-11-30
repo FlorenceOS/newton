@@ -14,6 +14,8 @@ pub const Backend = struct {
     pointer_type: ir.InstrType,
     register_name: std.meta.FnPtr(fn(u8) []const u8),
     write_decl: std.meta.FnPtr(fn(writer: *Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFind) anyerror!?ir.BlockIndex.Index),
+
+    optimizations: Optimizations,
 };
 
 pub const Os = struct {
@@ -23,6 +25,10 @@ pub const Os = struct {
     syscall_param_regs: []const u8,
     caller_saved: []const u8,
     syscall_clobbers: []const u8,
+};
+
+pub const Optimizations = struct {
+    has_nonzero_constant_store: bool,
 };
 
 pub var current_backend: *const Backend = undefined;

@@ -20,6 +20,9 @@ pub const backend = backends.Backend{
     .pointer_type = .u64,
     .register_name = registerName,
     .write_decl = writeDecl,
+    .optimizations = .{
+        .has_nonzero_constant_store = true,
+    },
 };
 
 pub const oses = struct {

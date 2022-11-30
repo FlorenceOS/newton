@@ -893,12 +893,14 @@ fn inlineConstants(decl_idx: DeclIndex.Index) !bool {
         .store => |store| {
             const value = decls.get(store.value).instr;
             if(value == .load_int_constant) {
-                decl.instr = .{.store_constant = .{
-                    .dest = store.dest,
-                    .type = value.load_int_constant.type,
-                    .value = value.load_int_constant.value,
-                }};
-               return true;
+                if(value.load_int_constant.value == 0 or backends.current_backend.optimizations.has_nonzero_constant_store) {
+                    decl.instr = .{.store_constant = .{
+                        .dest = store.dest,
+                        .type = value.load_int_constant.type,
+                        .value = value.load_int_constant.value,
+                    }};
+                    return true;
+                }
             }
         },
 
