@@ -42,22 +42,15 @@ const MemoryReference = struct {
         return typeFor(self.sema_pointer_type.item);
     }
 
-    pub fn load(self: @This(), block_idx: BlockIndex.Index) !DeclIndex.Index {
+    pub fn load(self: @This()) DeclInstr {
         std.debug.assert(!self.sema_pointer_type.is_volatile); // Not yet implemented
-
-        return appendToBlock(block_idx, .{.load = .{
-            .source = self.pointer_value,
-            .type = self.instrType(),
-        }});
+        return .{.load = .{.source = self.pointer_value, .type = self.instrType()}};
     }
 
-    pub fn store(self: @This(), block_idx: BlockIndex.Index, value: DeclIndex.Index) !DeclIndex.Index {
+    pub fn store(self: @This(), value: DeclIndex.Index) DeclInstr {
         std.debug.assert(!self.sema_pointer_type.is_volatile); // Not yet implemented
         std.debug.assert(!self.sema_pointer_type.is_const);
-        return appendToBlock(block_idx, .{.store = .{
-            .dest = self.pointer_value,
-            .value = value,
-        }});
+        return .{.store = .{.dest = self.pointer_value, .value = value}};
     }
 };
 
@@ -1376,7 +1369,7 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index) an
             const rhs_decl = decls.get(rhs);
 
             const rhs_value = if(rhs_decl.instr.memoryReference()) |mr|
-                try mr.load(block_idx) else rhs;
+                try appendToBlock(block_idx, mr.load()) else rhs;
 
             if(ass.lhs != .discard_underscore) {
                 const lhs_sema = sema.values.get(ass.lhs);
@@ -1391,7 +1384,7 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index) an
                 } else {
                     const lhs = try ssaValue(block_idx, ass.lhs);
                     const lhs_mr = decls.get(lhs).instr.memoryReference().?;
-                    _ = try lhs_mr.store(block_idx, rhs_value);
+                    _ = try appendToBlock(block_idx, lhs_mr.store(rhs_value));
                 }
             }
             return undefined;
@@ -1464,7 +1457,7 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index) an
                 const value = try ssaValue(block_idx, farg.value);
                 if(decls.get(value).instr.memoryReference()) |mr| {
                     _ = try builder.insert(.{
-                        .value = try mr.load(block_idx),
+                        .value = try appendToBlock(block_idx, mr.load()),
                     });
                 } else {
                     _ = try builder.insert(.{.value = value });
