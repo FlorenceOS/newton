@@ -457,14 +457,23 @@ fn evaluateWithoutTypeHint(
                 .syscall_func => blk: {
                     while(ast.expressions.getOpt(curr_ast_arg)) |ast_arg| {
                         const func_arg = ast_arg.function_argument;
-                        const arg_value = evaluateWithoutTypeHint(
+                        var arg_value = evaluateWithoutTypeHint(
                             scope_idx,
                             .none,
                             func_arg.value
                         ) catch try evaluateWithTypeHint(scope_idx, .none, func_arg.value, .u64);
                         const arg_value_type = try values.get(arg_value).getType();
                         switch(types.get(arg_value_type).*) {
-                            .pointer, .unsigned_int, .signed_int, .comptime_int => {},
+                            .pointer => {},
+                            .comptime_int => {
+                                if(values.get(arg_value).comptime_int < 0) {
+                                    try promote(&arg_value, .i64);
+                                } else {
+                                    try promote(&arg_value, .u64);
+                                }
+                            },
+                            .signed_int => try promote(&arg_value, .i64),
+                            .unsigned_int => try promote(&arg_value, .u64),
                             else => |other| std.debug.panic("Can't pass {s} to syscall", .{@tagName(other)}),
                         }
                         _ = try arg_builder.insert(.{.function_arg = .{.value = arg_value}});
