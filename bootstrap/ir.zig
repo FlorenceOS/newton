@@ -955,10 +955,10 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
                 bop.rhs +%= lhs_instr.rhs;
                 return true;
             }
-            if(lhs_decl.instr == .stack_ref) {
-                decl.instr = .{.stack_ref = lhs_decl.instr.stack_ref - @intCast(u32, bop.rhs)};
-                return true;
-            }
+            // if(lhs_decl.instr == .stack_ref) {
+            //     decl.instr = .{.stack_ref = lhs_decl.instr.stack_ref - @intCast(u32, bop.rhs)};
+            //     return true;
+            // }
         },
         .bit_or_constant, .bit_xor_constant,
         => |bop| {
