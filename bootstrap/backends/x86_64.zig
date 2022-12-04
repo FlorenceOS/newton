@@ -125,6 +125,15 @@ fn rmStackOffset(stack_offset: i32, reg: u8) Rm {
     return rmRegIndirect(registers.rbp, reg, -stack_offset);
 }
 
+fn rmOperand(reg: u8, uf: rega.UnionFind, operand: ir.DeclIndex.Index) Rm {
+    const op = ir.decls.get(operand);
+    if(op.instr.memoryReference()) |mr| {
+        return rmRegIndirect(uf.findReg(mr.pointer_value).?, reg, 0);
+    } else {
+        return rmRegDirect(uf.findRegByPtr(op).?, reg);
+    }
+}
+
 fn pushReg(writer: *backends.Writer, reg: u8) !void {
     try rexPrefix(writer, false, false, false, reg >= 8);
     try writer.writeInt(u8, 0x50 | (reg & 0x7));
@@ -271,20 +280,20 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
         ),
         .zero_extend => |zext| {
             const dest_reg = uf.findRegByPtr(decl).?;
-            const src_reg = uf.findReg(zext.value).?;
+            const src = rmOperand(dest_reg, uf, zext.value);
 
             const dest_type = decl.instr.getOperationType();
             const src_type = ir.decls.get(zext.value).instr.getOperationType();
 
             if(dest_type == .u64 and src_type == .u32) {
-                try movRegToReg(writer, .u32, dest_reg, src_reg);
+                try movRmToReg(writer, .u32, dest_reg, src);
             } else {
                 // movzx rM r/mN
-                const rm = rmRegDirect(src_reg, dest_reg);
                 const opcode: u8 = if(src_type == .u8) 0xB6 else 0xB7;
-                try prefix(writer, dest_type, rm.rex_r, false, rm.rex_b);
+                try prefix(writer, dest_type, src.rex_r, false, src.rex_b);
+                try writer.writeInt(u8, 0x0F);
                 try writer.writeInt(u8, opcode);
-                try writer.write(rm.encoded.slice());
+                try writer.write(src.encoded.slice());
             }
         },
         .load_int_constant => |constant| try movImmToReg(
