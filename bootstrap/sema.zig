@@ -321,7 +321,14 @@ fn evaluateWithoutTypeHint(
             try backends.writer.writeInt(u8, 0);
             // TODO: Slice types
             return putValueIn(value_out, .{.runtime = .{
-                .expr = ExpressionIndex.toOpt(try expressions.insert(.{.offset = @intCast(u32, offset)})),
+                .expr = ExpressionIndex.toOpt(try expressions.insert(.{.offset = .{
+                    .offset = @intCast(u32, offset),
+                    .type = .{
+                        .is_volatile = false,
+                        .is_const = true,
+                        .item = .u8,
+                    },
+                }})),
                 .value_type = try values.addDedupLinear(.{.type_idx = try types.addDedupLinear(.{
                     .reference = .{.is_const = true, .is_volatile = false, .item = .u8},
                 })}),
@@ -1046,7 +1053,7 @@ pub const Expression = union(enum) {
     zero_extend: Cast,
     truncate: Cast,
 
-    offset: u32,
+    offset: struct { offset: u32, type: PointerType },
     addr_of: ValueIndex.Index,
     deref: ValueIndex.Index,
 

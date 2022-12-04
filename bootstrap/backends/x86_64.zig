@@ -342,7 +342,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             const source = ir.decls.get(op.source);
             const dest_reg = uf.findRegByPtr(decl).?;
             const rm = switch(source.instr) {
-                .stack_ref => |stack_offset| rmStackOffset(@intCast(i32, stack_offset), dest_reg),
+                .stack_ref => |stackoff| rmStackOffset(@intCast(i32, stackoff.offset), dest_reg),
                 else => rmRegIndirect(uf.findRegByPtr(source).?, dest_reg, 0),
             };
             try movRmToReg(writer, op.type, dest_reg, rm);
@@ -353,7 +353,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             const value_reg = uf.findRegByPtr(value).?;
             const operation_type = value.instr.getOperationType();
             const rm = switch(dest.instr) {
-                .stack_ref => |stack_offset| rmStackOffset(@intCast(i32, stack_offset), value_reg),
+                .stack_ref => |stackoff| rmStackOffset(@intCast(i32, stackoff.offset), value_reg),
                 else => rmRegIndirect(uf.findRegByPtr(dest).?, value_reg, 0),
             };
             try movRegToRm(writer, operation_type, rm, value_reg);
@@ -362,16 +362,16 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             const operand = ir.decls.get(op);
             const dest_reg = uf.findRegByPtr(decl).?;
             switch(operand.instr) {
-                .offset_ref => |offset| {
+                .offset_ref => |offref| {
                     // TODO: RM encoding for RIP relative effective addresses
-                    const disp = @bitCast(i64, @as(usize, offset) -% (writer.currentOffset() + 7));
+                    const disp = @bitCast(i64, @as(usize, offref.offset) -% (writer.currentOffset() + 7));
                     try prefix(writer, backend.pointer_type, dest_reg >= 8, false, false);
                     try writer.writeInt(u8, 0x8D);
                     try writer.writeInt(u8, 0x0D | ((dest_reg & 0x7) << 3));
                     try writer.writeInt(i32, @intCast(i32, disp));
                 },
-                .stack_ref => |offset| {
-                    const rm = rmStackOffset(@intCast(i32, offset), dest_reg);
+                .stack_ref => |stackoff| {
+                    const rm = rmStackOffset(@intCast(i32, stackoff.offset), dest_reg);
                     try prefix(writer, backend.pointer_type, rm.rex_r, false, rm.rex_b);
                     try writer.writeInt(u8, 0x8D);
                     try writer.write(rm.encoded.slice());
@@ -382,7 +382,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
         .store_constant => |op| {
             const dest = ir.decls.get(op.dest);
             const rm = switch(dest.instr) {
-                .stack_ref => |stack_offset| rmStackOffset(@intCast(i32, stack_offset), 0),
+                .stack_ref => |stackoff| rmStackOffset(@intCast(i32, stackoff.offset), 0),
                 else => rmRegIndirect(uf.findRegByPtr(dest).?, 0, 0),
             };
             try movImmToRm(writer, op.type, rm, @intCast(i32, @bitCast(i64, op.value)));

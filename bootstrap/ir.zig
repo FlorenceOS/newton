@@ -85,8 +85,8 @@ const DeclInstr = union(enum) {
         param_idx: u8,
         type: InstrType,
     },
-    stack_ref: u32,
-    offset_ref: u32,
+    stack_ref: struct { offset: u32, type: sema.PointerType },
+    offset_ref: struct { offset: u32, type: sema.PointerType },
     load_int_constant: struct {
         value: u64,
         type: InstrType,
@@ -260,9 +260,16 @@ const DeclInstr = union(enum) {
     }
 
     pub fn memoryReference(self: *const @This()) ?MemoryReference {
+        const self_index = decls.getIndex(@fieldParentPtr(Decl, "instr", self));
         switch(self.*) {
-            .stack_ref => @panic("AAAA"),
-            .offset_ref => @panic("AAAA"),
+            .stack_ref => return .{
+                .pointer_value = self_index,
+                .sema_pointer_type = undefined,
+            },
+            .offset_ref => return .{
+                .pointer_value = self_index,
+                .sema_pointer_type = undefined,
+            },
             .reference_wrap => |rr| return rr,
             else => return null,
         }
@@ -1217,7 +1224,14 @@ fn ssaBlockStatementIntoBasicBlock(
                 decls.get(value).sema_decl = sema.DeclIndex.toOpt(decl_idx);
 
                 if(decl.stack_offset) |offset| {
-                    const stack_ref = try appendToBlock(current_basic_block, .{.stack_ref = offset});
+                    const stack_ref = try appendToBlock(current_basic_block, .{.stack_ref = .{
+                        .offset = offset,
+                        .type = .{
+                            .is_const = !decl.mutable,
+                            .is_volatile = false,
+                            .item = try sema.values.get(decl.init_value).getType(),
+                        },
+                    }});
                     _ = try appendToBlock(current_basic_block, .{.store = .{.dest = stack_ref, .value = value}});
                 }
             },
@@ -1336,7 +1350,14 @@ fn ssaValue(
         .decl_ref => |decl_idx| {
             const rdecl = sema.decls.get(decl_idx);
             if(rdecl.stack_offset) |offset| {
-                return appendToBlock(block_idx, .{.stack_ref = offset});
+                return appendToBlock(block_idx, .{.stack_ref = .{
+                    .offset = offset,
+                    .type = .{
+                        .is_const = !rdecl.mutable,
+                        .is_volatile = false,
+                        .item = try sema.values.get(rdecl.init_value).getType(),
+                    },
+                }});
             } else {
                 return readVariable(block_idx, decl_idx);
             }
@@ -1427,7 +1448,14 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index) an
         .addr_of => |uop| switch(sema.values.get(uop).*) {
             .decl_ref => |dr| {
                 const decl = sema.decls.get(dr);
-                const stack_ref = try appendToBlock(block_idx, .{.stack_ref = decl.stack_offset.?});
+                const stack_ref = try appendToBlock(block_idx, .{.stack_ref = .{
+                    .offset = decl.stack_offset.?,
+                    .type = .{
+                        .is_const = !decl.mutable,
+                        .is_volatile = false,
+                        .item = try sema.values.get(decl.init_value).getType(),
+                    },
+                }});
                 return appendToBlock(block_idx, .{.addr_of = stack_ref});
             },
             .runtime => |rt| {
@@ -1469,7 +1497,10 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index) an
                 .first_argument = builder.first,
             }});
         },
-        .offset => |offset| return appendToBlock(block_idx, .{.offset_ref = offset}),
+        .offset => |offref| return appendToBlock(block_idx, .{.offset_ref = .{
+            .offset = offref.offset,
+            .type = offref.type,
+        }}),
         .deref => |sidx| {
             const pointer_value = try ssaValue(block_idx, sidx);
             return appendToBlock(block_idx, .{.reference_wrap = .{
@@ -1545,8 +1576,8 @@ pub fn dumpBlock(
         }
         switch(decl.instr) {
             .param_ref => |p| std.debug.print("@param({d})\n", .{p.param_idx}),
-            .stack_ref => |p| std.debug.print("@stack({d})\n", .{p}),
-            .offset_ref => |p| std.debug.print("@offset({d})\n", .{p}),
+            .stack_ref => |p| std.debug.print("@stack({d})\n", .{p.offset}),
+            .offset_ref => |p| std.debug.print("@offset({d})\n", .{p.offset}),
             .addr_of => |p| std.debug.print("@addr_of(${d})\n", .{@enumToInt(p)}),
             .enter_function => |size| std.debug.print("@enter_function({d})\n", .{size}),
             .load_int_constant => |value| std.debug.print("{d}\n", .{value.value}),

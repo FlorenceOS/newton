@@ -212,15 +212,15 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
         .addr_of => |op| {
             const operand = ir.decls.get(op);
             switch(operand.instr) {
-                .offset_ref => |offset| {
-                    const disp = @bitCast(u21, @intCast(i21, @bitCast(i64, offset -% writer.currentOffset())));
+                .offset_ref => |offref| {
+                    const disp = @bitCast(u21, @intCast(i21, @bitCast(i64, offref.offset -% writer.currentOffset())));
                     try writer.writeInt(u32, 0x10000000
                         | @as(u32, uf.findRegByPtr(decl).?) << 0
                         | @as(u32, disp >> 2) << 5
                         | @as(u32, @truncate(u2, disp)) << 29
                     );
                 },
-                .stack_ref => |offset| try subImm(writer, uf.findRegByPtr(decl).?, registers.fp, @intCast(u12, offset)),
+                .stack_ref => |stackoff| try subImm(writer, uf.findRegByPtr(decl).?, registers.fp, @intCast(u12, stackoff.offset)),
                 else => |other| std.debug.panic("aarch64: TODO addr_of {s}", .{@tagName(other)}),
             }
         },
