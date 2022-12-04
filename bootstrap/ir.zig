@@ -371,7 +371,7 @@ const DeclInstr = union(enum) {
                 }
                 // std.debug.assert(!first_iter);
                 // return first_type;
-                unreachable;
+                return undefined;
             },
             else => |other| std.debug.panic("TODO getOperationType of {s}", .{@tagName(other)}),
         }

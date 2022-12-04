@@ -16,6 +16,10 @@ pub const TypeIndex = indexed_list.Indices(u32, opaque{}, .{
     .u16 = .{.unsigned_int = 16},
     .u32 = .{.unsigned_int = 32},
     .u64 = .{.unsigned_int = 64},
+    .i8 = .{.signed_int = 8},
+    .i16 = .{.signed_int = 16},
+    .i32 = .{.signed_int = 32},
+    .i64 = .{.signed_int = 64},
     .pointer_int = undefined,
 });
 pub const ValueIndex = indexed_list.Indices(u32, opaque{}, .{
@@ -86,72 +90,106 @@ fn promoteInteger(value: i65, value_out: ValueIndex.OptIndex, requested_type: Ty
     }
 }
 
-fn promoteToBiggest(lhs_idx: *ValueIndex.Index, rhs_idx: *ValueIndex.Index, promote_lhs: bool) !void {
-    const lhs = values.get(lhs_idx.*);
-    const rhs = values.get(rhs_idx.*);
-    if(lhs.* == .comptime_int) {
-        lhs_idx.* = try promoteInteger(lhs.comptime_int, .none, try rhs.getType());
-        return;
+fn decayValueType(vidx: ValueIndex.Index) !TypeIndex.Index {
+    const value = values.get(vidx);
+    const ty_idx = try value.getType();
+    switch(value.*) {
+        .runtime => {
+            const value_ty = types.get(ty_idx);
+            if(value_ty.* == .reference) {
+                return value_ty.reference.item;
+            }
+            return ty_idx;
+        },
+        else => return ty_idx,
     }
-    if(rhs.* == .comptime_int) {
-        rhs_idx.* = try promoteInteger(rhs.comptime_int, .none, try lhs.getType());
-        return;
+}
+
+fn commonType(lhs_ty: TypeIndex.Index, rhs_ty: TypeIndex.Index) !TypeIndex.Index {
+    const lhs = types.get(lhs_ty);
+    const rhs = types.get(rhs_ty);
+    if(lhs.* == .comptime_int and rhs.* == .comptime_int) return lhs_ty;
+    if(lhs.* == .comptime_int) return rhs_ty;
+    if(rhs.* == .comptime_int) return lhs_ty;
+
+    if(lhs.* == .unsigned_int) {
+        std.debug.assert(rhs.* == .unsigned_int);
+        if(lhs.unsigned_int > rhs.unsigned_int) {
+            return lhs_ty;
+        } else {
+            return rhs_ty;
+        }
     }
 
-    const lhs_type_idx = try lhs.getType();
-    const rhs_type_idx = try rhs.getType();
-    const lhs_type = types.get(lhs_type_idx);
-    const rhs_type = types.get(rhs_type_idx);
-    if(std.meta.activeTag(lhs_type.*) != std.meta.activeTag(rhs_type.*)) {
-        return error.IncompatibleTypes;
+    if(lhs.* == .signed_int) {
+        std.debug.assert(rhs.* == .signed_int);
+        if(lhs.signed_int > rhs.signed_int) {
+            return lhs_ty;
+        } else {
+            return rhs_ty;
+        }
     }
 
-    std.debug.print("{any} {any}\n", .{lhs_type, rhs_type});
-    switch(lhs_type.*) {
-        .unsigned_int => |lhs_bits| {
-            if(lhs_bits < rhs_type.unsigned_int) {
-                if(promote_lhs) {
-                    lhs_idx.* = try values.insert(.{.runtime = .{
-                        .expr = ExpressionIndex.toOpt(try expressions.insert(.{.zero_extend = .{
-                            .value = lhs_idx.*,
-                            .type = types.getIndex(rhs_type),
-                        }})),
-                        .value_type = try values.addDedupLinear(.{.type_idx = rhs_type_idx}),
-                    }});
-                } else return error.IncompatibleTypes;
-            } else if (lhs_bits > rhs_type.unsigned_int) {
-                rhs_idx.* = try values.insert(.{.runtime = .{
-                    .expr = ExpressionIndex.toOpt(try expressions.insert(.{.zero_extend = .{
-                        .value = rhs_idx.*,
-                        .type = types.getIndex(lhs_type),
-                    }})),
-                    .value_type = try values.addDedupLinear(.{.type_idx = lhs_type_idx}),
-                }});
-            }
+    return error.IncompatibleTypes;
+}
+
+fn promote(vidx: *ValueIndex.Index, target_tidx: TypeIndex.Index) !void {
+    const value = values.get(vidx.*);
+    const value_ty = types.get(try decayValueType(vidx.*));
+    const ty = types.get(target_tidx);
+
+    switch(value_ty.*) {
+         .comptime_int => switch(ty.*) {
+            .comptime_int => {},
+            .unsigned_int => |bits| vidx.* = try values.addDedupLinear(.{.unsigned_int = .{
+                .bits = bits,
+                .value = value.comptime_int,
+            }}),
+            .signed_int => |bits| vidx.* = try values.addDedupLinear(.{.signed_int = .{
+                .bits = bits,
+                .value = value.comptime_int,
+            }}),
+            else => @panic("Comptime int to non-int type(?)"),
         },
-        .signed_int => |lhs_bits| {
-            if(lhs_bits < rhs_type.signed_int) {
-                if(promote_lhs) {
-                    lhs_idx.* = try values.insert(.{.runtime = .{
-                        .expr = ExpressionIndex.toOpt(try expressions.insert(.{.sign_extend = .{
-                            .value = lhs_idx.*,
-                            .type = types.getIndex(rhs_type),
-                        }})),
-                        .value_type = try values.addDedupLinear(.{.type_idx = rhs_type_idx}),
-                    }});
-                } else return error.IncompatibleTypes;
-            } else if (lhs_bits > rhs_type.signed_int) {
-                rhs_idx.* = try values.insert(.{.runtime = .{
-                    .expr = ExpressionIndex.toOpt(try expressions.insert(.{.sign_extend = .{
-                        .value = rhs_idx.*,
-                        .type = types.getIndex(lhs_type),
-                    }})),
-                    .value_type = try values.addDedupLinear(.{.type_idx = lhs_type_idx}),
-                }});
-            }
+        .unsigned_int => |value_bits| {
+            const target_bits = ty.unsigned_int;
+            if(value_bits > target_bits) return error.IncompatibleTypes;
+            if(value_bits == target_bits) return;
+            vidx.* = try values.insert(.{.runtime = .{
+                .expr = ExpressionIndex.toOpt(try expressions.insert(.{.zero_extend = .{
+                    .value = vidx.*,
+                    .type = target_tidx,
+                }})),
+                .value_type = try values.addDedupLinear(.{.type_idx = target_tidx}),
+            }});
         },
-        else => return error.IncompatibleTypes,
+        .signed_int => |value_bits| {
+            const target_bits = ty.signed_int;
+            if(value_bits > target_bits) return error.IncompatibleTypes;
+            if(value_bits == target_bits) return;
+            vidx.* = try values.insert(.{.runtime = .{
+                .expr = ExpressionIndex.toOpt(try expressions.insert(.{.sign_extend = .{
+                    .value = vidx.*,
+                    .type = target_tidx,
+                }})),
+                .value_type = try values.addDedupLinear(.{.type_idx = target_tidx}),
+            }});
+        },
+        else => @panic("TODO"),
     }
+}
+
+fn inplaceOp(lhs_idx: ValueIndex.Index, rhs_idx: *ValueIndex.Index) !void {
+    const op_ty = try decayValueType(lhs_idx);
+    try promote(rhs_idx, op_ty);
+}
+
+fn plainBinaryOp(lhs_idx: *ValueIndex.Index, rhs_idx: *ValueIndex.Index) !void {
+    const lhs_ty = try decayValueType(lhs_idx.*);
+    const rhs_ty = try decayValueType(rhs_idx.*);
+    const common_type = try commonType(lhs_ty, rhs_ty);
+    try promote(lhs_idx, common_type);
+    try promote(rhs_idx, common_type);
 }
 
 fn analyzeStatementChain(
@@ -482,23 +520,24 @@ fn evaluateWithoutTypeHint(
         => |bop, tag| {
             var lhs = try evaluateWithoutTypeHint(scope_idx, .none, bop.lhs);
             var rhs = try evaluateWithoutTypeHint(scope_idx, .none, bop.rhs);
+
             const value_type = switch(tag) {
                 .multiply_eq, .multiply_mod_eq, .divide_eq, .modulus_eq, .plus_eq, .plus_mod_eq, .minus_eq,
                 .minus_mod_eq, .shift_left_eq, .shift_right_eq, .bitand_eq, .bitxor_eq, .bitor_eq, .assign
                 => blk: {
-                    try promoteToBiggest(&lhs, &rhs, false);
+                    try inplaceOp(lhs, &rhs);
                     break :blk .void;
                 },
                 .less, .less_equal, .greater, .greater_equal,
                 .equals, .not_equal, .logical_and, .logical_or,
                 => blk: {
-                    try promoteToBiggest(&lhs, &rhs, true);
+                    try plainBinaryOp(&lhs, &rhs);
                     break :blk .bool;
                 },
                 .multiply, .multiply_mod, .divide, .modulus, .plus, .plus_mod,
                 .minus, .minus_mod, .shift_left, .shift_right, .bitand, .bitor, .bitxor,
                 => blk: {
-                    try promoteToBiggest(&lhs, &rhs, true);
+                    try plainBinaryOp(&lhs, &rhs);
                     break :blk try values.addDedupLinear(.{.type_idx = try values.get(lhs).getType()});
                 },
                 else => std.debug.panic("TODO: {s}", .{@tagName(tag)}),
@@ -647,12 +686,12 @@ fn evaluateWithoutTypeHint(
                 else => unreachable,
             };
 
-            var rhs_idx = try evaluateWithoutTypeHint(scope_idx, .none, bop.rhs);
-            var size_expr = try values.addDedupLinear(.{.unsigned_int = .{
+            const size_expr = try values.addDedupLinear(.{.unsigned_int = .{
                 .bits = 64,
                 .value = @as(i65, @intCast(i64, try types.get(child_type).getSize())),
             }});
-            try promoteToBiggest(&size_expr, &rhs_idx, false);
+            var rhs_idx = try evaluateWithoutTypeHint(scope_idx, .none, bop.rhs);
+            try inplaceOp(size_expr, &rhs_idx);
             const rhs = values.get(rhs_idx);
             const rhs_type = types.get(try rhs.getType());
             std.debug.assert(rhs_type.* == .signed_int or rhs_type.* == .unsigned_int or rhs_type.* == .comptime_int);
