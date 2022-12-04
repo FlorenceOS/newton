@@ -155,25 +155,19 @@ fn promote(vidx: *ValueIndex.Index, target_tidx: TypeIndex.Index) !void {
             const target_bits = ty.unsigned_int;
             if(value_bits > target_bits) return error.IncompatibleTypes;
             if(value_bits == target_bits) return;
-            vidx.* = try values.insert(.{.runtime = .{
-                .expr = ExpressionIndex.toOpt(try expressions.insert(.{.zero_extend = .{
-                    .value = vidx.*,
-                    .type = target_tidx,
-                }})),
-                .value_type = try values.addDedupLinear(.{.type_idx = target_tidx}),
-            }});
+            vidx.* = try Value.fromExpression(
+                try expressions.insert(.{.zero_extend = .{.value = vidx.*, .type = target_tidx}}),
+                try values.addDedupLinear(.{.type_idx = target_tidx}),
+            );
         },
         .signed_int => |value_bits| {
             const target_bits = ty.signed_int;
             if(value_bits > target_bits) return error.IncompatibleTypes;
             if(value_bits == target_bits) return;
-            vidx.* = try values.insert(.{.runtime = .{
-                .expr = ExpressionIndex.toOpt(try expressions.insert(.{.sign_extend = .{
-                    .value = vidx.*,
-                    .type = target_tidx,
-                }})),
-                .value_type = try values.addDedupLinear(.{.type_idx = target_tidx}),
-            }});
+            vidx.* = try Value.fromExpression(
+                try expressions.insert(.{.sign_extend = .{.value = vidx.*, .type = target_tidx}}),
+                try values.addDedupLinear(.{.type_idx = target_tidx}),
+            );
         },
         else => @panic("TODO"),
     }
@@ -632,10 +626,7 @@ fn evaluateWithoutTypeHint(
                             .bits = 64,
                             .value = try lhs_struct.offsetOf(StructFieldIndex.toOpt(struct_fields.getIndex(field))),
                         }});
-                        const addr_of_expr = try values.insert(.{.runtime = .{
-                            .expr = ExpressionIndex.toOpt(try expressions.insert(.{.addr_of = lhs})),
-                            .value_type = member_ptr,
-                        }});
+                        const addr_of_expr = try Value.fromExpression(try expressions.insert(.{.addr_of = lhs}), member_ptr);
                         const member_ref = try values.addDedupLinear(.{
                             .type_idx = try types.addDedupLinear(.{.reference = .{
                                 .is_const = !decl.mutable,
@@ -643,10 +634,7 @@ fn evaluateWithoutTypeHint(
                                 .item = try values.get(field.init_value).getType(),
                             }}),
                         });
-                        const add_expr = try values.insert(.{.runtime = .{
-                            .expr = ExpressionIndex.toOpt(try expressions.insert(.{.add = .{.lhs = addr_of_expr, .rhs = offset_expr}})),
-                            .value_type = member_ptr,
-                        }});
+                        const add_expr = try Value.fromExpression(try expressions.insert(.{.add = .{.lhs = addr_of_expr, .rhs = offset_expr}}), member_ptr);
                         return putValueIn(value_out, .{.runtime = .{
                             .expr = ExpressionIndex.toOpt(try expressions.insert(.{.deref = add_expr})),
                             .value_type = member_ref,
@@ -705,19 +693,19 @@ fn evaluateWithoutTypeHint(
             const rhs_type = types.get(try rhs.getType());
             std.debug.assert(rhs_type.* == .signed_int or rhs_type.* == .unsigned_int or rhs_type.* == .comptime_int);
             const pointer_expr = if(lhs_type.* != .pointer) blk: {
-                break :blk try values.insert(.{.runtime = .{
-                    .expr = ExpressionIndex.toOpt(try expressions.insert(.{.addr_of = lhs_idx})),
-                    .value_type = try values.addDedupLinear(.{.type_idx = try types.addDedupLinear(.{.pointer = child_ptr})}),
-                }});
+                break :blk try Value.fromExpression(
+                    try expressions.insert(.{.addr_of = lhs_idx}),
+                     try values.addDedupLinear(.{.type_idx = try types.addDedupLinear(.{.pointer = child_ptr})}),
+                );
             } else lhs_idx;
-            const offset_expr = try values.insert(.{.runtime = .{
-                .expr = ExpressionIndex.toOpt(try expressions.insert(.{.multiply = .{.lhs = rhs_idx, .rhs = size_expr}})),
-                .value_type = .pointer_int_type,
-            }});
-            const ptr_expr = try values.insert(.{.runtime = .{
-                .expr = ExpressionIndex.toOpt(try expressions.insert(.{.add = .{.lhs = pointer_expr, .rhs = offset_expr}})),
-                .value_type = try values.addDedupLinear(.{.type_idx = try types.addDedupLinear(.{.pointer = child_ptr})}),
-            }});
+            const offset_expr = try Value.fromExpression(
+                try expressions.insert(.{.multiply = .{.lhs = rhs_idx, .rhs = size_expr}}),
+                 .pointer_int_type,
+            );
+            const ptr_expr = try Value.fromExpression(
+                try expressions.insert(.{.add = .{.lhs = pointer_expr, .rhs = offset_expr}}),
+                 try values.addDedupLinear(.{.type_idx = try types.addDedupLinear(.{.pointer = child_ptr})}),
+            );
             return putValueIn(value_out, .{.runtime = .{
                 .expr = ExpressionIndex.toOpt(try expressions.insert(.{.deref = ptr_expr})),
                 .value_type = try values.addDedupLinear(.{
@@ -753,18 +741,12 @@ fn evaluateWithTypeHint(
         .unsigned_int, .signed_int => |int| return promoteInteger(int.value, value_out, requested_type),
         .bool => if(requested_type == .bool) return evaluated_idx,
         .type_idx => if(requested_type == .type) return evaluated_idx,
-        .undefined => return values.insert(.{.runtime = .{
-            .expr = ExpressionIndex.toOpt(try expressions.insert(.{.value = .undefined})),
-            .value_type = try values.addDedupLinear(.{.type_idx = requested_type}),
-        }}),
+        .undefined => return Value.fromExpression(try expressions.insert(.{.value = .undefined}), try values.addDedupLinear(.{.type_idx = requested_type})),
         .runtime => |rt| {
             if(values.get(rt.value_type).type_idx == requested_type) return evaluated_idx;
             const evaluated_type = types.get(try evaluated.getType());
             if(evaluated_type.* == .reference and evaluated_type.reference.item == requested_type) {
-                return values.insert(.{.runtime = .{
-                    .expr = ExpressionIndex.toOpt(try expressions.insert(.{.value = evaluated_idx})),
-                    .value_type = try values.addDedupLinear(.{.type_idx = requested_type}),
-                }});
+                return Value.fromExpression(try expressions.insert(.{.value = evaluated_idx}), try values.addDedupLinear(.{.type_idx = requested_type}));
             }
         },
         .decl_ref => |dr| {
@@ -902,6 +884,10 @@ pub const Value = union(enum) {
             .decl_ref => |dr| return values.get(decls.get(dr).init_value).getType(),
             else => |other| std.debug.panic("TODO: Get type of {s}", .{@tagName(other)}),
         };
+    }
+
+    fn fromExpression(expression: ExpressionIndex.Index, value_type: ValueIndex.Index) !ValueIndex.Index {
+        return values.insert(.{.runtime = .{.expr = ExpressionIndex.toOpt(expression), .value_type = value_type}});
     }
 };
 
