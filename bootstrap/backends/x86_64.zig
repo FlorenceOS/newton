@@ -360,12 +360,12 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             }
         },
         .load => |op| {
-            const source = rmOperand(uf.findRegByPtr(decl).?, uf, op.source);
+            const source = rmRegIndirect(uf.findReg(op.source).?, uf.findRegByPtr(decl).?, 0);
             try movRmToReg(writer, op.type, source);
         },
         .store => |op| {
             const value = ir.decls.get(op.value);
-            const dest = rmOperand(uf.findRegByPtr(value).?, uf, op.dest);
+            const dest = rmRegIndirect(uf.findRegByPtr(value).?, uf.findReg(op.dest).?, 0);
             const operation_type = value.instr.getOperationType();
             try movRegToRm(writer, operation_type, dest);
         },
@@ -377,7 +377,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             try writer.write(rm.encoded.slice());
         },
         .store_constant => |op| { // mov r/mN, immN
-            const dest = rmOperand(0, uf, op.dest);
+            const dest = rmRegIndirect(uf.findReg(op.dest).?, 0, 0);
             try movImmToRm(writer, op.type, dest, @intCast(i32, @bitCast(i64, op.value)));
         },
         .less_constant, .less_equal_constant,
