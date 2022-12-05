@@ -47,7 +47,7 @@ pub const oses = struct {
         },
         .param_regs =         &.{registers.rdi, registers.rsi, registers.rdx, registers.rcx, 8, 9},
         .syscall_param_regs = &.{registers.rax, registers.rdi, registers.rsi, registers.rdx, 10, 8, 9},
-        .caller_saved =       &.{registers.rdi, registers.rsi, registers.rdx, registers.rcx, 8, 9, 10, 11},
+        .caller_saved =       &.{registers.rax, registers.rdi, registers.rsi, registers.rdx, registers.rcx, 8, 9, 10, 11},
         .syscall_clobbers =   &.{registers.rcx, 11},
     };
 };
@@ -268,15 +268,20 @@ fn subImm(writer: *backends.Writer, operation_type: ir.InstrType, dest_reg: u8, 
     }
 }
 
-fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFind) !?ir.BlockIndex.Index {
+fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFind, regs_to_save: []const u8) !?ir.BlockIndex.Index {
     const decl = ir.decls.get(decl_idx);
     switch(decl.instr) {
         .param_ref, .stack_ref, .undefined, .clobber, .offset_ref, .reference_wrap,
         => {},
-        .enter_function => |stack_size| if(stack_size > 0) {
-            try pushReg(writer, registers.rbp);
-            try movRegToReg(writer, .u64, registers.rbp, registers.rsp);
-            try subImm(writer, .u64, registers.rsp, @intCast(i32, stack_size));
+        .enter_function => |stack_size| {
+            for(regs_to_save) |reg| {
+                try pushReg(writer, reg);
+            }
+            if(stack_size > 0) {
+                try pushReg(writer, registers.rbp);
+                try movRegToReg(writer, .u64, registers.rbp, registers.rsp);
+                try subImm(writer, .u64, registers.rsp, @intCast(i32, stack_size));
+            }
         },
         .copy => |source| {
             if(ir.decls.get(source).instr.memoryReference()) |_| {
@@ -516,6 +521,11 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             if(leave.restore_stack) {
                 try movRegToReg(writer, .u64, registers.rsp, registers.rbp);
                 try popReg(writer, registers.rbp);
+            }
+            var it = regs_to_save.len;
+            while(it > 0) {
+                it -= 1;
+                try popReg(writer, regs_to_save[it]);
             }
             try writer.writeInt(u8, 0xC3);
         },

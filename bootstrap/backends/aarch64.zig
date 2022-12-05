@@ -45,7 +45,7 @@ pub const oses = struct {
         .param_regs = &.{0, 1, 2, 3, 4, 5, 6, 7},
         .syscall_param_regs = &.{8, 0, 1, 2, 3, 4, 5},
         .caller_saved = &.{
-            1,  2,  3,  4,  5,  6,  7,  8,  9,
+            0,  1,  2,  3,  4,  5,  6,  7,  8,  9,
             10, 11, 12, 13, 14, 15,
         },
         .syscall_clobbers = &.{},
@@ -136,9 +136,9 @@ fn opSizeBit(decl: *ir.Decl) u32 {
     return if(decl.instr.getOperationType() == .u64) (1 << 31) else 0;
 }
 
-fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFind) !?ir.BlockIndex.Index {
+fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFind, regs_to_save: []const u8) !?ir.BlockIndex.Index {
+    std.debug.assert(regs_to_save.len == 0);
     const decl = ir.decls.get(decl_idx);
-
     switch(decl.instr) {
         .param_ref, .undefined, .clobber, .offset_ref, .stack_ref, .reference_wrap,
         => {},

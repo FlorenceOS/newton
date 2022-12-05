@@ -169,6 +169,7 @@ pub fn doRegAlloc(
                     });
                     try param_replacement.put(arena.allocator(), ir.decls.getIndex(instr), ret_copy);
                     for(caller_saved) |reg| {
+                        if(reg == return_reg) continue;
                         const clob1 = try ir.insertBefore(next, .{
                             .clobber = ir.decls.getIndex(instr),
                         });
@@ -195,6 +196,7 @@ pub fn doRegAlloc(
                     });
                     try param_replacement.put(arena.allocator(), ir.decls.getIndex(instr), ret_copy);
                     for(syscall_clobbers) |reg| {
+                        if(reg == return_reg) continue;
                         const clob1 = try ir.insertBefore(next, .{
                             .clobber = ir.decls.getIndex(instr),
                         });
