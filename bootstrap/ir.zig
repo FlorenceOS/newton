@@ -98,6 +98,10 @@ const DeclInstr = union(enum) {
     truncate: Cast,
     load_bool_constant: bool,
     enter_function: u32,
+    leave_function: struct {
+        restore_stack: bool,
+        value: DeclIndex.Index,
+    },
     undefined,
 
     function_call: struct {
@@ -166,10 +170,6 @@ const DeclInstr = union(enum) {
         condition: DeclIndex.Index,
         taken: BlockEdgeIndex.Index,
         not_taken: BlockEdgeIndex.Index,
-    },
-    @"return": struct {
-        restore_stack: bool,
-        value: DeclIndex.Index,
     },
     goto: BlockEdgeIndex.Index,
     phi: PhiOperandIndex.OptIndex,
@@ -248,7 +248,7 @@ const DeclInstr = union(enum) {
             .copy => |*c| bounded_result.value.bounded_iterator.appendAssumeCapacity(c),
             .load => |*p| bounded_result.value.bounded_iterator.appendAssumeCapacity(&p.source),
             .@"if" => |*instr| bounded_result.value.bounded_iterator.appendAssumeCapacity(&instr.condition),
-            .@"return" => |*value| bounded_result.value.bounded_iterator.appendAssumeCapacity(&value.value),
+            .leave_function => |*value| bounded_result.value.bounded_iterator.appendAssumeCapacity(&value.value),
 
             .param_ref, .stack_ref, .offset_ref,
             .load_int_constant, .load_bool_constant,
@@ -278,7 +278,7 @@ const DeclInstr = union(enum) {
     pub fn isVolatile(self: *const @This()) bool {
         switch(self.*) {
             .incomplete_phi => unreachable,
-            .@"if", .@"return", .goto, .enter_function, .store, .store_constant, .function_call, .syscall,
+            .@"if", .leave_function, .goto, .enter_function, .store, .store_constant, .function_call, .syscall,
             => return true,
             else => return false,
         }
@@ -287,7 +287,7 @@ const DeclInstr = union(enum) {
     pub fn isValue(self: *const @This()) bool {
         switch(self.*) {
             .incomplete_phi => unreachable,
-            .@"if", .@"return", .goto, .stack_ref, .offset_ref, .enter_function,
+            .@"if", .leave_function, .goto, .stack_ref, .offset_ref, .enter_function,
             .store, .store_constant, .reference_wrap,
             => return false,
             else => return true,
@@ -1533,7 +1533,7 @@ pub fn ssaFunction(func: *sema.Function) !BlockIndex.Index {
 
     const exit_block = try blocks.insert(.{});
     const phi = try appendToBlock(exit_block, .{.phi = .none});
-    const exit_return = try appendToBlock(exit_block, .{.@"return" = .{.restore_stack = false, .value = phi}});
+    const exit_return = try appendToBlock(exit_block, .{.leave_function = .{.restore_stack = false, .value = phi}});
 
     var stack_offset: u32 = 0;
     const return_block = try ssaBlockStatementIntoBasicBlock(
@@ -1548,8 +1548,8 @@ pub fn ssaFunction(func: *sema.Function) !BlockIndex.Index {
         _ = try appendToBlock(return_block, .{.goto = try addEdge(return_block, exit_block)});
     }
 
-    decls.get(exit_return).instr.@"return".restore_stack = stack_offset > 0;
     decls.get(enter_decl).instr.enter_function = stack_offset;
+    decls.get(exit_return).instr.leave_function.restore_stack = stack_offset > 0;
     return first_basic_block;
 }
 
@@ -1579,7 +1579,8 @@ pub fn dumpBlock(
             .stack_ref => |p| std.debug.print("@stack({d})\n", .{p.offset}),
             .offset_ref => |p| std.debug.print("@offset({d})\n", .{p.offset}),
             .addr_of => |p| std.debug.print("@addr_of(${d})\n", .{@enumToInt(p)}),
-            .enter_function => |size| std.debug.print("@enter_function({d})\n", .{size}),
+            .enter_function => |stack_size| std.debug.print("enter_function({d})\n", .{stack_size}),
+            .leave_function => |leave| std.debug.print("leave_function(${d})\n", .{@enumToInt(leave.value)}),
             .load_int_constant => |value| std.debug.print("{d}\n", .{value.value}),
             .reference_wrap => |ref| std.debug.print("@deref(${d})\n", .{@enumToInt(ref.pointer_value)}),
             .zero_extend, .sign_extend, .truncate => |cast| std.debug.print("@{s}(${d})\n", .{@tagName(decl.instr), @enumToInt(cast.value)}),
@@ -1631,7 +1632,6 @@ pub fn dumpBlock(
                     @enumToInt(edges.get(if_instr.not_taken).target_block),
                 });
             },
-            .@"return" => |ret| std.debug.print("return ${d}\n", .{@enumToInt(ret.value)}),
             .goto => |goto_edge| {
                 std.debug.print("goto(Block#{d})\n", .{@enumToInt(edges.get(goto_edge).target_block)});
             },

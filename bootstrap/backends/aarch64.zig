@@ -324,10 +324,10 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             try writer.writeIntWithFunctionRelocation(u32, 0x94000000, fcall.callee, .imm26_div4);
         },
         .syscall => try writer.writeInt(u32, 0xD4000001),
-        .@"return" => |op| {
-            const op_reg = uf.findDecl(op.value).reg_alloc_value.?;
+        .leave_function => |leave| {
+            const op_reg = uf.findDecl(leave.value).reg_alloc_value.?;
             std.debug.assert(op_reg == backends.current_os.return_reg);
-            if(op.restore_stack) {
+            if(leave.restore_stack) {
                 try movReg(writer, registers.sp, registers.fp);
             }
             try popTwo(writer, registers.fp, registers.lr);

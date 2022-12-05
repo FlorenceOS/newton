@@ -17,7 +17,7 @@ const registers = struct {
 
 fn determineMaxMemoryOperands(decl: *const ir.Decl) usize {
     return switch(decl.instr) {
-        .@"return" => 0,
+        .leave_function => 0,
         else => 1,
     };
 }
@@ -510,10 +510,10 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             try writer.writeInt(u8, 0x0F);
             try writer.writeInt(u8, 0x05);
         },
-        .@"return" => |ret| {
-            const op_reg = uf.findReg(ret.value).?;
+        .leave_function => |leave| {
+            const op_reg = uf.findReg(leave.value).?;
             std.debug.assert(op_reg == backends.current_os.return_reg);
-            if(ret.restore_stack) {
+            if(leave.restore_stack) {
                 try movRegToReg(writer, .u64, registers.rsp, registers.rbp);
                 try popReg(writer, registers.rbp);
             }
