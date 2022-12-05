@@ -29,7 +29,7 @@ pub const backend = backends.Backend{
     .write_decl = writeDecl,
     .optimizations = .{
         .has_nonzero_constant_store = true,
-        .max_memory_operands_fn = determineMaxMemoryOperands
+        .max_memory_operands_fn = determineMaxMemoryOperands,
     },
 };
 
