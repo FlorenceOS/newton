@@ -125,10 +125,22 @@ fn rmStackOffset(stack_offset: i32, reg: u8) Rm {
     return rmRegIndirect(registers.rbp, reg, -stack_offset);
 }
 
+fn rmRipRelative(reg: u8, reloff: i32) Rm {
+    var array: RmBuffer = .{};
+    array.appendAssumeCapacity(0x00 | registers.rbp | ((reg & 0x7) << 3));
+    array.appendInt(i32, reloff);
+    return .{.rex_r = reg >= 8, .rex_b = false, .encoded = array};
+}
+
 fn rmOperand(reg: u8, uf: rega.UnionFind, operand: ir.DeclIndex.Index) Rm {
     const op = ir.decls.get(operand);
     if(op.instr.memoryReference()) |mr| {
-        return rmRegIndirect(uf.findReg(mr.pointer_value).?, reg, 0);
+        return switch(op.instr) {
+            .offset_ref => @panic("AAAAA"),
+            .stack_ref => |sr| rmStackOffset(@intCast(i32, sr.offset), reg),
+            .reference_wrap => rmRegIndirect(uf.findReg(mr.pointer_value).?, reg, 0),
+            else => unreachable,
+        };
     } else {
         return rmRegDirect(uf.findRegByPtr(op).?, reg);
     }
@@ -161,23 +173,23 @@ fn popRm(writer: *backends.Writer, rm: Rm) !void {
 }
 
 fn movRegToReg(writer: *backends.Writer, operation_type: ir.InstrType, dest_reg: u8, src_reg: u8) !void {
-    if(dest_reg == src_reg) return;
+    if(dest_reg == src_reg and operation_type != .u32) return;
     const rm = rmRegDirect(dest_reg, src_reg);
     try prefix(writer, operation_type, rm.rex_r, false, rm.rex_b);
     try writer.writeInt(u8, 0x89);
     try writer.write(rm.encoded.slice());
 }
 
-fn movRmToReg(writer: *backends.Writer, operation_type: ir.InstrType, dest_reg: u8, rm: Rm) !void {
+fn movRmToReg(writer: *backends.Writer, operation_type: ir.InstrType, rm: Rm) !void {
     const opcode: u8 = if(operation_type == .u8) 0x8A else 0x8B;
-    try prefix(writer, operation_type, rm.rex_r, false, dest_reg >= 8);
+    try prefix(writer, operation_type, rm.rex_r, false, rm.rex_b);
     try writer.writeInt(u8, opcode);
     try writer.write(rm.encoded.slice());
 }
 
-fn movRegToRm(writer: *backends.Writer, operation_type: ir.InstrType, rm: Rm, src_reg: u8) !void {
+fn movRegToRm(writer: *backends.Writer, operation_type: ir.InstrType, rm: Rm) !void {
     const opcode: u8 = if(operation_type == .u8) 0x88 else 0x89;
-    try prefix(writer, operation_type, src_reg >= 8, false, rm.rex_r);
+    try prefix(writer, operation_type, rm.rex_b, false, rm.rex_r);
     try writer.writeInt(u8, opcode);
     try writer.write(rm.encoded.slice());
 }
@@ -266,17 +278,26 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             try movRegToReg(writer, .u64, registers.rbp, registers.rsp);
             try subImm(writer, .u64, registers.rsp, @intCast(i32, stack_size));
         },
-        .copy => |source| try movRegToReg(
-            writer,
-            decl.instr.getOperationType(),
-            uf.findRegByPtr(decl).?,
-            uf.findReg(source).?,
-        ),
-        .truncate => |t| try movRegToReg(
+        .copy => |source| {
+            if(ir.decls.get(source).instr.memoryReference()) |_| {
+                try movRmToReg(
+                    writer,
+                    decl.instr.getOperationType(),
+                    rmOperand(uf.findRegByPtr(decl).?, uf, source),
+                );
+            } else {
+                try movRegToReg(
+                    writer,
+                    decl.instr.getOperationType(),
+                    uf.findRegByPtr(decl).?,
+                    uf.findReg(source).?,
+                );
+            }
+        },
+        .truncate => |t| try movRmToReg(
             writer,
             t.type,
-            uf.findRegByPtr(decl).?,
-            uf.findReg(t.value).?,
+            rmOperand(uf.findRegByPtr(decl).?, uf, t.value),
         ),
         .zero_extend => |zext| {
             const dest_reg = uf.findRegByPtr(decl).?;
@@ -286,7 +307,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             const src_type = ir.decls.get(zext.value).instr.getOperationType();
 
             if(dest_type == .u64 and src_type == .u32) {
-                try movRmToReg(writer, .u32, dest_reg, src);
+                try movRmToReg(writer, .u32, src);
             } else {
                 // movzx rM r/mN
                 const opcode: u8 = if(src_type == .u8) 0xB6 else 0xB7;
@@ -339,65 +360,33 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             }
         },
         .load => |op| {
-            const source = ir.decls.get(op.source);
-            const dest_reg = uf.findRegByPtr(decl).?;
-            const rm = switch(source.instr) {
-                .stack_ref => |stackoff| rmStackOffset(@intCast(i32, stackoff.offset), dest_reg),
-                else => rmRegIndirect(uf.findRegByPtr(source).?, dest_reg, 0),
-            };
-            try movRmToReg(writer, op.type, dest_reg, rm);
+            const source = rmOperand(uf.findRegByPtr(decl).?, uf, op.source);
+            try movRmToReg(writer, op.type, source);
         },
         .store => |op| {
-            const dest = ir.decls.get(op.dest);
             const value = ir.decls.get(op.value);
-            const value_reg = uf.findRegByPtr(value).?;
+            const dest = rmOperand(uf.findRegByPtr(value).?, uf, op.dest);
             const operation_type = value.instr.getOperationType();
-            const rm = switch(dest.instr) {
-                .stack_ref => |stackoff| rmStackOffset(@intCast(i32, stackoff.offset), value_reg),
-                else => rmRegIndirect(uf.findRegByPtr(dest).?, value_reg, 0),
-            };
-            try movRegToRm(writer, operation_type, rm, value_reg);
+            try movRegToRm(writer, operation_type, dest);
         },
         .addr_of => |op| {
-            const operand = ir.decls.get(op);
             const dest_reg = uf.findRegByPtr(decl).?;
-            switch(operand.instr) {
-                .offset_ref => |offref| {
-                    // TODO: RM encoding for RIP relative effective addresses
-                    const disp = @bitCast(i64, @as(usize, offref.offset) -% (writer.currentOffset() + 7));
-                    try prefix(writer, backend.pointer_type, dest_reg >= 8, false, false);
-                    try writer.writeInt(u8, 0x8D);
-                    try writer.writeInt(u8, 0x0D | ((dest_reg & 0x7) << 3));
-                    try writer.writeInt(i32, @intCast(i32, disp));
-                },
-                .stack_ref => |stackoff| {
-                    const rm = rmStackOffset(@intCast(i32, stackoff.offset), dest_reg);
-                    try prefix(writer, backend.pointer_type, rm.rex_r, false, rm.rex_b);
-                    try writer.writeInt(u8, 0x8D);
-                    try writer.write(rm.encoded.slice());
-                },
-                else => |other| std.debug.panic("x86_64: TODO addr_of {s}", .{@tagName(other)}),
-            }
+            const rm = rmOperand(dest_reg, uf, op);
+            try prefix(writer, backend.pointer_type, rm.rex_r, false, rm.rex_b);
+            try writer.writeInt(u8, 0x8D);
+            try writer.write(rm.encoded.slice());
         },
-        .store_constant => |op| {
-            const dest = ir.decls.get(op.dest);
-            const rm = switch(dest.instr) {
-                .stack_ref => |stackoff| rmStackOffset(@intCast(i32, stackoff.offset), 0),
-                else => rmRegIndirect(uf.findRegByPtr(dest).?, 0, 0),
-            };
-            try movImmToRm(writer, op.type, rm, @intCast(i32, @bitCast(i64, op.value)));
+        .store_constant => |op| { // mov r/mN, immN
+            const dest = rmOperand(0, uf, op.dest);
+            try movImmToRm(writer, op.type, dest, @intCast(i32, @bitCast(i64, op.value)));
         },
         .less_constant, .less_equal_constant,
         .greater_constant, .greater_equal_constant,
         .equals_constant, .not_equal_constant,
         => |op| {
-            const lhs_decl = ir.decls.get(op.lhs);
-            const rm = switch(lhs_decl.instr) {
-                .reference_wrap => |rr| rmRegIndirect(uf.findReg(rr.pointer_value).?, 7, 0),
-                else => rmRegDirect(uf.findReg(op.lhs).?, 7),
-            };
-
+            const rm = rmOperand(7, uf, op.lhs);
             const operation_type = decl.instr.getOperationType();
+
             try prefix(writer, operation_type, rm.rex_r, false, rm.rex_b);
             if(std.math.cast(i8, op.rhs)) |i8_value| {
                 const opcode: u8 = if(operation_type == .u8) 0x80 else 0x83;
@@ -413,12 +402,24 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             }
         },
         .less, .less_equal, .equals, .not_equal => |op| {
-            const lhs_reg = uf.findReg(op.lhs).?;
-            const rhs_reg = uf.findReg(op.rhs).?;
-            const rm = rmRegDirect(lhs_reg, rhs_reg);
+            var rm: Rm = undefined;
+            var opcode: u8 = undefined;
+
+            if(ir.decls.get(op.lhs).instr.memoryReference()) |_| {
+                opcode = 0x38;
+                rm = rmOperand(uf.findReg(op.rhs).?, uf, op.lhs);
+            } else if(ir.decls.get(op.rhs).instr.memoryReference()) |_| {
+                opcode = 0x3A;
+                rm = rmOperand(uf.findReg(op.lhs).?, uf, op.rhs);
+            } else {
+                opcode = 0x38;
+                rm = rmRegDirect(uf.findReg(op.lhs).?, uf.findReg(op.rhs).?);
+            }
+
             const operation_type = decl.instr.getOperationType();
+            if(operation_type != .u8) opcode |= 1;
+
             try prefix(writer, operation_type, rm.rex_r, false, rm.rex_b);
-            const opcode: u8 = if(operation_type == .u8) 0x38 else 0x39;
             try writer.writeInt(u8, opcode);
             try writer.write(rm.encoded.slice());
         },
