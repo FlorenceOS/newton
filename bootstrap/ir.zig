@@ -1445,25 +1445,8 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index) an
             .lhs = try ssaValue(block_idx, bop.rhs),
             .rhs = try ssaValue(block_idx, bop.lhs),
         }}),
-        .addr_of => |uop| switch(sema.values.get(uop).*) {
-            .decl_ref => |dr| {
-                const decl = sema.decls.get(dr);
-                const stack_ref = try appendToBlock(block_idx, .{.stack_ref = .{
-                    .offset = decl.stack_offset.?,
-                    .type = .{
-                        .is_const = !decl.mutable,
-                        .is_volatile = false,
-                        .item = try sema.values.get(decl.init_value).getType(),
-                    },
-                }});
-                return appendToBlock(block_idx, .{.addr_of = stack_ref});
-            },
-            .runtime => |rt| {
-                const pointer = try ssaExpr(block_idx, sema.ExpressionIndex.unwrap(rt.expr).?);
-                const mr = decls.get(pointer).instr.memoryReference().?;
-                return appendToBlock(block_idx, decls.get(mr.pointer_value).instr);
-            },
-            else => unreachable,
+        .addr_of => |operand| {
+            return appendToBlock(block_idx, .{.addr_of = try ssaValue(block_idx, operand)});
         },
         .zero_extend => |cast| return appendToBlock(block_idx, .{.zero_extend = .{
             .value = try ssaValue(block_idx, cast.value),
