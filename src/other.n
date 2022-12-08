@@ -7,6 +7,6 @@ fn strlen(ptr: *const u8) u64 {
         if(ptr[res] == 0) {
             return res;
         }
-        res += 1;
+        res = res + 1;
     }
 }

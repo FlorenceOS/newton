@@ -1,15 +1,15 @@
 const other = @import("other.n");
 
 const SYS = struct {
-    const WRITE = 64;
-    const EXIT = 93;
+    const WRITE = 1;
+    const EXIT = 60;
 };
 
-fn main() u64 {
-    const print = fn(buf: *const u8) u64 {
-        return @syscall(SYS.WRITE, 1, buf, other.strlen(buf));
-    };
+fn print(buf: *const u8) u64 {
+    return @syscall(SYS.WRITE, 1, buf, other.strlen(buf));
+}
 
+fn main() u64 {
     print("Hello, world!\n".&);
     return @syscall(SYS.EXIT, 0);
 }
