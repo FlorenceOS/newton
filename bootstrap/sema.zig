@@ -280,7 +280,7 @@ fn analyzeStatementChain(
                 if(ast.ExprIndex.unwrap(ret_stmt.expr)) |ret_expr| {
                     expr = ValueIndex.toOpt(try evaluateWithTypeHint(block_scope_idx, .none, ret_expr, return_type.type_idx));
                 } else {
-                    std.debug.assert(func.return_type == .void);
+                    std.debug.assert(values.get(func.return_type).type_idx == .void);
                 }
                 reaches_end = false;
                 _ = try stmt_builder.insert(.{.value = .{.return_statement = .{.function = func_idx, .value = expr}}});
