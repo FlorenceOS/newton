@@ -315,8 +315,7 @@ fn movImmToReg(writer: *backends.Writer, op_t: ir.InstrType, dest_reg: u8, value
         try pushImm(writer, i8_value);
         try popReg(writer, dest_reg);
     } else if(std.math.cast(i32, value)) |i32_value| {
-        try pushImm(writer, i32_value);
-        try popReg(writer, dest_reg);
+        try writeDirect(writer, op_t, &.{0xC6 | boolToU8(op_t != .u8)}, dest_reg, 0, std.mem.asBytes(&i32_value), false);
     } else {
         @panic("TODO");
     }
