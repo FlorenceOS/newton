@@ -115,6 +115,7 @@ pub const Writer = struct {
     placed_blocks: std.AutoHashMapUnmanaged(ir.BlockIndex.Index, usize) = .{},
     enqueued_functions: std.AutoArrayHashMapUnmanaged(sema.ValueIndex.Index, std.ArrayListUnmanaged(Relocation)) = .{},
     placed_functions: std.AutoHashMapUnmanaged(sema.ValueIndex.Index, usize) = .{},
+    function_sizes: std.AutoHashMapUnmanaged(sema.ValueIndex.Index, usize) = .{},
 
     pub fn attemptInlineEdge(self: *@This(), edge: ir.BlockEdgeIndex.Index) !?ir.BlockIndex.Index {
         const target_block = ir.edges.get(edge).target_block;
@@ -301,6 +302,7 @@ pub const Writer = struct {
             value_copy.deinit(self.allocator);
         }
         try self.writeBlocks(head_block, uf, used_registers.slice());
+        try self.function_sizes.put(self.allocator, function, self.currentOffset() - function_offset);
     }
 
     pub fn writeFunction(self: *@This(), function: sema.ValueIndex.Index) !void {

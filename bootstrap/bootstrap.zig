@@ -118,11 +118,22 @@ pub fn main() !void {
             const token = try decl.name.retokenize();
             defer token.deinit();
             if(backends.writer.placed_functions.get(decl.init_value)) |offset| {
-                try elf_writer.addSymbol(token.identifier_value(), offset, true);
+                try elf_writer.addSymbol(
+                    token.identifier_value(),
+                    offset,
+                    true,
+                    backends.writer.function_sizes.get(decl.init_value).?,
+                );
             }
             if(decl.static) {
                 if(decl.offset) |offset| {
-                    try elf_writer.addSymbol(token.identifier_value(), offset, false);
+                    const global_ty = try sema.values.get(decl.init_value).getType();
+                    try elf_writer.addSymbol(
+                        token.identifier_value(),
+                        offset,
+                        false,
+                        try sema.types.get(global_ty).getSize(),
+                    );
                 }
             }
         }
