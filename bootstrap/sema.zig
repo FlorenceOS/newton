@@ -150,7 +150,7 @@ fn promote(vidx: *ValueIndex.Index, target_tidx: TypeIndex.Index, is_assign: boo
         }
     }
 
-    const value_ty = types.get(try value.getType());
+    const value_ty = types.get(try decayValueType(vidx.*));
     const ty = types.get(target_tidx);
 
     if(ty.* == .pointer) {
@@ -214,7 +214,7 @@ fn promote(vidx: *ValueIndex.Index, target_tidx: TypeIndex.Index, is_assign: boo
                 try values.addDedupLinear(.{.type_idx = target_tidx}),
             );
         },
-        else => @panic("TODO"),
+        else => |other| std.debug.panic("TODO {any}", .{other}),
     }
 }
 
