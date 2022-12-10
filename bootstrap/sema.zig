@@ -529,7 +529,7 @@ fn evaluateWithoutTypeHint(
                         ) catch try evaluateWithTypeHint(scope_idx, .none, func_arg.value, .u64);
                         const arg_value_type = try values.get(arg_value).getType();
                         switch(types.get(arg_value_type).*) {
-                            .pointer => {},
+                            .pointer, .signed_int, .unsigned_int => {},
                             .comptime_int => {
                                 if(values.get(arg_value).comptime_int < 0) {
                                     try promote(&arg_value, .i64, false);
@@ -537,8 +537,6 @@ fn evaluateWithoutTypeHint(
                                     try promote(&arg_value, .u64, false);
                                 }
                             },
-                            .signed_int => try promote(&arg_value, .i64, false),
-                            .unsigned_int => try promote(&arg_value, .u64, false),
                             else => |other| std.debug.panic("Can't pass {s} to syscall", .{@tagName(other)}),
                         }
                         _ = try arg_builder.insert(.{.function_arg = .{.value = arg_value}});
