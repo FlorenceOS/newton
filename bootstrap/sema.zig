@@ -484,6 +484,7 @@ fn evaluateWithoutTypeHint(
                 }
                 return putValueIn(value_out, .{.decl_ref = decls.getIndex(decl)});
             }
+            std.debug.print("Cannot find identifier {s}\n", .{token.identifier_value()});
             return error.IdentifierNotFound;
         },
         .int_literal => |lit| {
