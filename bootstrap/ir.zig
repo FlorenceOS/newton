@@ -647,7 +647,39 @@ pub fn optimizeFunction(head_block: BlockIndex.Index) !void {
             defer pass_allocator.deinit();
             if(try pass(pass_allocator.allocator(), &fn_blocks)) did_something = true;
         }
-        if(!did_something) return;
+        if(!did_something) break;
+    }
+
+    for(fn_blocks.items) |block| {
+        var current_decl = blocks.get(block).first_decl;
+        while(decls.getOpt(current_decl)) |decl| : (current_decl = decl.next) {
+            const decl_idx = decls.getIndex(decl);
+            switch(decl.instr) {
+                .divide_constant => |dc| {
+                    if(!backends.current_backend.optimizations.has_divide_constant) {
+                        const constant = try insertBefore(decl_idx, .{
+                            .load_int_constant = .{.type = decl.instr.getOperationType(), .value = dc.rhs },
+                        });
+                        decl.instr = .{.divide = .{
+                            .lhs = dc.lhs,
+                            .rhs = constant,
+                        }};
+                    }
+                },
+                .modulus_constant => |dc| {
+                    if(!backends.current_backend.optimizations.has_modulus_constant) {
+                        const constant = try insertBefore(decl_idx, .{
+                            .load_int_constant = .{.type = decl.instr.getOperationType(), .value = dc.rhs },
+                        });
+                        decl.instr = .{.modulus = .{
+                            .lhs = dc.lhs,
+                            .rhs = constant,
+                        }};
+                    }
+                },
+                else => {},
+            }
+        }
     }
 }
 

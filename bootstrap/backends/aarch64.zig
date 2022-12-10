@@ -24,6 +24,8 @@ pub const backend = backends.Backend{
     .write_decl = writeDecl,
     .optimizations = .{
         .has_nonzero_constant_store = false,
+        .has_divide_constant = false,
+        .has_modulus_constant = false,
         .max_memory_operands_fn = determineMaxMemoryOperands,
     },
     .gprs = &.{
