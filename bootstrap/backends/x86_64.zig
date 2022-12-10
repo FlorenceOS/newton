@@ -309,8 +309,12 @@ fn movRegReg(writer: *backends.Writer, op_t: ir.InstrType, dest_reg: u8, src_reg
 }
 
 fn movImmToReg(writer: *backends.Writer, op_t: ir.InstrType, dest_reg: u8, value: u64) !void {
-    _ = op_t;
-    if(std.math.cast(i32, value)) |i32_value| {
+    if(value == 0) {
+        try writeDirect(writer, .u32, &.{0x31}, dest_reg, dest_reg, &.{}, true);
+    } else if(std.math.cast(i8, value)) |i8_value| {
+        try pushImm(writer, i8_value);
+        try popReg(writer, dest_reg);
+    } else if(std.math.cast(i32, value)) |i32_value| {
         try pushImm(writer, i32_value);
         try popReg(writer, dest_reg);
     } else {
