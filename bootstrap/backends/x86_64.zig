@@ -343,10 +343,21 @@ fn subImm(writer: *backends.Writer, op_t: ir.InstrType, dest_reg: u8, value: i32
 }
 
 fn regAlloc(decl_idx: ir.DeclIndex.Index, param_replacement: *rega.ParamReplacement) !void {
-    _ = param_replacement;
     const decl = ir.decls.get(decl_idx);
     switch(decl.instr) {
-        else => {},
+        .multiply,
+        => try rega.allocateRegsForInstr(
+            decl_idx, 1, registers.rax, &.{registers.rax}, &.{registers.rdx}, &.{}, true, param_replacement
+        ),
+        .divide,
+        => try rega.allocateRegsForInstr(
+            decl_idx, 1, registers.rax, &.{registers.rax}, &.{registers.rax}, &.{registers.rdx}, true, param_replacement
+        ),
+        .modulus,
+        => try rega.allocateRegsForInstr(
+            decl_idx, 1, registers.rdx, &.{registers.rax}, &.{registers.rax}, &.{registers.rdx}, true, param_replacement
+        ),
+        else => try rega.allocateRegsForInstr(decl_idx, 1, null, &.{}, &.{}, &.{}, true, param_replacement),
     }
 }
 
@@ -439,6 +450,14 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             } else {
                 @panic("TODO: Sub no common regs");
             }
+        },
+        .divide, .modulus => |op| {
+            std.debug.assert(uf.findReg(op.lhs).? == registers.rax);
+            const op_t = decl.instr.getOperationType();
+            if(op_t != .u8) {
+                try movImmToReg(writer, op_t, registers.rdx, 0);
+            }
+            try writeOperandReg(writer, uf, op_t, op.rhs, 6, &.{0xF6 | boolToU8(op_t != .u8)}, &.{}, false);
         },
         .add_constant => |op| {
             const dest_reg = uf.findRegByPtr(decl).?;
