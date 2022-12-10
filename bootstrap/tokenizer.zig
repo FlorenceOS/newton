@@ -233,7 +233,7 @@ fn keywordOrIdent(input: *[*:0]const u8) !Token {
 
         return Token{ .identifier = .{
             .body = body_start[0..(@ptrToInt(input.*) - 1) - @ptrToInt(body_start)],
-            .value = value.toOwnedSlice(),
+            .value = try value.toOwnedSlice(),
             .owned = true,
         } };
     } else {

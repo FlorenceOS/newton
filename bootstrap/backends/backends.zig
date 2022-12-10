@@ -12,15 +12,15 @@ pub const backends = struct {
 pub const Backend = struct {
     elf_machine: std.elf.EM,
     pointer_type: ir.InstrType,
-    register_name: std.meta.FnPtr(fn(u8) []const u8),
+    register_name: *const fn(u8) []const u8,
 
-    reg_alloc: std.meta.FnPtr(fn(ir.DeclIndex.Index, *rega.ParamReplacement) anyerror!void),
-    write_decl: std.meta.FnPtr(fn(
+    reg_alloc: *const fn(ir.DeclIndex.Index, *rega.ParamReplacement) anyerror!void,
+    write_decl: *const fn(
         writer: *Writer,
         decl_idx: ir.DeclIndex.Index,
         uf: rega.UnionFind,
         regs_to_save: []const u8,
-    ) anyerror!?ir.BlockIndex.Index),
+    ) anyerror!?ir.BlockIndex.Index,
 
     optimizations: Optimizations,
     gprs: []const u8,
@@ -43,7 +43,7 @@ pub const Optimizations = struct {
     has_nonzero_constant_store: bool,
     has_divide_constant: bool,
     has_modulus_constant: bool,
-    max_memory_operands_fn: std.meta.FnPtr(fn(*const ir.Decl) usize),
+    max_memory_operands_fn: *const fn(*const ir.Decl) usize,
 };
 
 pub var current_backend: *const Backend = undefined;
