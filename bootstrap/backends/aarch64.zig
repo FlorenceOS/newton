@@ -12,10 +12,6 @@ fn registerName(reg: u8) []const u8 {
     }
 }
 
-fn determineMaxMemoryOperands(_: *const ir.Decl) usize {
-    return 0;
-}
-
 pub const backend = backends.Backend{
     .elf_machine = .AARCH64,
     .pointer_type = .u64,
@@ -26,7 +22,6 @@ pub const backend = backends.Backend{
         .has_nonzero_constant_store = false,
         .has_divide_constant = false,
         .has_modulus_constant = false,
-        .max_memory_operands_fn = determineMaxMemoryOperands,
     },
     .gprs = &.{
         0,  1,  2,  3,  4,  5,  6,  7,  8,  9,

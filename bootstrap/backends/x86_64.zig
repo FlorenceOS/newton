@@ -15,13 +15,6 @@ const registers = struct {
     const rdi = 7;
 };
 
-fn determineMaxMemoryOperands(decl: *const ir.Decl) usize {
-    return switch(decl.instr) {
-        .leave_function => 0,
-        else => 1,
-    };
-}
-
 pub const backend = backends.Backend{
     .elf_machine = .X86_64,
     .pointer_type = .u64,
@@ -32,7 +25,6 @@ pub const backend = backends.Backend{
         .has_nonzero_constant_store = true,
         .has_divide_constant = false,
         .has_modulus_constant = false,
-        .max_memory_operands_fn = determineMaxMemoryOperands,
     },
     .gprs = &.{
         registers.rax,

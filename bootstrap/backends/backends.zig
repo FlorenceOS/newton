@@ -43,7 +43,6 @@ pub const Optimizations = struct {
     has_nonzero_constant_store: bool,
     has_divide_constant: bool,
     has_modulus_constant: bool,
-    max_memory_operands_fn: *const fn(*const ir.Decl) usize,
 };
 
 pub var current_backend: *const Backend = undefined;
