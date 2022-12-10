@@ -123,6 +123,7 @@ pub fn allocateRegsForInstr(
     return_reg: ?u8,
     param_regs: []const u8,
     clobbers: []const u8,
+    illegal_input_regs: []const u8,
     allocate_gprs: bool,
     param_replacement: *ParamReplacement,
 ) !void {
@@ -145,27 +146,28 @@ pub fn allocateRegsForInstr(
             } else {
                 memory_operands += 1;
             }
-        } else {
-            op.* = try ir.insertBefore(decl_idx, .{.copy = op.*});
         }
         if(ir.decls.get(op.*).instr.memoryReference() == null) {
             if(register_operands == param_regs.len) {
                 if(allocate_gprs) break;
                 @panic("Ran out of param regs");
             }
+            op.* = try ir.insertBefore(decl_idx, .{.copy = op.*});
             ir.decls.get(op.*).reg_alloc_value = param_regs[register_operands];
             register_operands += 1;
         }
     }
     for(clobbers) |clob_reg| {
         if(return_reg == clob_reg) continue;
-        const clob1 = try ir.insertBefore(next, .{
-            .clobber = decl_idx,
-        });
+        const clob1 = try ir.insertBefore(next, .{ .clobber = decl_idx });
         ir.decls.get(clob1).reg_alloc_value = clob_reg;
-        const clob2 = try ir.insertBefore(next, .{
-            .clobber = clob1,
-        });
+        const clob2 = try ir.insertBefore(next, .{ .clobber = clob1 });
+        ir.decls.get(clob2).reg_alloc_value = clob_reg;
+    }
+    for(illegal_input_regs) |clob_reg| {
+        const clob1 = try ir.insertBefore(decl_idx, .{ .clobber = ir.DeclIndex.unwrap(decl.prev).? });
+        ir.decls.get(clob1).reg_alloc_value = clob_reg;
+        const clob2 = try ir.insertBefore(decl_idx, .{ .clobber = clob1 });
         ir.decls.get(clob2).reg_alloc_value = clob_reg;
     }
 }
@@ -203,6 +205,7 @@ pub fn doRegAlloc(
                     backends.current_default_abi.param_regs[pr.param_idx],
                     &.{},
                     &.{},
+                    &.{},
                     false,
                     &param_replacement,
                 ),
@@ -212,6 +215,7 @@ pub fn doRegAlloc(
                     backends.current_default_abi.return_reg,
                     backends.current_default_abi.param_regs,
                     backends.current_default_abi.caller_saved_regs,
+                    &.{},
                     false,
                     &param_replacement,
                 ),
@@ -221,6 +225,7 @@ pub fn doRegAlloc(
                     backends.current_os.syscall_return_reg,
                     backends.current_os.syscall_param_regs,
                     backends.current_os.syscall_clobbers,
+                    &.{},
                     false,
                     &param_replacement,
                 ),
@@ -229,6 +234,7 @@ pub fn doRegAlloc(
                     0,
                     null,
                     &.{backends.current_default_abi.return_reg},
+                    &.{},
                     &.{},
                     false,
                     &param_replacement,

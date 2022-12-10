@@ -147,7 +147,7 @@ fn opSizeBit(decl: *ir.Decl) u32 {
 }
 
 fn regAlloc(decl_idx: ir.DeclIndex.Index, param_replacement: *rega.ParamReplacement) !void {
-    try rega.allocateRegsForInstr(decl_idx, 0, null, &.{}, &.{}, true, param_replacement);
+    try rega.allocateRegsForInstr(decl_idx, 0, null, &.{}, &.{}, &.{}, true, param_replacement);
 }
 
 fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFind, regs_to_save: []const u8) !?ir.BlockIndex.Index {
