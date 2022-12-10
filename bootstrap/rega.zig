@@ -243,10 +243,6 @@ pub fn doRegAlloc(
         }
     }
 
-    for(block_list.items) |blk_idx| {
-        try ir.dumpBlock(blk_idx, null);
-    }
-
     var uf = UnionFind{};
     for(block_list.items) |blk_idx| {
         const blk = ir.blocks.get(blk_idx);
@@ -276,7 +272,6 @@ pub fn doRegAlloc(
         while(fuck.next()) |fit| {
             const iidx = @intToEnum(ir.DeclIndex.Index, @intCast(u32, fit.key_ptr.*));
             const replacement = uf.find(iidx);
-            std.debug.print("Union: ${d} => ${d}\n", .{@enumToInt(iidx), @enumToInt(replacement)});
             const decl = ir.decls.get(iidx);
             if(decl.instr == .phi) {
                 std.debug.assert(iidx != replacement);
@@ -356,30 +351,6 @@ pub fn doRegAlloc(
 
     {
         var fuck = ins.iterator();
-        while(fuck.next()) |decl_ins| {
-            std.debug.print("${d} has the following ins:", .{@enumToInt(decl_ins.key_ptr.*)});
-            var in_it = decl_ins.value_ptr.iterator();
-            while(in_it.next()) |in_value| {
-                std.debug.print(" ${d}", .{@enumToInt(in_value.key_ptr.*)});
-            }
-            std.debug.print("\n", .{});
-        }
-    }
-
-    {
-        var fuck = out.iterator();
-        while(fuck.next()) |decl_out| {
-            std.debug.print("${d} has the following out:", .{@enumToInt(decl_out.key_ptr.*)});
-            var out_it = decl_out.value_ptr.iterator();
-            while(out_it.next()) |out_value| {
-                std.debug.print(" ${d}", .{@enumToInt(out_value.key_ptr.*)});
-            }
-            std.debug.print("\n", .{});
-        }
-    }
-
-    {
-        var fuck = ins.iterator();
         while(fuck.next()) |decl_set| {
             var outer_it = decl_set.value_ptr.iterator();
             while(outer_it.next()) |outer| {
@@ -411,19 +382,16 @@ pub fn doRegAlloc(
         while(i < conflicts.keys().len) {
             const k = conflicts.keys()[i];
             if(isDeclInReg(k)) {
-                std.debug.print("${d} has the following conflicts:", .{@enumToInt(k)});
                 const decl_set = &conflicts.values()[i];
                 var j: usize = 0;
                 while(j < decl_set.keys().len) {
                     const conflict_decl = ir.decls.get(decl_set.keys()[j]);
                     if(isDeclInReg(ir.decls.getIndex(conflict_decl))) {
-                        std.debug.print(" ${d}", .{@enumToInt(ir.decls.getIndex(conflict_decl))});
                         j += 1;
                     } else {
                         decl_set.swapRemoveAt(j);
                     }
                 }
-                std.debug.print("\n", .{});
                 i += 1;
             } else {
                 conflicts.swapRemoveAt(i);
