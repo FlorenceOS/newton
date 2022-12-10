@@ -2,7 +2,7 @@ const print = @import("print.n");
 const syscalls = @import("syscalls.n");
 
 fn main() void {
-    print.write_str("Hello, world!\n".&);
+    print.str("Hello, world!\n".&);
     print.flush();
     syscalls.exit(0);
 }

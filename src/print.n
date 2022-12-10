@@ -12,7 +12,7 @@ fn flush() void {
     }
 }
 
-fn write_char(ch: u8) void {
+fn char(ch: u8) void {
     if(used == MAX_BUF) {
         flush();
     }
@@ -20,12 +20,12 @@ fn write_char(ch: u8) void {
     used = used + 1;
 }
 
-fn write_str(str: *const u8) void {
+fn str(str: *const u8) void {
     loop {
         if(str.* == 0) {
             return;
         }
-        write_char(str.*);
+        char(str.*);
         str = str + 1;
     }
 }
