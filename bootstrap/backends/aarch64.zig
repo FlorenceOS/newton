@@ -20,11 +20,37 @@ pub const backend = backends.Backend{
     .elf_machine = .AARCH64,
     .pointer_type = .u64,
     .register_name = registerName,
+    .reg_alloc = regAlloc,
     .write_decl = writeDecl,
     .optimizations = .{
         .has_nonzero_constant_store = false,
         .max_memory_operands_fn = determineMaxMemoryOperands,
     },
+    .gprs = &.{
+        0,  1,  2,  3,  4,  5,  6,  7,  8,  9,
+        10, 11, 12, 13, 14, 15, 16, 17,     19,
+        20, 21, 22, 23, 24, 25, 26, 27, 28,
+    },
+};
+
+pub const abis = struct {
+    pub const aarch64 = backends.Abi{
+        .return_reg = 0,
+        .param_regs = &.{0, 1, 2, 3, 4, 5, 6, 7},
+        .caller_saved_regs = &.{
+            0,  1,  2,  3,  4,  5,  6,  7,  8,  9,
+            10, 11, 12, 13, 14, 15,
+        },
+    };
+};
+
+pub const oses = struct {
+    pub const linux = backends.Os{
+        .default_abi = &abis.aarch64,
+        .syscall_return_reg = 0,
+        .syscall_param_regs = &.{8, 0, 1, 2, 3, 4, 5},
+        .syscall_clobbers = &.{},
+    };
 };
 
 pub const registers = struct {
@@ -32,24 +58,6 @@ pub const registers = struct {
     pub const lr = 30;
     pub const sp = 31;
     pub const zero = 31;
-};
-
-pub const oses = struct {
-    pub const linux = backends.Os{
-        .return_reg = 0,
-        .gprs = &.{
-            0,  1,  2,  3,  4,  5,  6,  7,  8,  9,
-            10, 11, 12, 13, 14, 15, 16, 17,     19,
-            20, 21, 22, 23, 24, 25, 26, 27, 28,
-        },
-        .param_regs = &.{0, 1, 2, 3, 4, 5, 6, 7},
-        .syscall_param_regs = &.{8, 0, 1, 2, 3, 4, 5},
-        .caller_saved = &.{
-            0,  1,  2,  3,  4,  5,  6,  7,  8,  9,
-            10, 11, 12, 13, 14, 15,
-        },
-        .syscall_clobbers = &.{},
-    };
 };
 
 pub const pointer_type: ir.InstrType = .u64;
@@ -134,6 +142,10 @@ fn popTwo(writer: *backends.Writer, r1: u8, r2: u8) !void {
 
 fn opSizeBit(decl: *ir.Decl) u32 {
     return if(decl.instr.getOperationType() == .u64) (1 << 31) else 0;
+}
+
+fn regAlloc(decl_idx: ir.DeclIndex.Index, param_replacement: *rega.ParamReplacement) !void {
+    try rega.allocateRegsForInstr(decl_idx, 0, null, &.{}, &.{}, true, param_replacement);
 }
 
 fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFind, regs_to_save: []const u8) !?ir.BlockIndex.Index {
@@ -326,7 +338,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
         .syscall => try writer.writeInt(u32, 0xD4000001),
         .leave_function => |leave| {
             const op_reg = uf.findDecl(leave.value).reg_alloc_value.?;
-            std.debug.assert(op_reg == backends.current_os.return_reg);
+            std.debug.assert(op_reg == backends.current_default_abi.return_reg);
             if(leave.restore_stack) {
                 try movReg(writer, registers.sp, registers.fp);
             }

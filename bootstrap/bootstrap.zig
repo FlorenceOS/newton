@@ -33,10 +33,12 @@ pub fn main() !void {
     var target_it = std.mem.split(u8, target, "-");
     const arch_str = target_it.next().?;
     const os_str = target_it.next().?;
+    const abi_str = target_it.next();
     std.debug.assert(target_it.next() == null);
 
     var target_arch: ?*const backends.Backend = null;
     var target_os: ?*const backends.Os = null;
+    var target_abi: ?*const backends.Abi = null;
 
     inline for(@typeInfo(backends.backends).Struct.decls) |arch_decl| {
         const platform = &@field(backends.backends, arch_decl.name);
@@ -49,11 +51,37 @@ pub fn main() !void {
                     target_os = os;
                 }
             }
+            if(abi_str) |abi_name| {
+                inline for(@typeInfo(platform.abis).Struct.decls) |abi_decl| {
+                    const abi = &@field(platform.abis, abi_decl.name);
+
+                    if(std.mem.eql(u8, abi_name, abi_decl.name)) {
+                        target_abi = abi;
+                    }
+                }
+            }
         }
     }
 
-    backends.current_backend = target_arch.?;
-    backends.current_os = target_os.?;
+    if(target_arch) |arch| {
+        backends.current_backend = arch;
+    } else {
+        std.debug.panic("Could not find architecture {s}", .{arch_str});
+    }
+
+    if(target_os) |os| {
+        backends.current_os = os;
+    } else {
+        std.debug.panic("Could not find OS {s} for architecture {s}", .{os_str, arch_str});
+    }
+
+    if(target_abi) |abi| {
+        backends.current_default_abi = abi;
+    } else if(abi_str) |abi| {
+        std.debug.panic("Could not find ABI {s} for architecture {s}", .{abi, arch_str});
+    } else {
+        backends.current_default_abi = backends.current_os.default_abi;
+    }
 
     try ast.init();
     try sema.init();

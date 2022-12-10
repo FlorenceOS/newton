@@ -117,24 +117,74 @@ fn isDeclInReg(decl_idx: ir.DeclIndex.Index) bool {
     return decl.instr.isValue() and !decl.instr.isFlagsValue();
 }
 
+pub fn allocateRegsForInstr(
+    decl_idx: ir.DeclIndex.Index,
+    max_memory_operands: usize,
+    return_reg: ?u8,
+    param_regs: []const u8,
+    clobbers: []const u8,
+    allocate_gprs: bool,
+    param_replacement: *ParamReplacement,
+) !void {
+    const decl = ir.decls.get(decl_idx);
+    const next = ir.DeclIndex.unwrap(decl.next) orelse return;
+    if(return_reg) |reg| {
+        decl.reg_alloc_value = reg;
+        const ret_copy = try ir.insertBefore(next, .{
+            .copy = decl_idx,
+        });
+        try param_replacement.put(decl_idx, ret_copy);
+    }
+    var memory_operands: usize = 0;
+    var register_operands: usize = 0;
+    var iter = decl.instr.operands();
+    while(iter.next()) |op| {
+        if(ir.decls.get(op.*).instr.memoryReference()) |mr| {
+            if(memory_operands == max_memory_operands) {
+                op.* = try ir.insertBefore(decl_idx, mr.load());
+            } else {
+                memory_operands += 1;
+            }
+        } else {
+            op.* = try ir.insertBefore(decl_idx, .{.copy = op.*});
+        }
+        if(ir.decls.get(op.*).instr.memoryReference() == null) {
+            if(register_operands == param_regs.len) {
+                if(allocate_gprs) break;
+                @panic("Ran out of param regs");
+            }
+            ir.decls.get(op.*).reg_alloc_value = param_regs[register_operands];
+            register_operands += 1;
+        }
+    }
+    for(clobbers) |clob_reg| {
+        if(return_reg == clob_reg) continue;
+        const clob1 = try ir.insertBefore(next, .{
+            .clobber = decl_idx,
+        });
+        ir.decls.get(clob1).reg_alloc_value = clob_reg;
+        const clob2 = try ir.insertBefore(next, .{
+            .clobber = clob1,
+        });
+        ir.decls.get(clob2).reg_alloc_value = clob_reg;
+    }
+}
+
+pub const ParamReplacement = std.AutoArrayHashMap(ir.DeclIndex.Index, ir.DeclIndex.Index);
+
 pub fn doRegAlloc(
     allocator: std.mem.Allocator,
     block_list: *const std.ArrayListUnmanaged(ir.BlockIndex.Index),
-    return_reg: u8,
-    param_regs: []const u8,
-    syscall_param_regs: []const u8,
-    gprs: []const u8,
-    caller_saved: []const u8,
-    syscall_clobbers: []const u8,
 ) !UnionFind {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
-    var param_replacement = std.AutoArrayHashMapUnmanaged(ir.DeclIndex.Index, ir.DeclIndex.Index){};
+    var param_replacement = ParamReplacement.init(arena.allocator());
     for(block_list.items) |blk_idx| {
         const blk = ir.blocks.get(blk_idx);
         var curr_instr = blk.first_decl;
         while(ir.decls.getOpt(curr_instr)) |instr| : (curr_instr = instr.next) {
+            const decl_idx = ir.decls.getIndex(instr);
             switch(instr.instr) {
                 .phi => {
                     var pop = instr.instr.phi;
@@ -147,67 +197,43 @@ pub fn doRegAlloc(
                         op.decl = new_op;
                     }
                 },
-                .param_ref => {
-                    const copy = try ir.insertBefore(ir.DeclIndex.unwrap(instr.next).?, .{
-                        .copy = ir.decls.getIndex(instr),
-                    });
-                    try param_replacement.put(arena.allocator(), ir.decls.getIndex(instr), copy);
-                },
-                .function_call => {
-                    var op_it = instr.instr.operands();
-                    var arg_idx: u8 = 0;
-                    while(op_it.next()) |op| : (arg_idx += 1) {
-                        const new_op = try ir.insertBefore(ir.decls.getIndex(instr), .{
-                            .copy = op.*,
-                        });
-                        op.* = new_op;
-                        ir.decls.get(new_op).reg_alloc_value = param_regs[arg_idx];
-                    }
-                    const next = ir.DeclIndex.unwrap(instr.next).?;
-                    const ret_copy = try ir.insertBefore(next, .{
-                        .copy = ir.decls.getIndex(instr),
-                    });
-                    try param_replacement.put(arena.allocator(), ir.decls.getIndex(instr), ret_copy);
-                    for(caller_saved) |reg| {
-                        if(reg == return_reg) continue;
-                        const clob1 = try ir.insertBefore(next, .{
-                            .clobber = ir.decls.getIndex(instr),
-                        });
-                        ir.decls.get(clob1).reg_alloc_value = reg;
-                        const clob2 = try ir.insertBefore(next, .{
-                            .clobber = clob1,
-                        });
-                        ir.decls.get(clob2).reg_alloc_value = reg;
-                    }
-                },
-                .syscall => {
-                    var op_it = instr.instr.operands();
-                    var arg_idx: u8 = 0;
-                    while(op_it.next()) |op| : (arg_idx += 1) {
-                        const new_op = try ir.insertBefore(ir.decls.getIndex(instr), .{
-                            .copy = op.*,
-                        });
-                        op.* = new_op;
-                        ir.decls.get(new_op).reg_alloc_value = syscall_param_regs[arg_idx];
-                    }
-                    const next = ir.DeclIndex.unwrap(instr.next).?;
-                    const ret_copy = try ir.insertBefore(next, .{
-                        .copy = ir.decls.getIndex(instr),
-                    });
-                    try param_replacement.put(arena.allocator(), ir.decls.getIndex(instr), ret_copy);
-                    for(syscall_clobbers) |reg| {
-                        if(reg == return_reg) continue;
-                        const clob1 = try ir.insertBefore(next, .{
-                            .clobber = ir.decls.getIndex(instr),
-                        });
-                        ir.decls.get(clob1).reg_alloc_value = reg;
-                        const clob2 = try ir.insertBefore(next, .{
-                            .clobber = clob1,
-                        });
-                        ir.decls.get(clob2).reg_alloc_value = reg;
-                    }
-                },
-                else => {},
+                .param_ref => |pr| try allocateRegsForInstr(
+                    decl_idx,
+                    0,
+                    backends.current_default_abi.param_regs[pr.param_idx],
+                    &.{},
+                    &.{},
+                    false,
+                    &param_replacement,
+                ),
+                .function_call => try allocateRegsForInstr(
+                    decl_idx,
+                    0,
+                    backends.current_default_abi.return_reg,
+                    backends.current_default_abi.param_regs,
+                    backends.current_default_abi.caller_saved_regs,
+                    false,
+                    &param_replacement,
+                ),
+                .syscall => try allocateRegsForInstr(
+                    decl_idx,
+                    0,
+                    backends.current_os.syscall_return_reg,
+                    backends.current_os.syscall_param_regs,
+                    backends.current_os.syscall_clobbers,
+                    false,
+                    &param_replacement,
+                ),
+                .leave_function => try allocateRegsForInstr(
+                    decl_idx,
+                    0,
+                    null,
+                    &.{backends.current_default_abi.return_reg},
+                    &.{},
+                    false,
+                    &param_replacement,
+                ),
+                else => try backends.current_backend.reg_alloc(decl_idx, &param_replacement),
             }
         }
     }
@@ -399,35 +425,6 @@ pub fn doRegAlloc(
         }
     }
 
-    for(block_list.items) |blk_idx| {
-        const blk = ir.blocks.get(blk_idx);
-        var curr_instr = blk.first_decl;
-        while(ir.decls.getOpt(curr_instr)) |decl| : (curr_instr = decl.next) {
-            const adecl = uf.findDecl(ir.decls.getIndex(decl));
-            switch(decl.instr) {
-                .param_ref => |pr| adecl.reg_alloc_value = param_regs[pr.param_idx],
-                else => {},
-            }
-        }
-    }
-
-    for(block_list.items) |blk_idx| {
-        const blk = ir.blocks.get(blk_idx);
-        var curr_instr = blk.first_decl;
-        while(ir.decls.getOpt(curr_instr)) |decl| : (curr_instr = decl.next) {
-            switch(decl.instr) {
-                .leave_function => |ret| {
-                    const adecl = uf.findDecl(ret.value);
-                    if(adecl.reg_alloc_value == null and isDeclInReg(ret.value)) {
-                        adecl.reg_alloc_value = return_reg;
-                    }
-                },
-                .function_call, .syscall => decl.reg_alloc_value = return_reg,
-                else => {},
-            }
-        }
-    }
-
     while(blk: {
         var fuck = conflicts.iterator();
         while(fuck.next()) |decl_node| {
@@ -479,7 +476,7 @@ pub fn doRegAlloc(
             const iidx = decl_node.key_ptr.*;
             const decl = ir.decls.get(iidx);
             if(decl.reg_alloc_value == null) {
-                allocAnyReg(iidx, gprs, &conflicts);
+                allocAnyReg(iidx, backends.current_backend.gprs, &conflicts);
                 break;
             }
         }

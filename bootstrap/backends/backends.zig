@@ -13,6 +13,8 @@ pub const Backend = struct {
     elf_machine: std.elf.EM,
     pointer_type: ir.InstrType,
     register_name: std.meta.FnPtr(fn(u8) []const u8),
+
+    reg_alloc: std.meta.FnPtr(fn(ir.DeclIndex.Index, *rega.ParamReplacement) anyerror!void),
     write_decl: std.meta.FnPtr(fn(
         writer: *Writer,
         decl_idx: ir.DeclIndex.Index,
@@ -21,15 +23,20 @@ pub const Backend = struct {
     ) anyerror!?ir.BlockIndex.Index),
 
     optimizations: Optimizations,
+    gprs: []const u8,
 };
 
 pub const Os = struct {
-    return_reg: u8,
-    gprs: []const u8,
-    param_regs: []const u8,
+    default_abi: *const Abi,
+    syscall_return_reg: u8,
     syscall_param_regs: []const u8,
-    caller_saved: []const u8,
     syscall_clobbers: []const u8,
+};
+
+pub const Abi = struct {
+    return_reg: u8,
+    param_regs: []const u8,
+    caller_saved_regs: []const u8,
 };
 
 pub const Optimizations = struct {
@@ -39,6 +46,7 @@ pub const Optimizations = struct {
 
 pub var current_backend: *const Backend = undefined;
 pub var current_os: *const Os = undefined;
+pub var current_default_abi: *const Abi = undefined;
 
 pub const RelocationType = enum {
     rel8_post_0,
@@ -219,20 +227,20 @@ pub const Writer = struct {
         });
     }
 
-    fn writeBlock(self: *@This(), bidx: ir.BlockIndex.Index, uf: rega.UnionFind, regs_to_save: []const u8) !?ir.BlockIndex.Index {
+    fn writeBlock(self: *@This(), bidx: ir.BlockIndex.Index, uf: rega.UnionFind, used_registers: []const u8) !?ir.BlockIndex.Index {
         var block = ir.blocks.get(bidx);
         var current_instr = block.first_decl;
 
         try self.placed_blocks.put(self.allocator, bidx, self.currentOffset());
         while(ir.decls.getOpt(current_instr)) |instr| {
-            const next_block: ?ir.BlockIndex.Index = try current_backend.write_decl(self, ir.decls.getIndex(instr), uf, regs_to_save);
+            const next_block: ?ir.BlockIndex.Index = try current_backend.write_decl(self, ir.decls.getIndex(instr), uf, used_registers);
             if(next_block) |nb| return nb;
             current_instr = instr.next;
         }
         return null;
     }
 
-    fn writeBlocks(self: *@This(), head_block: ir.BlockIndex.Index, uf: rega.UnionFind, regs_to_save: []const u8) !void {
+    fn writeBlocks(self: *@This(), head_block: ir.BlockIndex.Index, uf: rega.UnionFind, used_registers: []const u8) !void {
         try self.enqueued_blocks.put(self.allocator, head_block, .{});
         var preferred_block: ?ir.BlockIndex.Index = null;
 
@@ -255,7 +263,7 @@ pub const Writer = struct {
             }
             block_relocs.deinit(self.allocator);
 
-            preferred_block = try self.writeBlock(current_block, uf, regs_to_save);
+            preferred_block = try self.writeBlock(current_block, uf, used_registers);
         }
     }
 
@@ -265,25 +273,16 @@ pub const Writer = struct {
 
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         const func_blocks = try ir.allBlocksReachableFrom(arena.allocator(), head_block);
-        const uf = try rega.doRegAlloc(
-            arena.allocator(),
-            &func_blocks,
-            current_os.return_reg,
-            current_os.param_regs,
-            current_os.syscall_param_regs,
-            current_os.gprs,
-            current_os.caller_saved,
-            current_os.syscall_clobbers,
-        );
+        const uf = try rega.doRegAlloc(arena.allocator(), &func_blocks);
 
-        var regs_to_save: std.BoundedArray(u8, 256) = .{};
+        var used_registers: std.BoundedArray(u8, 256) = .{};
         for(func_blocks.items) |blk_idx| {
             const blk = ir.blocks.get(blk_idx);
             var curr_decl = blk.first_decl;
             while(ir.decls.getOpt(curr_decl)) |decl| : (curr_decl = decl.next) {
                 if(decl.reg_alloc_value) |reg| {
-                    if(std.mem.indexOfScalar(u8, regs_to_save.slice(), reg) == null and std.mem.indexOfScalar(u8, current_os.caller_saved, reg) == null) {
-                        regs_to_save.appendAssumeCapacity(reg);
+                    if(std.mem.indexOfScalar(u8, used_registers.slice(), reg) == null) {
+                        used_registers.appendAssumeCapacity(reg);
                     }
                 }
             }
@@ -300,7 +299,7 @@ pub const Writer = struct {
             var value_copy = kv.value;
             value_copy.deinit(self.allocator);
         }
-        try self.writeBlocks(head_block, uf, regs_to_save.slice());
+        try self.writeBlocks(head_block, uf, used_registers.slice());
     }
 
     pub fn writeFunction(self: *@This(), function: sema.ValueIndex.Index) !void {
