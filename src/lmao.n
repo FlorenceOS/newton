@@ -1,15 +1,8 @@
-const other = @import("other.n");
+const print = @import("print.n");
+const syscalls = @import("syscalls.n");
 
-const SYS = struct {
-    const WRITE = 1;
-    const EXIT = 60;
-};
-
-fn print(buf: *const u8) u64 {
-    return @syscall(SYS.WRITE, 1, buf, other.strlen(buf));
-}
-
-fn main() u64 {
-    print("Hello, world!\n".&);
-    return @syscall(SYS.EXIT, 0);
+fn main() void {
+    print.char('!');
+    print.flush();
+    syscalls.exit(0);
 }

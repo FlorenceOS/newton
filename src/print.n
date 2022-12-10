@@ -1,0 +1,21 @@
+const syscalls = @import("syscalls.n");
+
+const MAX_BUF = 128;
+
+var used: u64 = 0;
+var buffer: [MAX_BUF]u8 = undefined;
+
+fn flush() void {
+    if(used != 0) {
+        syscalls.write_all(1, buffer[0].&, used);
+        used = 0;
+    }
+}
+
+fn char(ch: u8) void {
+    if(used == MAX_BUF) {
+        flush();
+    }
+    buffer[used] = ch;
+    used = used + 1;
+}

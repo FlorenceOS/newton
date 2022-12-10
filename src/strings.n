@@ -1,7 +1,4 @@
-const root = @import("lmao.n");
-const self = @import("other.n");
-
-fn strlen(ptr: *const u8) u64 {
+fn len(ptr: *const u8) u64 {
     var res: u64 = 0;
     loop {
         if(ptr[res] == 0) {

@@ -262,13 +262,13 @@ const DeclInstr = union(enum) {
     pub fn memoryReference(self: *const @This()) ?MemoryReference {
         const self_index = decls.getIndex(@fieldParentPtr(Decl, "instr", self));
         switch(self.*) {
-            .stack_ref => return .{
+            .stack_ref => |sr| return .{
                 .pointer_value = self_index,
-                .sema_pointer_type = undefined,
+                .sema_pointer_type = sr.type,
             },
-            .offset_ref => return .{
+            .offset_ref => |offref| return .{
                 .pointer_value = self_index,
-                .sema_pointer_type = undefined,
+                .sema_pointer_type = offref.type,
             },
             .reference_wrap => |rr| return rr,
             else => return null,
@@ -1201,13 +1201,15 @@ fn ssaBlockStatementIntoBasicBlock(
                 const decl = sema.decls.get(decl_idx);
                 const init_value = sema.values.get(decl.init_value);
 
-                if(decl.stack_offset) |*offset| {
-                    const decl_type = sema.types.get(try init_value.getType());
-                    const alignment = try decl_type.getAlignment();
-                    current_stack_offset += alignment - 1;
-                    current_stack_offset &= ~@as(u32, alignment - 1);
-                    current_stack_offset += try decl_type.getSize();
-                    offset.* = current_stack_offset;
+                if(!decl.static) {
+                    if(decl.offset) |*offset| {
+                        const decl_type = sema.types.get(try init_value.getType());
+                        const alignment = try decl_type.getAlignment();
+                        current_stack_offset += alignment - 1;
+                        current_stack_offset &= ~@as(u32, alignment - 1);
+                        current_stack_offset += try decl_type.getSize();
+                        offset.* = current_stack_offset;
+                    }
                 }
 
                 const value = if(init_value.* == .runtime) blk: {
@@ -1223,16 +1225,18 @@ fn ssaBlockStatementIntoBasicBlock(
                 };
                 decls.get(value).sema_decl = sema.DeclIndex.toOpt(decl_idx);
 
-                if(decl.stack_offset) |offset| {
-                    const stack_ref = try appendToBlock(current_basic_block, .{.stack_ref = .{
-                        .offset = offset,
-                        .type = .{
-                            .is_const = !decl.mutable,
-                            .is_volatile = false,
-                            .item = try sema.values.get(decl.init_value).getType(),
-                        },
-                    }});
-                    _ = try appendToBlock(current_basic_block, .{.store = .{.dest = stack_ref, .value = value}});
+                if(!decl.static) {
+                    if(decl.offset) |offset| {
+                        const stack_ref = try appendToBlock(current_basic_block, .{.stack_ref = .{
+                            .offset = offset,
+                            .type = .{
+                                .is_const = !decl.mutable,
+                                .is_volatile = false,
+                                .item = try sema.values.get(decl.init_value).getType(),
+                            },
+                        }});
+                        _ = try appendToBlock(current_basic_block, .{.store = .{.dest = stack_ref, .value = value}});
+                    }
                 }
             },
             .expression => |expr_idx| {
@@ -1349,15 +1353,15 @@ fn ssaValue(
         .runtime => |rt| return ssaExpr(block_idx, sema.ExpressionIndex.unwrap(rt.expr).?),
         .decl_ref => |decl_idx| {
             const rdecl = sema.decls.get(decl_idx);
-            if(rdecl.stack_offset) |offset| {
-                return appendToBlock(block_idx, .{.stack_ref = .{
-                    .offset = offset,
-                    .type = .{
-                        .is_const = !rdecl.mutable,
-                        .is_volatile = false,
-                        .item = try sema.values.get(rdecl.init_value).getType(),
-                    },
-                }});
+            const ref_t = sema.PointerType{
+                .is_const = !rdecl.mutable,
+                .is_volatile = false,
+                .item = try sema.values.get(rdecl.init_value).getType(),
+            };
+            if(rdecl.static) {
+                return appendToBlock(block_idx, .{.offset_ref = .{ .offset = rdecl.offset.?, .type = ref_t}});
+            } else if(rdecl.offset) |offset| {
+                return appendToBlock(block_idx, .{.stack_ref = .{ .offset = offset, .type = ref_t}});
             } else {
                 return readVariable(block_idx, decl_idx);
             }
@@ -1369,7 +1373,7 @@ fn ssaValue(
             }});
         },
         .bool => |b| return appendToBlock(block_idx, .{.load_bool_constant = b}),
-        .unsigned_int => |int| {
+        .unsigned_int, .signed_int => |int| {
             // TODO: Pass value bit width along too
             return appendToBlock(block_idx, .{.load_int_constant = .{
                 .value = @intCast(u64, int.value),
@@ -1396,17 +1400,15 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index) an
                 const lhs_sema = sema.values.get(ass.lhs);
                 if(lhs_sema.* == .decl_ref) {
                     const rhs_value_decl = decls.get(rhs_value);
-                    if(rhs_value_decl.sema_decl != .none) {
+                    if(!sema.decls.get(lhs_sema.decl_ref).static) {
                         const new_rhs = try appendToBlock(block_idx, rhs_value_decl.instr);
                         decls.get(new_rhs).sema_decl = sema.DeclIndex.toOpt(lhs_sema.decl_ref);
-                    } else {
-                        rhs_value_decl.sema_decl = sema.DeclIndex.toOpt(lhs_sema.decl_ref);
+                        return undefined;
                     }
-                } else {
-                    const lhs = try ssaValue(block_idx, ass.lhs);
-                    const lhs_mr = decls.get(lhs).instr.memoryReference().?;
-                    _ = try appendToBlock(block_idx, lhs_mr.store(rhs_value));
                 }
+                const lhs = try ssaValue(block_idx, ass.lhs);
+                const lhs_mr = decls.get(lhs).instr.memoryReference().?;
+                _ = try appendToBlock(block_idx, lhs_mr.store(rhs_value));
             }
             return undefined;
         },
@@ -1467,9 +1469,7 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index) an
                 const farg = arg.function_arg;
                 const value = try ssaValue(block_idx, farg.value);
                 if(decls.get(value).instr.memoryReference()) |mr| {
-                    _ = try builder.insert(.{
-                        .value = try appendToBlock(block_idx, mr.load()),
-                    });
+                    _ = try builder.insert(.{.value = try appendToBlock(block_idx, mr.load())});
                 } else {
                     _ = try builder.insert(.{.value = value });
                 }

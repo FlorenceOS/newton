@@ -26,7 +26,6 @@ pub const ValueIndex = indexed_list.Indices(u32, opaque{}, .{
     .void = .{.type_idx = .void},
     .bool = .{.type_idx = .bool},
     .type = .{.type_idx = .type},
-    .undefined = .{.undefined = {}},
     .discard_underscore = .{.discard_underscore = {}},
     .u8_type = .{.type_idx = .u8},
     .u16_type = .{.type_idx = .u16},
@@ -130,26 +129,72 @@ fn commonType(lhs_ty: TypeIndex.Index, rhs_ty: TypeIndex.Index) !TypeIndex.Index
         }
     }
 
+    if(lhs.* == .pointer) {
+        std.debug.assert(rhs.* == .comptime_int or rhs.* == .unsigned_int or rhs.* == .signed_int);
+        return lhs_ty;
+    }
+
     return error.IncompatibleTypes;
 }
 
-fn promote(vidx: *ValueIndex.Index, target_tidx: TypeIndex.Index) !void {
-    const value = values.get(vidx.*);
-    const value_ty = types.get(try decayValueType(vidx.*));
+fn promote(vidx: *ValueIndex.Index, target_tidx: TypeIndex.Index, is_assign: bool) !void {
+    var value = values.get(vidx.*);
+
+    // First decay the value
+    if(value.* == .decl_ref) {
+        const decl = decls.get(value.decl_ref);
+        if(!decl.mutable and decl.static) {
+            // This has to be a compile time known value
+            value = values.get(decl.init_value);
+            std.debug.assert(value.* != .runtime);
+        }
+    }
+
+    const value_ty = types.get(try value.getType());
     const ty = types.get(target_tidx);
 
+    if(ty.* == .pointer) {
+        const child_type = types.get(ty.pointer.item);
+        switch(value_ty.*) {
+            .comptime_int, .unsigned_int, .signed_int => {
+                std.debug.assert(!is_assign);
+                vidx.* = try Value.fromExpression(
+                    try expressions.insert(.{.multiply = .{
+                        .lhs = vidx.*,
+                        .rhs = try values.addDedupLinear(.{.comptime_int = try child_type.getSize()}),
+                    }}),
+                    try values.addDedupLinear(.{.type_idx = target_tidx}),
+                );
+            },
+            else => {
+                if(value_ty.pointer.is_volatile == ty.pointer.is_volatile) {
+                    if(value_ty.pointer.item == ty.pointer.item) {
+                        if(!value_ty.pointer.is_const or ty.pointer.is_const) {
+                            return;
+                        }
+                    }
+                }
+                std.debug.panic("Invalid assignment from {any} to pointer type {any}!", .{value_ty.*, ty.*});
+            }
+        }
+        return;
+    }
+
     switch(value_ty.*) {
-         .comptime_int => switch(ty.*) {
-            .comptime_int => {},
-            .unsigned_int => |bits| vidx.* = try values.addDedupLinear(.{.unsigned_int = .{
-                .bits = bits,
-                .value = value.comptime_int,
-            }}),
-            .signed_int => |bits| vidx.* = try values.addDedupLinear(.{.signed_int = .{
-                .bits = bits,
-                .value = value.comptime_int,
-            }}),
-            else => @panic("Comptime int to non-int type(?)"),
+        .comptime_int => {
+            std.debug.assert(value.* != .decl_ref); // This must have been decayed earlier
+            switch(ty.*) {
+                .comptime_int => {},
+                .unsigned_int => |bits| vidx.* = try values.addDedupLinear(.{.unsigned_int = .{
+                    .bits = bits,
+                    .value = value.comptime_int,
+                }}),
+                .signed_int => |bits| vidx.* = try values.addDedupLinear(.{.signed_int = .{
+                    .bits = bits,
+                    .value = value.comptime_int,
+                }}),
+                else => @panic("Comptime int to non-int type(?)"),
+            }
         },
         .unsigned_int => |value_bits| {
             const target_bits = ty.unsigned_int;
@@ -173,17 +218,17 @@ fn promote(vidx: *ValueIndex.Index, target_tidx: TypeIndex.Index) !void {
     }
 }
 
-fn inplaceOp(lhs_idx: ValueIndex.Index, rhs_idx: *ValueIndex.Index) !void {
+fn inplaceOp(lhs_idx: ValueIndex.Index, rhs_idx: *ValueIndex.Index, is_assign: bool) !void {
     const op_ty = try decayValueType(lhs_idx);
-    try promote(rhs_idx, op_ty);
+    try promote(rhs_idx, op_ty, is_assign);
 }
 
 fn plainBinaryOp(lhs_idx: *ValueIndex.Index, rhs_idx: *ValueIndex.Index) !void {
     const lhs_ty = try decayValueType(lhs_idx.*);
     const rhs_ty = try decayValueType(rhs_idx.*);
     const common_type = try commonType(lhs_ty, rhs_ty);
-    try promote(lhs_idx, common_type);
-    try promote(rhs_idx, common_type);
+    try promote(lhs_idx, common_type, false);
+    try promote(rhs_idx, common_type, false);
 }
 
 fn analyzeStatementChain(
@@ -211,14 +256,14 @@ fn analyzeStatementChain(
                 const new_decl = try decl_builder.insert(.{
                     .mutable = decl.mutable,
                     .static = false,
-                    .stack_offset = null,
+                    .offset = null,
                     .function_param_idx = null,
                     .name = decl.identifier,
                     .init_value = init_value_idx,
                 });
                 switch(decl_type.*) {
                     .struct_idx, .array,
-                    => decls.get(new_decl).stack_offset = @as(u32, undefined),
+                    => decls.get(new_decl).offset = @as(u32, undefined),
                     else => {},
                 }
                 _ = try stmt_builder.insert(.{.value = .{.declaration = new_decl}});
@@ -346,7 +391,7 @@ fn evaluateWithoutTypeHint(
                 _ = try param_builder.insert(.{
                     .mutable = true,
                     .static = false,
-                    .stack_offset = null,
+                    .offset = null,
                     .function_param_idx = function_param_idx,
                     .name = ast_param.identifier,
                     .init_value = try values.insert(.{.runtime = .{.expr = .none, .value_type = param_type}}),
@@ -390,7 +435,7 @@ fn evaluateWithoutTypeHint(
                         _ = try decl_builder.insert(.{
                             .mutable = inner_decl.mutable,
                             .static = true,
-                            .stack_offset = null,
+                            .offset = null,
                             .function_param_idx = null,
                             .name = inner_decl.identifier,
                             .init_value = try astDeclToValue(
@@ -434,6 +479,9 @@ fn evaluateWithoutTypeHint(
                 if(init_value.* != .runtime and !decl.mutable) {
                     return decl.init_value;
                 }
+                if(decl.static and decl.offset == null) {
+                    decl.offset = @intCast(u32, try init_value.toBytes());
+                }
                 return putValueIn(value_out, .{.decl_ref = decls.getIndex(decl)});
             }
             return error.IdentifierNotFound;
@@ -449,7 +497,7 @@ fn evaluateWithoutTypeHint(
         .bool_literal => |lit| {
             return putValueIn(value_out, .{.bool = lit});
         },
-        .undefined => return putValueIn(value_out, .{.undefined = {}}),
+        .undefined => return putValueIn(value_out, .{.undefined = .undefined}),
         .function_call => |call| {
             var arg_builder = expressions.builderWithPath("function_arg.next");
             var curr_ast_arg = call.first_arg;
@@ -468,13 +516,13 @@ fn evaluateWithoutTypeHint(
                             .pointer => {},
                             .comptime_int => {
                                 if(values.get(arg_value).comptime_int < 0) {
-                                    try promote(&arg_value, .i64);
+                                    try promote(&arg_value, .i64, false);
                                 } else {
-                                    try promote(&arg_value, .u64);
+                                    try promote(&arg_value, .u64, false);
                                 }
                             },
-                            .signed_int => try promote(&arg_value, .i64),
-                            .unsigned_int => try promote(&arg_value, .u64),
+                            .signed_int => try promote(&arg_value, .i64, false),
+                            .unsigned_int => try promote(&arg_value, .u64, false),
                             else => |other| std.debug.panic("Can't pass {s} to syscall", .{@tagName(other)}),
                         }
                         _ = try arg_builder.insert(.{.function_arg = .{.value = arg_value}});
@@ -535,7 +583,7 @@ fn evaluateWithoutTypeHint(
                 .multiply_eq, .multiply_mod_eq, .divide_eq, .modulus_eq, .plus_eq, .plus_mod_eq, .minus_eq,
                 .minus_mod_eq, .shift_left_eq, .shift_right_eq, .bitand_eq, .bitxor_eq, .bitor_eq, .assign
                 => blk: {
-                    try inplaceOp(lhs, &rhs);
+                    try inplaceOp(lhs, &rhs, tag == .assign);
                     break :blk .void;
                 },
                 .less, .less_equal, .greater, .greater_equal,
@@ -572,7 +620,11 @@ fn evaluateWithoutTypeHint(
             const result_type = switch(operand.*) {
                 .decl_ref => |decl_idx| blk: {
                     const decl = decls.get(decl_idx);
-                    decl.stack_offset = @as(u32, undefined);
+                    if(!decl.static) {
+                        decl.offset = @as(u32, undefined);
+                    } else {
+                        std.debug.assert(decl.offset != null);
+                    }
                     break :blk try values.addDedupLinear(.{
                         .type_idx = try types.addDedupLinear(.{.pointer = .{
                             .is_const = !decl.mutable,
@@ -695,7 +747,7 @@ fn evaluateWithoutTypeHint(
                 .value = @as(i65, @intCast(i64, try types.get(child_type).getSize())),
             }});
             var rhs_idx = try evaluateWithoutTypeHint(scope_idx, .none, bop.rhs);
-            try inplaceOp(size_expr, &rhs_idx);
+            try inplaceOp(size_expr, &rhs_idx, false);
             const rhs = values.get(rhs_idx);
             const rhs_type = types.get(try rhs.getType());
             std.debug.assert(rhs_type.* == .signed_int or rhs_type.* == .unsigned_int or rhs_type.* == .comptime_int);
@@ -748,10 +800,17 @@ fn evaluateWithTypeHint(
         .unsigned_int, .signed_int => |int| return promoteInteger(int.value, value_out, requested_type),
         .bool => if(requested_type == .bool) return evaluated_idx,
         .type_idx => if(requested_type == .type) return evaluated_idx,
-        .undefined => return Value.fromExpression(try expressions.insert(.{.value = .undefined}), try values.addDedupLinear(.{.type_idx = requested_type})),
+        .undefined => return values.addDedupLinear(.{.undefined = requested_type}),
         .runtime => |rt| {
+            var result = evaluated_idx;
             if(values.get(rt.value_type).type_idx == requested_type) return evaluated_idx;
             const evaluated_type = types.get(try evaluated.getType());
+
+            if(evaluated_type.* == .pointer) {
+                try promote(&result, requested_type, true);
+                return result;
+            }
+
             if(evaluated_type.* == .reference and evaluated_type.reference.item == requested_type) {
                 return Value.fromExpression(try expressions.insert(.{.value = evaluated_idx}), try values.addDedupLinear(.{.type_idx = requested_type}));
             }
@@ -857,7 +916,7 @@ pub const Value = union(enum) {
 
     // Non-type comptile time known values
     void,
-    undefined,
+    undefined: TypeIndex.Index,
     bool: bool,
     comptime_int: i65,
     unsigned_int: SizedInt,
@@ -882,7 +941,7 @@ pub const Value = union(enum) {
             .unresolved => unreachable,
             .type_idx => .type,
             .void => .void,
-            .undefined => .undefined,
+            .undefined => |t| t,
             .bool => .bool,
             .comptime_int => .comptime_int,
             .unsigned_int => |int| try types.addDedupLinear(.{.unsigned_int = int.bits}),
@@ -893,6 +952,27 @@ pub const Value = union(enum) {
         };
     }
 
+    pub fn toBytes(self: *@This()) !usize {
+        try self.analyze();
+        const retval = backends.writer.currentOffset();
+        switch(self.*) {
+            .unsigned_int, .signed_int => |*i| {
+                const num_bytes = @divTrunc(i.bits + 7, 8);
+                // TODO: This assumes little endian
+                try backends.writer.write(std.mem.asBytes(&i.value)[0..num_bytes]);
+            },
+            .undefined => { // TODO: .bss
+                const num_bytes = try types.get(try self.getType()).getSize();
+                var i: usize = 0;
+                while(i < num_bytes) : (i += 1) {
+                    try backends.writer.writeInt(u8, 0xAA);
+                }
+            },
+            else => |other| std.debug.panic("TODO: Get bytes from {s} (type {any})", .{@tagName(other), types.get(try self.getType())}),
+        }
+        return retval;
+    }
+
     fn fromExpression(expression: ExpressionIndex.Index, value_type: ValueIndex.Index) !ValueIndex.Index {
         return values.insert(.{.runtime = .{.expr = ExpressionIndex.toOpt(expression), .value_type = value_type}});
     }
@@ -901,7 +981,7 @@ pub const Value = union(enum) {
 pub const Decl = struct {
     mutable: bool,
     static: bool,
-    stack_offset: ?u32,
+    offset: ?u32,
     function_param_idx: ?u8,
     name: ast.SourceRef,
     init_value: ValueIndex.Index,

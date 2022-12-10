@@ -1,0 +1,27 @@
+const stdin = 0;
+const stdout = 1;
+const stderr = 2;
+
+const SYS = struct {
+    const WRITE = 1;
+    const EXIT = 60;
+};
+
+fn write(fd: u32, buf: *const u8, size: u64) u64 {
+    return @syscall(SYS.WRITE, fd, buf, size);
+}
+
+fn write_all(fd: u32, buf: *const u8, size: u64) void {
+    loop {
+        const written = @syscall(SYS.WRITE, fd, buf, size);
+        if(written == size) {
+            return;
+        }
+        size = size - written;
+        buf = buf + written;
+    }
+}
+
+fn exit(exit_code: i64) void {
+    @syscall(SYS.EXIT, exit_code);
+}
