@@ -475,7 +475,22 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
                     try mov(writer, uf, op_t, decl_idx, op.lhs, false);
                     try writeOperandReg(writer, uf, op_t, decl_idx, 0, &.{
                         0x80 | boolToU8(op_t != .u8),
-                    }, opTypeImm(op_t, imm), true);
+                    }, opTypeImm(op_t, imm), false);
+                }
+            } else {
+                @panic("TODO");
+            }
+        },
+        .sub_constant => |op| {
+            const dest_reg = uf.findRegByPtr(decl).?;
+            const lhs_reg = uf.findReg(op.lhs);
+            const op_t = decl.instr.getOperationType();
+            const imm = std.mem.asBytes(&op.rhs);
+            if(dest_reg == lhs_reg) {
+                if(op.rhs == 1) { // dec r/m64
+                    try writeDirect(writer, op_t, &.{0xFE | boolToU8(op_t != .u8)}, dest_reg, 1, &.{}, false);
+                } else { // sub r/m64, imm8/16/32
+                    try writeOperandReg(writer, uf, op_t, decl_idx, 5, &.{0x80 | boolToU8(op_t != .u8)}, opTypeImm(op_t, imm), false);
                 }
             } else {
                 @panic("TODO");
