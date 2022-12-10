@@ -184,7 +184,7 @@ const DeclInstr = union(enum) {
 
         pub fn next(self: *@This()) ?*DeclIndex.Index {
             switch(self.value) {
-                .bounded_iterator => |*list| return list.popOrNull(),
+                .bounded_iterator => |*list| return if(list.len == 0) null else list.swapRemove(0),
                 .phi_iterator => |*curr_opt| {
                     if(curr_opt.*) |curr| {
                         curr_opt.* = phi_operands.getOpt(curr.next);
