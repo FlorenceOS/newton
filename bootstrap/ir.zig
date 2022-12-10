@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const ast = @import("ast.zig");
 const backends = @import("backends/backends.zig");
 const indexed_list = @import("indexed_list.zig");
 const sema = @import("sema.zig");
@@ -1558,18 +1559,18 @@ pub fn dumpBlock(
             std.debug.print("{s} ", .{@tagName(decl.instr.getOperationType())});
         }
         switch(decl.instr) {
-            .param_ref => |p| std.debug.print("@param({d})\n", .{p.param_idx}),
-            .stack_ref => |p| std.debug.print("@stack({d})\n", .{p.offset}),
-            .offset_ref => |p| std.debug.print("@offset({d})\n", .{p.offset}),
-            .addr_of => |p| std.debug.print("@addr_of(${d})\n", .{@enumToInt(p)}),
+            .param_ref => |p| std.debug.print("param({d})\n", .{p.param_idx}),
+            .stack_ref => |p| std.debug.print("stack({d})\n", .{p.offset}),
+            .offset_ref => |p| std.debug.print("offset({d})\n", .{p.offset}),
+            .addr_of => |p| std.debug.print("addr_of(${d})\n", .{@enumToInt(p)}),
             .enter_function => |stack_size| std.debug.print("enter_function({d})\n", .{stack_size}),
             .leave_function => |leave| std.debug.print("leave_function(${d})\n", .{@enumToInt(leave.value)}),
             .load_int_constant => |value| std.debug.print("{d}\n", .{value.value}),
-            .reference_wrap => |ref| std.debug.print("@deref(${d})\n", .{@enumToInt(ref.pointer_value)}),
-            .zero_extend, .sign_extend, .truncate => |cast| std.debug.print("@{s}(${d})\n", .{@tagName(decl.instr), @enumToInt(cast.value)}),
+            .reference_wrap => |ref| std.debug.print("deref(${d})\n", .{@enumToInt(ref.pointer_value)}),
+            .zero_extend, .sign_extend, .truncate => |cast| std.debug.print("{s}(${d})\n", .{@tagName(decl.instr), @enumToInt(cast.value)}),
             .load_bool_constant => |b| std.debug.print("{}\n", .{b}),
             .undefined => std.debug.print("undefined\n", .{}),
-            .load => |p| std.debug.print("@load(${d})\n", .{@enumToInt(p.source)}),
+            .load => |p| std.debug.print("load(${d})\n", .{@enumToInt(p.source)}),
             inline
             .add, .add_mod, .sub, .sub_mod,
             .multiply, .multiply_mod, .divide, .modulus,
@@ -1583,8 +1584,15 @@ pub fn dumpBlock(
             .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant,
             .equals_constant, .not_equal_constant,
             => |bop, tag| std.debug.print("{s}(${d}, #{d})\n", .{@tagName(tag)[0..@tagName(tag).len-9], @enumToInt(bop.lhs), bop.rhs}),
-            .function_call => {
-                std.debug.print("@call(<?>", .{});
+            .function_call => |fc| {
+                var name: ?ast.SourceRef = null;
+                for(sema.decls.elements.items) |decl_it| {
+                    if(decl_it.init_value == fc.callee) {
+                        name = decl_it.name;
+                        break;
+                    }
+                }
+                std.debug.print("call({s}", .{try name.?.toSlice()});
                 var ops = decl.instr.operands();
                 while(ops.next()) |op| {
                     std.debug.print(", ${d}", .{@enumToInt(op.*)});
@@ -1592,7 +1600,7 @@ pub fn dumpBlock(
                 std.debug.print(")\n", .{});
             },
             .syscall => {
-                std.debug.print("@syscall(", .{});
+                std.debug.print("syscall(", .{});
                 var first = true;
                 var ops = decl.instr.operands();
                 while(ops.next()) |op| {
@@ -1607,7 +1615,7 @@ pub fn dumpBlock(
             .store => |store| std.debug.print("store(${d}, ${d})\n", .{@enumToInt(store.dest), @enumToInt(store.value)}),
             .store_constant => |store| std.debug.print("store(${d}, #{d})\n", .{@enumToInt(store.dest), store.value}),
             .incomplete_phi => std.debug.print("<incomplete phi node>\n", .{}),
-            .copy => |c| std.debug.print("@copy(${d})\n", .{@enumToInt(c)}),
+            .copy => |c| std.debug.print("copy(${d})\n", .{@enumToInt(c)}),
             .@"if" => |if_instr| {
                 std.debug.print("if(${d}, Block#{d}, Block#{d})\n", .{
                     @enumToInt(if_instr.condition),
