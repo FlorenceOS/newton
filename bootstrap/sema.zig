@@ -503,6 +503,21 @@ fn evaluateWithoutTypeHint(
             var curr_ast_arg = call.first_arg;
             const ast_callee = ast.expressions.get(call.callee);
             const callee_idx = switch(ast_callee.*) {
+                .truncate_func => {
+                    const type_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
+                    const expr_arg = ast.expressions.getOpt(type_arg.next).?.function_argument;
+
+                    const ty = try evaluateWithTypeHint(scope_idx, .none, type_arg.value, .type);
+                    const value = try evaluateWithoutTypeHint(scope_idx, .none, expr_arg.value);
+
+                    return putValueIn(value_out, .{.runtime = .{
+                        .expr = ExpressionIndex.toOpt(try expressions.insert(.{.truncate = .{
+                            .value = value,
+                            .type = values.get(ty).type_idx,
+                        }})),
+                        .value_type = ty,
+                    }});
+                },
                 .syscall_func => blk: {
                     while(ast.expressions.getOpt(curr_ast_arg)) |ast_arg| {
                         const func_arg = ast_arg.function_argument;
@@ -814,6 +829,9 @@ fn evaluateWithTypeHint(
             if(evaluated_type.* == .reference and evaluated_type.reference.item == requested_type) {
                 return Value.fromExpression(try expressions.insert(.{.value = evaluated_idx}), try values.addDedupLinear(.{.type_idx = requested_type}));
             }
+
+            try promote(&result, requested_type, true);
+            return result;
         },
         .decl_ref => |dr| {
             const decl_type = try values.get(decls.get(dr).init_value).getType();
@@ -822,7 +840,7 @@ fn evaluateWithTypeHint(
         else => {},
     }
 
-    std.debug.panic("Could not evaluate {any} with type {any}", .{evaluated, types.get(requested_type)});
+    std.debug.panic("Could not evaluate ({any}) {any} with type {any}", .{evaluated.getType(), evaluated, types.get(requested_type)});
 }
 
 const Unresolved = struct {

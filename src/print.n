@@ -20,6 +20,14 @@ fn char(ch: u8) void {
     used = used + 1;
 }
 
+fn decimalU64(value: u64) void {
+    const next = value / 10;
+    if(next != 0) {
+        decimalU64(@truncate(u8, next));
+    }
+    char('0' + @truncate(u8, value % 10));
+}
+
 fn str(str: *const u8) void {
     loop {
         if(str.* == 0) {

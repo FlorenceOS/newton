@@ -73,6 +73,7 @@ fn identToAstNode(self: *@This(), tok: anytype) !ast.ExprIndex.Index {
     if(std.mem.eql(u8, tok.body, "anyopaque")) return .anyopaque;
     if(std.mem.eql(u8, tok.body, "@import")) return .import;
     if(std.mem.eql(u8, tok.body, "@syscall")) return .syscall_func;
+    if(std.mem.eql(u8, tok.body, "@truncate")) return .truncate_func;
 
     return ast.expressions.insert(.{ .identifier = self.toAstIdent(tok) });
 }
@@ -833,6 +834,7 @@ fn dumpNode(index: anytype, node: anytype, indent_level: usize) anyerror!void {
                 try dumpNode(bop.rhs, ast.expressions.get(bop.rhs), indent_level);
             },
             .syscall_func => std.debug.print("@syscall", .{}),
+            .truncate_func => std.debug.print("@truncate", .{}),
             else => |expr| std.debug.panic("Cannot dump expression of type {s}", .{@tagName(expr)}),
         },
         *ast.StatementNode => switch(node.value) {

@@ -30,6 +30,7 @@ pub const ExprIndex = indexed_list.Indices(u32, opaque{}, .{
 
     .import = .{.import = {}},
     .syscall_func = .{.syscall_func = {}},
+    .truncate_func = .{.truncate_func = {}},
 
     // _ = a;
     // ^ This thing
@@ -99,6 +100,8 @@ pub const ExpressionNode = union(enum) {
     import,
     // @syscall
     syscall_func,
+    // @truncate
+    truncate_func,
     // @import("whatever")
     import_call: sources.SourceIndex.Index,
 
