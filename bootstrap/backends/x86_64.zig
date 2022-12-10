@@ -120,8 +120,7 @@ fn opTypeImm(op_t: ir.InstrType, value: []const u8) []const u8 {
     return value[0..switch(op_t) {
         .u8 => 1,
         .u16 => 2,
-        .u32 => 4,
-        .u64 => 8,
+        .u32, .u64 => 4,
     }];
 }
 
