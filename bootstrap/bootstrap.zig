@@ -115,10 +115,15 @@ pub fn main() !void {
         try backends.writer.writeFunction(main_decl.init_value);
         var elf_writer = try elf.Writer.init(std.heap.page_allocator);
         for(sema.decls.elements.items[1..]) |decl| {
+            const token = try decl.name.retokenize();
+            defer token.deinit();
             if(backends.writer.placed_functions.get(decl.init_value)) |offset| {
-                const token = try decl.name.retokenize();
-                defer token.deinit();
-                try elf_writer.addSymbol(token.identifier_value(), offset);
+                try elf_writer.addSymbol(token.identifier_value(), offset, true);
+            }
+            if(decl.static) {
+                if(decl.offset) |offset| {
+                    try elf_writer.addSymbol(token.identifier_value(), offset, false);
+                }
             }
         }
         const main_offset = backends.writer.placed_functions.get(main_decl.init_value).?;
