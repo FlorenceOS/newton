@@ -396,6 +396,11 @@ pub fn doRegAlloc(
                 var inner_it = decl_set.value_ptr.iterator();
                 while(inner_it.next()) |inner| {
                     if(uf.find(outer.key_ptr.*) == uf.find(inner.key_ptr.*)) continue;
+                    const outer_decl = ir.decls.get(outer.key_ptr.*);
+                    const inner_decl = ir.decls.get(inner.key_ptr.*);
+                    if(outer_decl.instr == .copy and outer_decl.instr.copy == inner.key_ptr.*) continue;
+                    if(inner_decl.instr == .copy and inner_decl.instr.copy == outer.key_ptr.*) continue;
+
                     try conflicts.getPtr(uf.find(outer.key_ptr.*)).?.put(arena.allocator(), uf.find(inner.key_ptr.*), {});
                 }
             }
@@ -410,6 +415,11 @@ pub fn doRegAlloc(
                 var inner_it = decl_set.value_ptr.iterator();
                 while(inner_it.next()) |inner| {
                     if(uf.find(outer.key_ptr.*) == uf.find(inner.key_ptr.*)) continue;
+                    const outer_decl = ir.decls.get(outer.key_ptr.*);
+                    const inner_decl = ir.decls.get(inner.key_ptr.*);
+                    if(outer_decl.instr == .copy and outer_decl.instr.copy == inner.key_ptr.*) continue;
+                    if(inner_decl.instr == .copy and inner_decl.instr.copy == outer.key_ptr.*) continue;
+
                     try conflicts.getPtr(uf.find(outer.key_ptr.*)).?.put(arena.allocator(), uf.find(inner.key_ptr.*), {});
                 }
             }
