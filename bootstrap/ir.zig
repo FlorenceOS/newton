@@ -40,7 +40,7 @@ const MemoryReference = struct {
     sema_pointer_type: sema.PointerType,
 
     fn instrType(self: @This()) InstrType {
-        return typeFor(self.sema_pointer_type.item);
+        return typeFor(self.sema_pointer_type.child);
     }
 
     pub fn load(self: @This()) DeclInstr {
@@ -106,7 +106,7 @@ pub const DeclInstr = union(enum) {
     undefined,
 
     function_call: struct {
-        callee: sema.ValueIndex.Index,
+        callee: sema.InstantiatedFunction,
         first_argument: FunctionArgumentIndex.OptIndex,
         tail: DeclIndex.OptIndex = .none,
     },
@@ -343,7 +343,7 @@ pub const DeclInstr = union(enum) {
                 return lhs_type;
             },
             .function_call => |fcall| {
-                const rt = sema.values.get(fcall.callee).function.return_type;
+                const rt = sema.values.get(fcall.callee.function_value).function.instantiations.items[fcall.callee.instantiation].return_type;
                 return typeFor(sema.values.get(rt).type_idx);
             },
             .syscall, .undefined => return .u64,
@@ -1271,7 +1271,7 @@ fn ssaBlockStatementIntoBasicBlock(
                             .type = .{
                                 .is_const = !decl.mutable,
                                 .is_volatile = false,
-                                .item = try sema.values.get(decl.init_value).getType(),
+                                .child = try sema.values.get(decl.init_value).getType(),
                             },
                         }});
                         _ = try appendToBlock(current_basic_block, .{.store = .{.dest = stack_ref, .value = value}});
@@ -1362,7 +1362,7 @@ fn ssaBlockStatementIntoBasicBlock(
                 _ = try appendToBlock(current_basic_block, .{.goto = try addEdge(current_basic_block, goto_block)});
             },
             .return_statement => |return_stmt| {
-                var value = if(sema.ValueIndex.unwrap(return_stmt.value)) |sema_value| blk: {
+                var value = if(sema.ValueIndex.unwrap(return_stmt)) |sema_value| blk: {
                     break :blk try ssaValue(current_basic_block, sema_value);
                 } else blk: {
                     break :blk try appendToBlock(current_basic_block, .{.undefined = {}});
@@ -1395,7 +1395,7 @@ fn ssaValue(
             const ref_t = sema.PointerType{
                 .is_const = !rdecl.mutable,
                 .is_volatile = false,
-                .item = try sema.values.get(rdecl.init_value).getType(),
+                .child = try sema.values.get(rdecl.init_value).getType(),
             };
             if(rdecl.static) {
                 return appendToBlock(block_idx, .{.offset_ref = .{ .offset = rdecl.offset.?, .type = ref_t}});
@@ -1513,7 +1513,7 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index) an
                     _ = try builder.insert(.{.value = value });
                 }
             }
-            if(fcall.callee == .syscall_func) return appendToBlock(block_idx, .{.syscall = builder.first});
+            if(fcall.callee.function_value == .syscall_func) return appendToBlock(block_idx, .{.syscall = builder.first});
             return appendToBlock(block_idx, .{.function_call = .{
                 .callee = fcall.callee,
                 .first_argument = builder.first,
@@ -1534,14 +1534,16 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index) an
     }
 }
 
-pub fn ssaFunction(func: *sema.Function) !BlockIndex.Index {
+pub fn ssaFunction(sema_func: sema.InstantiatedFunction) !BlockIndex.Index {
+    const func = &sema.values.get(sema_func.function_value).function.instantiations.items[sema_func.instantiation];
     const first_basic_block = try blocks.insert(.{});
     const enter_decl = try appendToBlock(first_basic_block, .{.enter_function = undefined});
     try blocks.get(first_basic_block).seal();
 
     // Loop over function params and add references to them
     var curr_param = sema.scopes.get(func.param_scope).first_decl;
-    while(sema.decls.getOpt(curr_param)) |decl| {
+    while(sema.decls.getOpt(curr_param)) |decl| : (curr_param = decl.next) {
+        if(decl.comptime_param) continue;
         const param = try appendToBlock(first_basic_block, .{
             .param_ref = .{
                 .param_idx = decl.function_param_idx.?,
@@ -1549,8 +1551,6 @@ pub fn ssaFunction(func: *sema.Function) !BlockIndex.Index {
             },
         });
         decls.get(param).sema_decl = curr_param;
-
-        curr_param = decl.next;
     }
 
     const exit_block = try blocks.insert(.{});
@@ -1625,7 +1625,7 @@ pub fn dumpBlock(
             .function_call => |fc| {
                 var name: ?ast.SourceRef = null;
                 for(sema.decls.elements.items) |decl_it| {
-                    if(decl_it.init_value == fc.callee) {
+                    if(decl_it.init_value == fc.callee.function_value) {
                         name = decl_it.name;
                         break;
                     }

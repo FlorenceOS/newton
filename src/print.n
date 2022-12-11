@@ -20,20 +20,20 @@ fn char(ch: u8) void {
     used = used + 1;
 }
 
-fn decimalU64(value: u64) void {
+fn decimal(comptime T: type, value: T) void {
     const next = value / 10;
     if(next != 0) {
-        decimalU64(@truncate(u8, next));
+        decimal(T, @truncate(u8, next));
     }
     char('0' + @truncate(u8, value % 10));
 }
 
-fn str(str: *const u8) void {
+fn str(s: *const u8) void {
     loop {
-        if(str.* == 0) {
+        if(s.* == 0) {
             return;
         }
-        char(str.*);
-        str = str + 1;
+        char(s.*);
+        s = s + 1;
     }
 }

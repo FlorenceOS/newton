@@ -13,21 +13,23 @@ pub fn main() !void {
     var target: [:0]const u8 = "x86_64-linux";
     var root_path: ?[:0]u8 = null;
 
-    const argv = std.os.argv;
-    var i: usize = 1;
-    while(i < argv.len) : (i += 1) {
-        const arg = std.mem.span(argv[i]);
-        if(std.mem.eql(u8, arg, "-o")) {
-            i += 1;
-            output_path = std.mem.span(argv[i]);
-            continue;
+    {
+        const argv = std.os.argv;
+        var i: usize = 1;
+        while(i < argv.len) : (i += 1) {
+            const arg = std.mem.span(argv[i]);
+            if(std.mem.eql(u8, arg, "-o")) {
+                i += 1;
+                output_path = std.mem.span(argv[i]);
+                continue;
+            }
+            if(std.mem.eql(u8, arg, "-target")) {
+                i += 1;
+                target = std.mem.span(argv[i]);
+                continue;
+            }
+            root_path = std.mem.span(argv[i]);
         }
-        if(std.mem.eql(u8, arg, "-target")) {
-            i += 1;
-            target = std.mem.span(argv[i]);
-            continue;
-        }
-        root_path = std.mem.span(argv[i]);
     }
 
     var target_it = std.mem.split(u8, target, "-");
@@ -105,6 +107,7 @@ pub fn main() !void {
         const root_scope = sema.scopes.get(root_struct.scope);
         const main_decl = (try root_scope.lookupDecl("main")).?;
         try main_decl.analyze();
+        const main_call = try sema.callFunctionWithArgs(main_decl.init_value, null, .none);
         std.debug.print("{any}\n", .{sema.values.get(main_decl.init_value)});
 
         try backends.writer.output_bytes.appendNTimes(backends.writer.allocator, 0xCC, 6);
@@ -112,32 +115,50 @@ pub fn main() !void {
             try backends.writer.output_bytes.append(backends.writer.allocator, 0xCC);
         }
 
-        try backends.writer.writeFunction(main_decl.init_value);
+        try backends.writer.writeFunction(main_call.callee);
         var elf_writer = try elf.Writer.init(std.heap.page_allocator);
+        var name_buf = try std.ArrayList(u8).initCapacity(std.heap.page_allocator, 4096);
         for(sema.decls.elements.items[1..]) |decl| {
             const token = try decl.name.retokenize();
             defer token.deinit();
-            if(backends.writer.placed_functions.get(decl.init_value)) |offset| {
-                try elf_writer.addSymbol(
-                    token.identifier_value(),
-                    offset,
-                    true,
-                    backends.writer.function_sizes.get(decl.init_value).?,
-                );
-            }
-            if(decl.static) {
-                if(decl.offset) |offset| {
-                    const global_ty = try sema.values.get(decl.init_value).getType();
-                    try elf_writer.addSymbol(
-                        token.identifier_value(),
-                        offset,
-                        false,
-                        try sema.types.get(global_ty).getSize(),
-                    );
-                }
+            if(!decl.static or decl.comptime_param) continue;
+            switch(sema.values.get(decl.init_value).*) {
+                .function => |*func| {
+                    name_buf.shrinkRetainingCapacity(0);
+                    try name_buf.appendSlice(token.identifier_value());
+                    const base_name_len = name_buf.items.len;
+
+                    for(func.instantiations.items) |instantiation, i| {
+                        const inst = sema.InstantiatedFunction{
+                            .function_value = decl.init_value,
+                            .instantiation = @intCast(u32, i),
+                        };
+                        if(backends.writer.placed_functions.get(inst)) |offset| {
+                            name_buf.shrinkRetainingCapacity(base_name_len);
+                            try instantiation.name(func, name_buf.writer());
+                            try elf_writer.addSymbol(
+                                name_buf.items,
+                                offset,
+                                true,
+                                backends.writer.function_sizes.get(inst).?,
+                            );
+                        }
+                    }
+                },
+                else => {
+                    if(decl.offset) |offset| {
+                        const global_ty = try sema.values.get(decl.init_value).getType();
+                        try elf_writer.addSymbol(
+                            token.identifier_value(),
+                            offset,
+                            false,
+                            try sema.types.get(global_ty).getSize(),
+                        );
+                    }
+                },
             }
         }
-        const main_offset = backends.writer.placed_functions.get(main_decl.init_value).?;
+        const main_offset = backends.writer.placed_functions.get(main_call.callee).?;
         var file = try std.fs.cwd().createFile("a.out", .{.mode = 0o777});
         defer file.close();
         try elf_writer.finalize(&file, backends.writer.output_bytes.items, main_offset);

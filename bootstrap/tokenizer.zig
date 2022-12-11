@@ -104,6 +104,7 @@ pub const Token = union(enum) {
 
     break_keyword,
     case_keyword,
+    comptime_keyword,
     const_keyword,
     continue_keyword,
     else_keyword,

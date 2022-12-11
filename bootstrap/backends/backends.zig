@@ -113,9 +113,9 @@ pub const Writer = struct {
     output_bytes: std.ArrayListUnmanaged(u8) = .{},
     enqueued_blocks: std.AutoArrayHashMapUnmanaged(ir.BlockIndex.Index, std.ArrayListUnmanaged(Relocation)) = .{},
     placed_blocks: std.AutoHashMapUnmanaged(ir.BlockIndex.Index, usize) = .{},
-    enqueued_functions: std.AutoArrayHashMapUnmanaged(sema.ValueIndex.Index, std.ArrayListUnmanaged(Relocation)) = .{},
-    placed_functions: std.AutoHashMapUnmanaged(sema.ValueIndex.Index, usize) = .{},
-    function_sizes: std.AutoHashMapUnmanaged(sema.ValueIndex.Index, usize) = .{},
+    enqueued_functions: std.AutoArrayHashMapUnmanaged(sema.InstantiatedFunction, std.ArrayListUnmanaged(Relocation)) = .{},
+    placed_functions: std.AutoHashMapUnmanaged(sema.InstantiatedFunction, usize) = .{},
+    function_sizes: std.AutoHashMapUnmanaged(sema.InstantiatedFunction, usize) = .{},
 
     pub fn attemptInlineEdge(self: *@This(), edge: ir.BlockEdgeIndex.Index) !?ir.BlockIndex.Index {
         const target_block = ir.edges.get(edge).target_block;
@@ -165,7 +165,7 @@ pub const Writer = struct {
         }
     }
 
-    fn addFunctionRelocation(self: *@This(), function: sema.ValueIndex.Index, reloc: Relocation) !void {
+    fn addFunctionRelocation(self: *@This(), function: sema.InstantiatedFunction, reloc: Relocation) !void {
         if(self.placed_functions.get(function)) |offset| {
             reloc.resolve(self.output_bytes.items, offset);
         } else if(self.enqueued_functions.getPtr(function)) |q| {
@@ -185,7 +185,7 @@ pub const Writer = struct {
         });
     }
 
-    pub fn writeRelocatedFunction(self: *@This(), function: sema.ValueIndex.Index, reloc_type: RelocationType) !void {
+    pub fn writeRelocatedFunction(self: *@This(), function: sema.InstantiatedFunction, reloc_type: RelocationType) !void {
         try self.output_bytes.appendNTimes(self.allocator, 0xCC, reloc_type.byteSize());
         return self.addFunctionRelocation(function, .{
             .output_offset = self.currentOffset() - reloc_type.byteSize(),
@@ -219,7 +219,7 @@ pub const Writer = struct {
         self: *@This(),
         comptime T: type,
         value: T,
-        function: sema.ValueIndex.Index,
+        function: sema.InstantiatedFunction,
         reloc_type: RelocationType,
     ) !void {
         try self.writeInt(T, value);
@@ -269,8 +269,9 @@ pub const Writer = struct {
         }
     }
 
-    fn writeSingleFunction(self: *@This(), function: sema.ValueIndex.Index) !void {
-        const head_block = try ir.ssaFunction(&sema.values.get(function).function);
+    fn writeSingleFunction(self: *@This(), function_c: sema.InstantiatedFunction) !void {
+        var function = function_c; // Workaround for zig miscompilation :zany_face:
+        const head_block = try ir.ssaFunction(function);
         try ir.optimizeFunction(head_block);
 
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -305,7 +306,7 @@ pub const Writer = struct {
         try self.function_sizes.put(self.allocator, function, self.currentOffset() - function_offset);
     }
 
-    pub fn writeFunction(self: *@This(), function: sema.ValueIndex.Index) !void {
+    pub fn writeFunction(self: *@This(), function: sema.InstantiatedFunction) !void {
         try self.writeSingleFunction(function);
         while(self.enqueued_functions.keys().len > 0) {
             try self.writeSingleFunction(self.enqueued_functions.keys()[0]);

@@ -59,7 +59,7 @@ pub const Uop = struct {
 pub const PointerType = struct {
     is_const: bool,
     is_volatile: bool,
-    item: ExprIndex.Index,
+    child: ExprIndex.Index,
 };
 
 pub const SourceRef = struct {
@@ -106,6 +106,7 @@ pub const ExpressionNode = union(enum) {
     import_call: sources.SourceIndex.Index,
 
     parenthesized: Uop,
+    force_comptime_eval: Uop,
     unary_plus: Uop,
     unary_minus: Uop,
     unary_bitnot: Uop,
@@ -232,6 +233,7 @@ pub const FunctionParameter = struct {
     identifier: SourceRef,
     type: ExprIndex.Index,
     next: FunctionParamIndex.OptIndex = .none,
+    is_comptime: bool,
 };
 
 pub var expressions: ExpressionList = undefined;

@@ -3,7 +3,8 @@ const syscalls = @import("syscalls.n");
 
 fn main() void {
     print.str("Hello, world!\n".&);
-    print.decimalU64(69);
+    print.decimal(u64, 69);
+    print.decimal(u32, 69);
     print.flush();
     syscalls.exit(0);
 }

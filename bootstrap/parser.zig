@@ -107,6 +107,7 @@ fn parseFunctionExpr(self: *@This()) anyerror!ast.FunctionIndex.Index {
 
     var param_builder = ast.function_params.builder();
     while((try self.peekToken()) != .@")_ch") {
+        const is_comptime = (try self.tryConsume(.comptime_keyword)) != null;
         const ident = try self.expect(.identifier);
         defer ident.deinit();
 
@@ -114,6 +115,7 @@ fn parseFunctionExpr(self: *@This()) anyerror!ast.FunctionIndex.Index {
         _ = try param_builder.insert(.{
             .identifier = self.toAstIdent(ident),
             .type = try self.parseExpression(null),
+            .is_comptime = is_comptime,
         });
 
         if((try self.tryConsume(.@",_ch")) == null) break;
@@ -224,6 +226,7 @@ fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
             _ = try self.expect(.@";_ch");
             return ast.statements.insert(.{.value = .{.expression_statement = .{.expr = expr_idx}}});
         },
+        .comptime_keyword => @panic("TODO: Comptime statement"),
 
         inline
         .int_literal, .char_literal, .string_literal,
@@ -287,6 +290,10 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
             }});
         },
 
+        .comptime_keyword => return ast.expressions.insert(.{.force_comptime_eval = .{
+            .operand = try self.parseExpression(0),
+        }}),
+
         // Type expressions
         .enum_keyword => @panic("TODO: Enum type expression"),
         .struct_keyword => blk: {
@@ -334,7 +341,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
             var pointer_type: ast.PointerType = .{
                 .is_const = false,
                 .is_volatile = false,
-                .item = undefined,
+                .child = undefined,
             };
             while(true) {
                 switch(try self.peekToken()) {
@@ -344,7 +351,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
                 }
                 _ = try self.tokenize();
             }
-            pointer_type.item = try self.parseExpression(0);
+            pointer_type.child = try self.parseExpression(0);
             break :blk try ast.expressions.insert(.{ .pointer_type = pointer_type });
         },
 
@@ -553,7 +560,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
             .if_keyword, .loop_keyword, .return_keyword, .struct_keyword,
             .switch_keyword, .var_keyword, .volatile_keyword, .__keyword, .bool_keyword,
             .type_keyword, .void_keyword, .anyopaque_keyword,
-            .end_of_file, .true_keyword, .false_keyword, .undefined_keyword,
+            .end_of_file, .true_keyword, .false_keyword, .undefined_keyword, .comptime_keyword,
             => |_, tag| {
                 std.debug.panic("Unexpected post-primary expression token: {s}\n", .{@tagName(tag)});
             },
@@ -723,7 +730,7 @@ fn dumpNode(index: anytype, node: anytype, indent_level: usize) anyerror!void {
                 if (ptr_type.is_volatile) {
                     std.debug.print("volatile ", .{});
                 }
-                try dumpNode(ptr_type.item, ast.expressions.get(ptr_type.item), indent_level);
+                try dumpNode(ptr_type.child, ast.expressions.get(ptr_type.child), indent_level);
             },
             .import_call => |file_index| {
                 std.debug.print("(", .{});
