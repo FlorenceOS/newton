@@ -357,6 +357,20 @@ fn regAlloc(decl_idx: ir.DeclIndex.Index, param_replacement: *rega.ParamReplacem
     }
 }
 
+fn writeLeaveFunction(writer: *backends.Writer, used_registers: []const u8, leave: std.meta.TagPayload(ir.DeclInstr, .leave_function)) !void {
+    if(leave.restore_stack) {
+        try movRegReg(writer, .u64, registers.rsp, registers.rbp);
+        try popReg(writer, registers.rbp);
+    }
+    var it = used_registers.len;
+    while(it > 0) {
+        it -= 1;
+        if(std.mem.indexOfScalar(u8, backends.current_default_abi.caller_saved_regs, used_registers[it]) == null) {
+            try popReg(writer, used_registers[it]);
+        }
+    }
+}
+
 fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFind, used_registers: []const u8) !?ir.BlockIndex.Index {
     const decl = ir.decls.get(decl_idx);
     switch(decl.instr) {
@@ -377,17 +391,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
         .leave_function => |leave| {
             const op_reg = uf.findReg(leave.value).?;
             std.debug.assert(op_reg == backends.current_default_abi.return_reg);
-            if(leave.restore_stack) {
-                try movRegReg(writer, .u64, registers.rsp, registers.rbp);
-                try popReg(writer, registers.rbp);
-            }
-            var it = used_registers.len;
-            while(it > 0) {
-                it -= 1;
-                if(std.mem.indexOfScalar(u8, backends.current_default_abi.caller_saved_regs, used_registers[it]) == null) {
-                    try popReg(writer, used_registers[it]);
-                }
-            }
+            try writeLeaveFunction(writer, used_registers, leave);
             try writer.writeInt(u8, 0xC3);
         },
         .copy => |source| try mov(writer, uf, decl.instr.getOperationType(), decl_idx, source, true),
@@ -625,7 +629,12 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             }
         },
         .function_call => |fcall| {
-            try writer.writeInt(u8, 0xE8);
+            if(ir.decls.getOpt(fcall.tail)) |tail| {
+                try writeLeaveFunction(writer, used_registers, tail.instr.leave_function);
+                try writer.writeInt(u8, 0xE9);
+            } else {
+                try writer.writeInt(u8, 0xE8);
+            }
             try writer.writeRelocatedFunction(fcall.callee, .rel32_post_0);
         },
         .syscall => {

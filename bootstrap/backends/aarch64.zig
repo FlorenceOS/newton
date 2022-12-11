@@ -330,6 +330,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             }
         },
         .function_call => |fcall| {
+            std.debug.assert(fcall.tail == .none);
             try writer.writeIntWithFunctionRelocation(u32, 0x94000000, fcall.callee, .imm26_div4);
         },
         .syscall => try writer.writeInt(u32, 0xD4000001),

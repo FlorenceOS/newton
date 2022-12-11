@@ -128,10 +128,10 @@ pub fn allocateRegsForInstr(
     param_replacement: *ParamReplacement,
 ) !void {
     const decl = ir.decls.get(decl_idx);
-    const next = ir.DeclIndex.unwrap(decl.next) orelse return;
+    const next = ir.DeclIndex.unwrap(decl.next);
     if(return_reg) |reg| {
         decl.reg_alloc_value = reg;
-        const ret_copy = try ir.insertBefore(next, .{
+        const ret_copy = try ir.insertBefore(next.?, .{
             .copy = decl_idx,
         });
         try param_replacement.put(decl_idx, ret_copy);
@@ -159,9 +159,9 @@ pub fn allocateRegsForInstr(
     }
     for(clobbers) |clob_reg| {
         if(return_reg == clob_reg) continue;
-        const clob1 = try ir.insertBefore(next, .{ .clobber = decl_idx });
+        const clob1 = try ir.insertBefore(next.?, .{ .clobber = decl_idx });
         ir.decls.get(clob1).reg_alloc_value = clob_reg;
-        const clob2 = try ir.insertBefore(next, .{ .clobber = clob1 });
+        const clob2 = try ir.insertBefore(next.?, .{ .clobber = clob1 });
         ir.decls.get(clob2).reg_alloc_value = clob_reg;
     }
     for(illegal_input_regs) |clob_reg| {
@@ -209,16 +209,20 @@ pub fn doRegAlloc(
                     false,
                     &param_replacement,
                 ),
-                .function_call => try allocateRegsForInstr(
-                    decl_idx,
-                    0,
-                    backends.current_default_abi.return_reg,
-                    backends.current_default_abi.param_regs,
-                    backends.current_default_abi.caller_saved_regs,
-                    &.{},
-                    false,
-                    &param_replacement,
-                ),
+                .function_call => |fc| if(fc.tail != .none) {
+                    try allocateRegsForInstr(decl_idx, 0, null, backends.current_default_abi.param_regs, &.{}, &.{}, false, &param_replacement);
+                } else {
+                    try allocateRegsForInstr(
+                        decl_idx,
+                        0,
+                        backends.current_default_abi.return_reg,
+                        backends.current_default_abi.param_regs,
+                        backends.current_default_abi.caller_saved_regs,
+                        &.{},
+                        false,
+                        &param_replacement,
+                    );
+                },
                 .syscall => try allocateRegsForInstr(
                     decl_idx,
                     0,

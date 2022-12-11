@@ -81,7 +81,7 @@ const FunctionArgument = struct {
     next: FunctionArgumentIndex.OptIndex = .none,
 };
 
-const DeclInstr = union(enum) {
+pub const DeclInstr = union(enum) {
     param_ref: struct {
         param_idx: u8,
         type: InstrType,
@@ -108,6 +108,7 @@ const DeclInstr = union(enum) {
     function_call: struct {
         callee: sema.ValueIndex.Index,
         first_argument: FunctionArgumentIndex.OptIndex,
+        tail: DeclIndex.OptIndex = .none,
     },
     syscall: FunctionArgumentIndex.OptIndex,
 
@@ -661,6 +662,25 @@ pub fn optimizeFunction(head_block: BlockIndex.Index) !void {
                             .load_int_constant = .{.type = decl.instr.getOperationType(), .value = dc.rhs},
                         });
                         decl.instr = @unionInit(DeclInstr, @tagName(tag)[0..@tagName(tag).len - 9], .{.lhs = dc.lhs, .rhs = constant});
+                    }
+                },
+                .function_call => blk: {
+                    var next_decl = decl.next;
+                    var leave_decl = DeclIndex.OptIndex.none;
+                    while(decls.getOpt(next_decl)) |next| {
+                        switch(next.instr) {
+                            .leave_function => {
+                                leave_decl = next_decl;
+                                break;
+                            },
+                            .goto => |edge| next_decl = blocks.get(edges.get(edge).target_block).first_decl,
+                            .undefined, .copy, .clobber => next_decl = next.next,
+                            else => break :blk,
+                        }
+                    }
+                    if(leave_decl != .none) {
+                        decl.instr.function_call.tail = leave_decl;
+                        decl.next = .none;
                     }
                 },
                 else => {},
@@ -1610,7 +1630,12 @@ pub fn dumpBlock(
                         break;
                     }
                 }
-                std.debug.print("call({s}", .{try name.?.toSlice()});
+                if(fc.tail != .none) {
+                    std.debug.print("tail_call(", .{});
+                } else {
+                    std.debug.print("call(", .{});
+                }
+                std.debug.print("{s}", .{try name.?.toSlice()});
                 var ops = decl.instr.operands();
                 while(ops.next()) |op| {
                     std.debug.print(", ${d}", .{@enumToInt(op.*)});
