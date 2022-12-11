@@ -655,26 +655,12 @@ pub fn optimizeFunction(head_block: BlockIndex.Index) !void {
         while(decls.getOpt(current_decl)) |decl| : (current_decl = decl.next) {
             const decl_idx = decls.getIndex(decl);
             switch(decl.instr) {
-                .divide_constant => |dc| {
-                    if(!backends.current_backend.optimizations.has_divide_constant) {
+                inline .divide_constant, .modulus_constant => |dc, tag| {
+                    if(!@field(backends.current_backend.optimizations, "has_" ++ @tagName(tag))) {
                         const constant = try insertBefore(decl_idx, .{
-                            .load_int_constant = .{.type = decl.instr.getOperationType(), .value = dc.rhs },
+                            .load_int_constant = .{.type = decl.instr.getOperationType(), .value = dc.rhs},
                         });
-                        decl.instr = .{.divide = .{
-                            .lhs = dc.lhs,
-                            .rhs = constant,
-                        }};
-                    }
-                },
-                .modulus_constant => |dc| {
-                    if(!backends.current_backend.optimizations.has_modulus_constant) {
-                        const constant = try insertBefore(decl_idx, .{
-                            .load_int_constant = .{.type = decl.instr.getOperationType(), .value = dc.rhs },
-                        });
-                        decl.instr = .{.modulus = .{
-                            .lhs = dc.lhs,
-                            .rhs = constant,
-                        }};
+                        decl.instr = @unionInit(DeclInstr, @tagName(tag)[0..@tagName(tag).len - 9], .{.lhs = dc.lhs, .rhs = constant});
                     }
                 },
                 else => {},
