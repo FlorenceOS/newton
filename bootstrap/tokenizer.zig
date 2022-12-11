@@ -36,9 +36,11 @@ pub const Token = union(enum) {
     string_literal: struct {
         body: []const u8,
         value: [:0]u8,
+        ident: []const u8,
 
         pub fn deinit(self: @This()) void {
             gpa.allocator().free(self.value);
+            gpa.allocator().free(self.ident);
         }
     },
 
@@ -136,6 +138,7 @@ pub const Token = union(enum) {
 
     pub fn identifier_value(self: @This()) []const u8 {
         switch(self) {
+            .string_literal => |sl| return sl.ident,
             .identifier => |i| return i.value,
             else => unreachable,
         }
@@ -348,12 +351,23 @@ pub fn tokenize(input: *[*:0]const u8) !Token {
         => return keywordOrIdent(input),
         '"' => {
             var value = std.ArrayList(u8).init(gpa.allocator());
+            var string_ident = std.ArrayList(u8).init(gpa.allocator());
+            try string_ident.appendSlice("str");
 
             const body_start = @ptrCast([*]const u8, input.*);
             input.* += 1;
 
+            var last_alnum = false;
             while(input.*[0] != '"') {
-                try value.append(try parseLiteralChar(input));
+                var ch = try parseLiteralChar(input);
+                try value.append(ch);
+                if(std.ascii.isAlphanumeric(ch)) {
+                    if (!last_alnum) ch = std.ascii.toUpper(ch);
+                    try string_ident.append(ch);
+                    last_alnum = true;
+                } else {
+                    last_alnum = false;
+                }
             }
 
             input.* += 1; // Also skip quotes
@@ -361,6 +375,7 @@ pub fn tokenize(input: *[*:0]const u8) !Token {
             return Token{ .string_literal = .{
                 .body = body_start[0..(@ptrToInt(input.*) - 1) - @ptrToInt(body_start)],
                 .value = try value.toOwnedSliceSentinel(0),
+                .ident = try string_ident.toOwnedSlice(),
             } };
         },
 

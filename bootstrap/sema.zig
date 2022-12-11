@@ -365,7 +365,7 @@ fn evaluateWithoutTypeHint(
             try backends.writer.write(token.string_literal.value);
             try backends.writer.writeInt(u8, 0);
             // TODO: Slice types
-            return putValueIn(value_out, .{.runtime = .{
+            const init_value = try putValueIn(value_out, .{.runtime = .{
                 .expr = ExpressionIndex.toOpt(try expressions.insert(.{.offset = .{
                     .offset = @intCast(u32, offset),
                     .type = .{
@@ -378,6 +378,15 @@ fn evaluateWithoutTypeHint(
                     .reference = .{.is_const = true, .is_volatile = false, .item = .u8},
                 })}),
             }});
+            _ = try decls.insert(.{
+                .mutable = false,
+                .static = true,
+                .offset = @intCast(u32, offset),
+                .function_param_idx = null,
+                .name = sr,
+                .init_value = init_value,
+            });
+            return init_value;
         },
         .function_expression => |func_idx| {
             const func = ast.functions.get(func_idx);
