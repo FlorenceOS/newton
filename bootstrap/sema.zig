@@ -869,9 +869,9 @@ const Unresolved = struct {
                 .type_idx => |t| t,
                 else => unreachable,
             };
-            return semaASTExpr(self.scope, self.expression, false, eval_type);
+            return semaASTExpr(self.scope, self.expression, true, eval_type);
         } else {
-            return semaASTExpr(self.scope, self.expression, false, null);
+            return semaASTExpr(self.scope, self.expression, true, null);
         }
     }
 };
