@@ -1,17 +1,10 @@
 const print = @import("print.n");
 const syscalls = @import("syscalls.n");
 
-fn generic(comptime T: type) type {
-   return struct {
-       inner: T,
-   };
-}
-
 fn main() void {
     print.str("Hello, world!\n".&);
     print.decimal(u64, 69);
     print.decimal(u32, 69);
     print.flush();
-    var a: generic(u32) = undefined;
     syscalls.exit(0);
 }
