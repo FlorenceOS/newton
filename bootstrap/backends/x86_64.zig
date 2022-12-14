@@ -222,7 +222,7 @@ fn writeOperandReg(
     const rm_decl = ir.decls.get(rm_operand);
     if(rm_decl.instr.memoryReference()) |mr| {
         switch(rm_decl.instr) {
-            .offset_ref => |offset| return writeRipRelative(writer, op_t, opcodes, reg, offset.offset, immediate, rm_reg_is_reg),
+            .global_ref => |offset| return writeRipRelative(writer, op_t, opcodes, reg, offset.offset, immediate, rm_reg_is_reg),
             .stack_ref => |offset| return writeStackOffset(writer, op_t, opcodes, reg, @intCast(i32, offset.offset), immediate, rm_reg_is_reg),
             .reference_wrap => return writeRegIndirect(writer, op_t, opcodes, uf.findReg(mr.pointer_value).?, reg, 0, immediate, rm_reg_is_reg),
             else => unreachable,
@@ -374,7 +374,7 @@ fn writeLeaveFunction(writer: *backends.Writer, used_registers: []const u8, leav
 fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFind, used_registers: []const u8) !?ir.BlockIndex.Index {
     const decl = ir.decls.get(decl_idx);
     switch(decl.instr) {
-        .param_ref, .stack_ref, .undefined, .clobber, .offset_ref, .reference_wrap,
+        .param_ref, .stack_ref, .undefined, .clobber, .global_ref, .reference_wrap,
         => {},
         .enter_function => |stack_size| {
             for(used_registers) |reg| {

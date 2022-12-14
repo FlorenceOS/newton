@@ -441,7 +441,7 @@ fn semaASTExpr(
             // TODO: Slice types
             if(force_comptime_eval) @panic("TODO: Comptime string literals");
             const init_value = try values.insert(.{.runtime = .{
-                .expr = ExpressionIndex.toOpt(try expressions.insert(.{.offset = .{
+                .expr = ExpressionIndex.toOpt(try expressions.insert(.{.global = .{
                     .offset = @intCast(u32, offset),
                     .type = .{
                         .is_volatile = false,
@@ -1416,7 +1416,7 @@ pub const Expression = union(enum) {
     zero_extend: Cast,
     truncate: Cast,
 
-    offset: struct { offset: u32, type: PointerType },
+    global: struct { offset: u32, type: PointerType },
     addr_of: ValueIndex.Index,
     deref: ValueIndex.Index,
 

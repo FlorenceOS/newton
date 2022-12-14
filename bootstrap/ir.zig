@@ -87,7 +87,7 @@ pub const DeclInstr = union(enum) {
         type: InstrType,
     },
     stack_ref: struct { offset: u32, type: sema.PointerType },
-    offset_ref: struct { offset: u32, type: sema.PointerType },
+    global_ref: struct { offset: u32, type: sema.PointerType },
     load_int_constant: struct {
         value: u64,
         type: InstrType,
@@ -252,7 +252,7 @@ pub const DeclInstr = union(enum) {
             .@"if" => |*instr| bounded_result.value.bounded_iterator.appendAssumeCapacity(&instr.condition),
             .leave_function => |*value| bounded_result.value.bounded_iterator.appendAssumeCapacity(&value.value),
 
-            .param_ref, .stack_ref, .offset_ref,
+            .param_ref, .stack_ref, .global_ref,
             .load_int_constant, .load_bool_constant,
             .undefined, .goto, .enter_function,
             => {}, // No operands
@@ -268,7 +268,7 @@ pub const DeclInstr = union(enum) {
                 .pointer_value = self_index,
                 .sema_pointer_type = sr.type,
             },
-            .offset_ref => |offref| return .{
+            .global_ref => |offref| return .{
                 .pointer_value = self_index,
                 .sema_pointer_type = offref.type,
             },
@@ -289,7 +289,7 @@ pub const DeclInstr = union(enum) {
     pub fn isValue(self: *const @This()) bool {
         switch(self.*) {
             .incomplete_phi => unreachable,
-            .@"if", .leave_function, .goto, .stack_ref, .offset_ref, .enter_function,
+            .@"if", .leave_function, .goto, .stack_ref, .global_ref, .enter_function,
             .store, .store_constant, .reference_wrap,
             => return false,
             else => return true,
@@ -327,7 +327,7 @@ pub const DeclInstr = union(enum) {
             .zero_extend, .sign_extend, .truncate,
             => |cast| return cast.type,
             .clobber => return .u64,
-            .addr_of, .stack_ref, .offset_ref,
+            .addr_of, .stack_ref, .global_ref,
             => return backends.current_backend.pointer_type,
             .reference_wrap => |rr| return rr.instrType(),
             .add, .add_mod, .sub, .sub_mod,
@@ -1398,7 +1398,7 @@ fn ssaValue(
                 .child = try sema.values.get(rdecl.init_value).getType(),
             };
             if(rdecl.static) {
-                return appendToBlock(block_idx, .{.offset_ref = .{ .offset = rdecl.offset.?, .type = ref_t}});
+                return appendToBlock(block_idx, .{.global_ref = .{ .offset = rdecl.offset.?, .type = ref_t}});
             } else if(rdecl.offset) |offset| {
                 return appendToBlock(block_idx, .{.stack_ref = .{ .offset = offset, .type = ref_t}});
             } else {
@@ -1519,7 +1519,7 @@ fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index) an
                 .first_argument = builder.first,
             }});
         },
-        .offset => |offref| return appendToBlock(block_idx, .{.offset_ref = .{
+        .global => |offref| return appendToBlock(block_idx, .{.global_ref = .{
             .offset = offref.offset,
             .type = offref.type,
         }}),
@@ -1599,7 +1599,7 @@ pub fn dumpBlock(
         switch(decl.instr) {
             .param_ref => |p| std.debug.print("param({d})\n", .{p.param_idx}),
             .stack_ref => |p| std.debug.print("stack({d})\n", .{p.offset}),
-            .offset_ref => |p| std.debug.print("offset({d})\n", .{p.offset}),
+            .global_ref => |p| std.debug.print("global({d})\n", .{p.offset}),
             .addr_of => |p| std.debug.print("addr_of(${d})\n", .{@enumToInt(p)}),
             .enter_function => |stack_size| std.debug.print("enter_function({d})\n", .{stack_size}),
             .leave_function => |leave| std.debug.print("leave_function(${d})\n", .{@enumToInt(leave.value)}),

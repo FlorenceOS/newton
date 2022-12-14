@@ -149,7 +149,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
     std.debug.assert(regs_to_save.len == 0);
     const decl = ir.decls.get(decl_idx);
     switch(decl.instr) {
-        .param_ref, .undefined, .clobber, .offset_ref, .stack_ref, .reference_wrap,
+        .param_ref, .undefined, .clobber, .global_ref, .stack_ref, .reference_wrap,
         => {},
         .load_int_constant => |value| {
             const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
@@ -221,7 +221,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
         .addr_of => |op| {
             const operand = ir.decls.get(op);
             switch(operand.instr) {
-                .offset_ref => |offref| {
+                .global_ref => |offref| {
                     const disp = @bitCast(u21, @intCast(i21, @bitCast(i64, offref.offset -% writer.currentOffset())));
                     try writer.writeInt(u32, 0x10000000
                         | @as(u32, uf.findRegByPtr(decl).?) << 0
