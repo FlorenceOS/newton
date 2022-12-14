@@ -574,6 +574,7 @@ fn semaASTExpr(
             param_scope.first_decl = param_builder.first;
 
             return values.insert(.{.function = .{
+                .ast_function = func_idx,
                 .generic_param_scope = param_scope_idx,
                 .generic_body = func.body,
                 .generic_return_type = func.return_type,
@@ -1291,8 +1292,8 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
     }
 }
 
-
 pub const Function = struct {
+    ast_function: ast.FunctionIndex.Index,
     generic_return_type: ast.ExprIndex.Index,
     generic_body: ast.StmtIndex.OptIndex,
     generic_param_scope: ScopeIndex.Index,

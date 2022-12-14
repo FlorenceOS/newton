@@ -627,6 +627,42 @@ const peephole_optimizations = .{
 
 var optimization_allocator = std.heap.GeneralPurposeAllocator(.{}){.backing_allocator = std.heap.page_allocator};
 
+fn shouldInlineFunction(function: sema.InstantiatedFunction) !bool {
+    const callee = sema.values.get(function.function_value);
+    const ast_func = ast.functions.get(callee.function.ast_function);
+    if(ast_func.is_inline) return true;
+    // TODO: Check if function is small enough to be inlined unconditionally
+    // TODO: Check whether or not function is called in multiple places
+    return false;
+}
+
+fn splitBlockAt(block_idx: BlockIndex.Index, decl_idx: DeclIndex.Index) !BlockEdgeIndex.Index {
+    const old_block = blocks.get(block_idx);
+    const new_block_idx = try blocks.insert(.{
+        .is_sealed = false,
+        .is_filled = old_block.is_filled,
+    });
+
+    const split_decl = decls.get(decl_idx);
+    const new_block = blocks.get(new_block_idx);
+    const old_to_new_edge = try addEdge(block_idx, new_block_idx);
+    new_block.first_predecessor = BlockEdgeIndex.toOpt(old_to_new_edge);
+    new_block.first_decl = DeclIndex.toOpt(decl_idx);
+    new_block.last_decl = old_block.last_decl;
+
+    var curr_decl = DeclIndex.toOpt(decl_idx);
+    while(decls.getOpt(curr_decl)) |decl| : (curr_decl = decl.next) {
+        decl.block = new_block_idx;
+    }
+
+    old_block.last_decl = split_decl.prev;
+    split_decl.prev = .none;
+
+    _ = try appendToBlock(block_idx, .{.goto = old_to_new_edge});
+    try new_block.seal();
+    return old_to_new_edge;
+}
+
 pub fn optimizeFunction(head_block: BlockIndex.Index) !void {
     var arena = std.heap.ArenaAllocator.init(optimization_allocator.allocator());
     defer arena.deinit();
@@ -664,7 +700,84 @@ pub fn optimizeFunction(head_block: BlockIndex.Index) !void {
                         decl.instr = @unionInit(DeclInstr, @tagName(tag)[0..@tagName(tag).len - 9], .{.lhs = dc.lhs, .rhs = constant});
                     }
                 },
-                .function_call => blk: {
+                .function_call => |fc| blk: {
+                    // Try to perform function inlining
+                    if(try shouldInlineFunction(fc.callee)) {
+                        const callee_head_block_idx = try ssaFunction(fc.callee);
+                        try optimizeFunction(callee_head_block_idx);
+                        const callee_head_block = blocks.get(callee_head_block_idx);
+
+                        var callee_blocks = try allBlocksReachableFrom(arena.allocator(), callee_head_block_idx);
+                        defer callee_blocks.deinit(arena.allocator());
+
+                        // First replace all param_ref's with copies of function call arguments
+                        {
+                            var operand_idx: u8 = 0;
+                            var operand_it = decl.instr.operands();
+                            while(operand_it.next()) |op| : (operand_idx += 1) {
+                                var callee_curr_decl = callee_head_block.first_decl;
+                                while(decls.getOpt(callee_curr_decl)) |curr_decl| : (callee_curr_decl = curr_decl.next) {
+                                    if(curr_decl.instr == .param_ref and curr_decl.instr.param_ref.param_idx == operand_idx) {
+                                        curr_decl.instr = .{.copy = op.*};
+                                    }
+                                }
+                            }
+                        }
+
+                        const split_edge_idx = try splitBlockAt(block, DeclIndex.unwrap(current_decl).?);
+                        const split_edge = edges.get(split_edge_idx);
+
+                        // Next find the enter/leave_function decls
+                        var enter_decl = DeclIndex.OptIndex.none;
+                        var return_value = DeclIndex.OptIndex.none;
+                        {
+                            for(callee_blocks.items) |callee_bidx| {
+                                const callee_block = blocks.get(callee_bidx);
+                                var callee_curr_decl = callee_block.first_decl;
+                                while(decls.getOpt(callee_curr_decl)) |curr_decl| : (callee_curr_decl = curr_decl.next) {
+                                    switch(curr_decl.instr) {
+                                        .enter_function => |stack_size| {
+                                            std.debug.assert(enter_decl == .none and stack_size == 0);
+                                            enter_decl = callee_curr_decl;
+                                            callee_block.first_decl = curr_decl.next;
+                                            decls.getOpt(curr_decl.next).?.prev = .none;
+                                            curr_decl.next = .none;
+                                        },
+                                        .leave_function => |leave| {
+                                            std.debug.assert(return_value == .none);
+                                            const target_block = blocks.get(split_edge.target_block);
+                                            return_value = DeclIndex.toOpt(leave.value);
+                                            callee_block.is_sealed = false;
+                                            target_block.is_sealed = false;
+                                            curr_decl.instr = .{.goto = try addEdge(callee_bidx, split_edge.target_block)};
+                                            try callee_block.seal();
+                                            try target_block.seal();
+                                        },
+                                        else => {},
+                                    }
+                                }
+                            }
+                        }
+
+                        // Temporarily unseal the blocks to work with them
+                        const source_block = blocks.get(split_edge.source_block);
+                        source_block.is_sealed = false;
+                        callee_head_block.is_sealed = false;
+
+                        // Do the actual inlining!
+                        decls.getOpt(source_block.last_decl).?.instr = .{.goto = try addEdge(split_edge.source_block, callee_head_block_idx)};
+                        decl.instr = .{.copy = DeclIndex.unwrap(return_value).?};
+
+                        // Reseal the blocks
+                        try source_block.seal();
+                        try callee_head_block.seal();
+
+                        // Try to optimize the current function further now that we've inlined the callee.  We recursively call
+                        // into `optimizeFunction` because the current state is not valid anymore after all the work we've done.
+                        return optimizeFunction(head_block);
+                    }
+
+                    // Try to perform tail call optimization
                     var next_decl = decl.next;
                     var leave_decl = DeclIndex.OptIndex.none;
                     while(decls.getOpt(next_decl)) |next| {

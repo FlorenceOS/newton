@@ -122,12 +122,15 @@ fn parseFunctionExpr(self: *@This()) anyerror!ast.FunctionIndex.Index {
     }
 
     _ = try self.expect(.@")_ch");
+
+    const is_inline = (try self.tryConsume(.inline_keyword)) != null;
     const return_type = try self.parseExpression(null);
 
     return ast.functions.insert(.{
         .first_param = param_builder.first,
         .return_type = return_type,
         .body = try self.parseBlockStatement(),
+        .is_inline = is_inline,
     });
 }
 
@@ -246,6 +249,7 @@ fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
         .end_of_file, .else_keyword, .enum_keyword, .fn_keyword,
         .struct_keyword, .bool_keyword, .type_keyword, .void_keyword,
         .anyopaque_keyword, .volatile_keyword, .true_keyword, .false_keyword, .undefined_keyword,
+        .inline_keyword,
         => |_, tag| {
             std.debug.print("Unexpected statement token: {s}\n", .{@tagName(tag)});
             return error.UnexpectedToken;
@@ -375,7 +379,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
         .@"|_ch", .@"|=_ch", .@"&_ch", .@"&=_ch",
         .@"^_ch", .@"^=_ch", .@"||_ch", .@"&&_ch", .@"{_ch",
         .case_keyword, .const_keyword, .var_keyword, .volatile_keyword, .else_keyword,
-        .end_of_file, .return_keyword,
+        .end_of_file, .return_keyword, .inline_keyword,
         => |_, tag| {
             std.debug.print("Unexpected primary-expression token: {s}\n", .{@tagName(tag)});
             return error.UnexpectedToken;
@@ -561,6 +565,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
             .switch_keyword, .var_keyword, .volatile_keyword, .__keyword, .bool_keyword,
             .type_keyword, .void_keyword, .anyopaque_keyword,
             .end_of_file, .true_keyword, .false_keyword, .undefined_keyword, .comptime_keyword,
+            .inline_keyword,
             => |_, tag| {
                 std.debug.panic("Unexpected post-primary expression token: {s}\n", .{@tagName(tag)});
             },

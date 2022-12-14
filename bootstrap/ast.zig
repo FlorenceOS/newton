@@ -227,6 +227,7 @@ pub const FunctionExpression = struct {
     first_param: FunctionParamIndex.OptIndex,
     return_type: ExprIndex.Index,
     body: StmtIndex.OptIndex,
+    is_inline: bool,
 };
 
 pub const FunctionParameter = struct {

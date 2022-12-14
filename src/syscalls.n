@@ -7,7 +7,7 @@ const SYS = struct {
     const EXIT = 60;
 };
 
-fn write(fd: u32, buf: *const u8, size: u64) u64 {
+fn write(fd: u32, buf: *const u8, size: u64) inline u64 {
     return @syscall(SYS.WRITE, fd, buf, size);
 }
 
@@ -22,6 +22,6 @@ fn write_all(fd: u32, buf: *const u8, size: u64) void {
     }
 }
 
-fn exit(exit_code: i64) void {
+fn exit(exit_code: i64) inline void {
     @syscall(SYS.EXIT, exit_code);
 }
