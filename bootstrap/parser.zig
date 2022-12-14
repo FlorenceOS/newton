@@ -823,6 +823,18 @@ fn dumpNode(index: anytype, node: anytype, indent_level: usize) anyerror!void {
                 try dumpNode(bop.rhs, ast.expressions.get(bop.rhs), indent_level);
             },
             .discard_underscore => std.debug.print("_", .{}),
+            inline
+            .unary_plus, .unary_minus, .unary_bitnot, .unary_lognot => |uop, tag| {
+                const op = switch(tag) {
+                    .unary_plus => '+',
+                    .unary_minus => '-',
+                    .unary_bitnot => '~',
+                    .unary_lognot => '!',
+                    else => unreachable,
+                };
+                std.debug.print("{c}", .{op});
+                try dumpNode(uop.operand, ast.expressions.get(uop.operand), indent_level);
+            },
             .function_expression => |func_idx| try dumpNode(func_idx, ast.functions.get(func_idx), indent_level),
             .struct_expression => |expr| {
                 std.debug.print("struct ", .{});
