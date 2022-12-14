@@ -335,6 +335,25 @@ fn analyzeStatementChain(
     return .{.scope = block_scope_idx, .first_stmt = stmt_builder.first, .reaches_end = reaches_end};
 }
 
+fn evaluateComptimeCall(fn_call: FunctionCall) ValueIndex.Index {
+    if(fn_call.first_arg != .none) {
+        @panic("TODO: Non-comptime marked parameters in comptime eval of function");
+    }
+
+    const callee = fn_call.callee;
+
+    const instantiation = &values.get(callee.function_value).function.instantiations.items[callee.instantiation];
+
+    var curr_stmt = instantiation.body.first_stmt;
+    while(statements.getOpt(curr_stmt)) |stmt| : (curr_stmt = stmt.next) {
+        switch(stmt.value) {
+            .return_statement => |ret| return ValueIndex.unwrap(ret).?,
+            else => |other| std.debug.panic("TODO: evaluateComptimeCall(): {any}", .{other}),
+        }
+    }
+    unreachable;
+}
+
 fn semaASTExpr(
     scope_idx: ScopeIndex.Index,
     expr_idx: ast.ExprIndex.Index,
@@ -624,7 +643,9 @@ fn semaASTExpr(
                     break :blk func_call;
                 },
             };
-            if(force_comptime_eval) @panic("TODO: Comptime function call!");
+            if(force_comptime_eval) {
+                return evaluateComptimeCall(sema_call);
+            }
             return values.insert(.{.runtime = .{
                 .expr = ExpressionIndex.toOpt(try expressions.insert(.{.function_call = sema_call})),
                 .value_type = return_type,
