@@ -1186,6 +1186,7 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
                 if(!param.comptime_param) {
                     _ = try runtime_params_builder.insert(.{.function_arg = .{
                         .value = try semaASTExpr(arg_scope.?, arg.value, false, values.get(param_type).type_idx),
+                        .param_decl = decls.getIndex(param),
                     }});
                 }
 
@@ -1271,12 +1272,15 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
         while(ast.expressions.getOpt(curr_arg)) |ast_arg| {
             const func_arg = ast_arg.function_argument;
             const curr_param = decls.getOpt(curr_param_decl) orelse return error.TooManyArguments;
-            _ = try runtime_params_builder.insert(.{.function_arg = .{.value = try semaASTExpr(
-                arg_scope.?,
-                func_arg.value,
-                false,
-                values.get(values.get(curr_param.init_value).runtime.value_type).type_idx,
-            )}});
+            _ = try runtime_params_builder.insert(.{.function_arg = .{
+                .value = try semaASTExpr(
+                    arg_scope.?,
+                    func_arg.value,
+                    false,
+                    values.get(values.get(curr_param.init_value).runtime.value_type).type_idx,
+                ),
+                .param_decl = decls.getIndex(curr_param),
+            }});
             curr_arg = func_arg.next;
             curr_param_decl = curr_param.next;
         }
@@ -1393,6 +1397,7 @@ pub const BinaryOp = struct {
 
 pub const FunctionArgument = struct {
     value: ValueIndex.Index,
+    param_decl: DeclIndex.Index,
     next: ExpressionIndex.OptIndex = .none,
 };
 
