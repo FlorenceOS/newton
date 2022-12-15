@@ -180,6 +180,13 @@ fn promote(vidx: *ValueIndex.Index, target_tidx: TypeIndex.Index, is_assign: boo
     switch(value_ty.*) {
         .comptime_int => {
             std.debug.assert(value.* != .decl_ref); // This must have been decayed earlier
+            switch(value.*) {
+                .runtime => {
+                    std.debug.print("{any}\n", .{value.*});
+                    std.debug.print("{any}\n", .{expressions.getOpt(value.runtime.expr).?});
+                },
+                else => {},
+            }
             switch(ty.*) {
                 .comptime_int => {},
                 .unsigned_int => |bits| vidx.* = try values.addDedupLinear(.{.unsigned_int = .{
@@ -589,6 +596,47 @@ fn semaASTExpr(
             var return_type: ValueIndex.Index = undefined;
             const sema_call = switch(ast_callee.*) {
                 .this_func => return values.insert(.{.type_idx = scopes.get(scope_idx).getThisType().?}),
+                .size_of_func => {
+                    const type_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
+                    std.debug.assert(type_arg.next == .none);
+
+                    const ty = try semaASTExpr(scope_idx, type_arg.value, true, .type);
+                    const type_value = types.get(values.get(ty).type_idx);
+
+                    return values.insert(.{.comptime_int = try type_value.getSize()});
+                },
+                .int_to_ptr_func => {
+                    const type_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
+                    const expr_arg = ast.expressions.getOpt(type_arg.next).?.function_argument;
+                    std.debug.assert(expr_arg.next == .none);
+
+                    const ty = try semaASTExpr(scope_idx, type_arg.value, true, .type);
+                    std.debug.assert(types.get(values.get(ty).type_idx).* == .pointer);
+                    const value = try semaASTExpr(scope_idx, expr_arg.value, false, null);
+
+                    if(force_comptime_eval) @panic("TODO: Comptime int_to_ptr");
+                    return values.insert(.{.runtime = .{
+                        .expr = ExpressionIndex.toOpt(try expressions.insert(.{
+                            .value = value,
+                        })),
+                        .value_type = ty,
+                    }});
+                },
+                .ptr_to_int_func => {
+                    const expr_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
+                    std.debug.assert(expr_arg.next == .none);
+
+                    const value = try semaASTExpr(scope_idx, expr_arg.value, false, null);
+                    std.debug.assert(types.get(try values.get(value).getType()).* == .pointer);
+
+                    if(force_comptime_eval) @panic("TODO: Comptime ptr_to_int");
+                    return values.insert(.{.runtime = .{
+                        .expr = ExpressionIndex.toOpt(try expressions.insert(.{
+                            .value = value,
+                        })),
+                        .value_type = .pointer_int_type,
+                    }});
+                },
                 .truncate_func => {
                     const type_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
                     const expr_arg = ast.expressions.getOpt(type_arg.next).?.function_argument;
@@ -643,16 +691,20 @@ fn semaASTExpr(
                     const callee_idx = try semaASTExpr(scope_idx, call.callee, true, null);
                     const callee = values.get(callee_idx);
                     // TODO: Runtime functions (function pointers)
-                    const gen = switch(callee.*) {
-                        .function => try callFunctionWithArgs(callee_idx, scope_idx, call.first_arg),
-                        .bound_fn => |b| inner: {
+                    switch(callee.*) {
+                        .function => {
+                            const gen = try callFunctionWithArgs(callee_idx, scope_idx, call.first_arg);
+                            return_type = callee.function.instantiations.items[gen.callee.instantiation].return_type;
+                            break :blk gen;
+                        },
+                        .bound_fn => |b| {
                             ast.expressions.get(b.first_arg).function_argument.next = call.first_arg;
-                            break :inner try callFunctionWithArgs(b.callee, scope_idx, ast.ExprIndex.toOpt(b.first_arg));
+                            const gen = try callFunctionWithArgs(b.callee, scope_idx, ast.ExprIndex.toOpt(b.first_arg));
+                            return_type = values.get(b.callee).function.instantiations.items[gen.callee.instantiation].return_type;
+                            break :blk gen;
                         },
                         else => std.debug.panic("Cannot call non-function: {any}", .{callee}),
-                    };
-                    return_type = callee.function.instantiations.items[gen.callee.instantiation].return_type;
-                    break :blk gen;
+                    }
                 },
             };
             if(force_comptime_eval) {
@@ -706,7 +758,42 @@ fn semaASTExpr(
                 else => |a| @tagName(a),
             };
 
-            if(force_comptime_eval) @panic("TODO: Comptime eval bop");
+            const lhs_value = values.get(lhs);
+            const rhs_value = values.get(rhs);
+            if(lhs_value.isComptime() and rhs_value.isComptime()) {
+                std.debug.assert(std.meta.activeTag(lhs_value.*) == std.meta.activeTag(rhs_value.*));
+                const lhs_int = switch(lhs_value.*) {
+                    .comptime_int => |i| i,
+                    .unsigned_int => |i| i.value,
+                    .signed_int => |i| i.value,
+                    else => unreachable,
+                };
+                const rhs_int = switch(rhs_value.*) {
+                    .comptime_int => |i| i,
+                    .unsigned_int => |i| i.value,
+                    .signed_int => |i| i.value,
+                    else => unreachable,
+                };
+                switch(tag) {
+                    .plus, .plus_mod => return values.insert(.{.comptime_int = lhs_int +% rhs_int}),
+                    .minus, .minus_mod => return values.insert(.{.comptime_int = lhs_int -% rhs_int}),
+                    .multiply, .multiply_mod => return values.insert(.{.comptime_int = lhs_int *% rhs_int}),
+                    .divide => return values.insert(.{.comptime_int = @divTrunc(lhs_int, rhs_int)}),
+                    .modulus => return values.insert(.{.comptime_int = @rem(lhs_int, rhs_int)}),
+                    .shift_left => return values.insert(.{.comptime_int = lhs_int << @intCast(u7, rhs_int)}),
+                    .shift_right => return values.insert(.{.comptime_int = lhs_int >> @intCast(u7, rhs_int)}),
+                    .bitand => return values.insert(.{.comptime_int = lhs_int & rhs_int}),
+                    .bitor => return values.insert(.{.comptime_int = lhs_int | rhs_int}),
+                    .bitxor => return values.insert(.{.comptime_int = lhs_int ^ rhs_int}),
+                    .less => return values.insert(.{.bool = lhs_int < rhs_int}),
+                    .less_equal => return values.insert(.{.bool = lhs_int <= rhs_int}),
+                    .greater => return values.insert(.{.bool = lhs_int > rhs_int}),
+                    .greater_equal => return values.insert(.{.bool = lhs_int >= rhs_int}),
+                    .equals => return values.insert(.{.bool = lhs_int == rhs_int}),
+                    .not_equal => return values.insert(.{.bool = lhs_int != rhs_int}),
+                    else => @panic("TODO: " ++ @tagName(tag)),
+                }
+            }
 
             return values.insert(.{.runtime = .{
                 .expr = ExpressionIndex.toOpt(try expressions.insert(
@@ -1047,6 +1134,20 @@ pub const Value = union(enum) {
 
     // Runtime known values
     runtime: RuntimeValue,
+
+    pub fn isComptime(self: *@This()) bool {
+        switch(self.*) {
+            .type_idx,
+            .void,
+            .bool,
+            .comptime_int,
+            .unsigned_int,
+            .signed_int,
+            .function,
+            => return true,
+            else => return false,
+        }
+    }
 
     pub fn analyze(self: *@This()) anyerror!void {
         switch(self.*) {

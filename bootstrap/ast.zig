@@ -32,6 +32,9 @@ pub const ExprIndex = indexed_list.Indices(u32, opaque{}, .{
     .syscall_func = .{.syscall_func = {}},
     .truncate_func = .{.truncate_func = {}},
     .this_func = .{.this_func = {}},
+    .ptr_to_int_func = .{.ptr_to_int_func = {}},
+    .int_to_ptr_func = .{.int_to_ptr_func = {}},
+    .size_of_func = .{.size_of_func = {}},
 
     // _ = a;
     // ^ This thing
@@ -105,6 +108,12 @@ pub const ExpressionNode = union(enum) {
     truncate_func,
     // @This()
     this_func,
+    // @ptr_to_int
+    ptr_to_int_func,
+    // @int_to_ptr
+    int_to_ptr_func,
+    // @size_of
+    size_of_func,
     // @import("whatever")
     import_call: sources.SourceIndex.Index,
 
@@ -406,6 +415,9 @@ fn dumpNode(node: anytype, indent_level: usize) anyerror!void {
             .syscall_func => std.debug.print("@syscall", .{}),
             .truncate_func => std.debug.print("@truncate", .{}),
             .this_func => std.debug.print("@This", .{}),
+            .ptr_to_int_func => std.debug.print("@ptr_to_int", .{}),
+            .int_to_ptr_func => std.debug.print("@int_to_ptr", .{}),
+            .size_of_func => std.debug.print("@size_of", .{}),
             else => |expr| std.debug.panic("Cannot dump expression of type {s}", .{@tagName(expr)}),
         },
         *StatementNode => switch(node.value) {
