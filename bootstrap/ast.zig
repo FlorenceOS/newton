@@ -237,6 +237,259 @@ pub const FunctionParameter = struct {
     is_comptime: bool,
 };
 
+fn makeIndent(indent_level: usize) []const u8 {
+    return (" " ** 4096)[0..indent_level * 2];
+}
+
+fn dumpStatementChain(first_stmt: StmtIndex.OptIndex, indent_level: usize) anyerror!void {
+    if(first_stmt == .empty_block or first_stmt == .none) {
+        std.debug.print("{{}}", .{});
+        return;
+    }
+
+    std.debug.print("{{", .{});
+
+    var curr_stmt = first_stmt;
+    while(statements.getOpt(curr_stmt)) |stmt| {
+        std.debug.print("\n{s}", .{makeIndent(indent_level + 1)});
+        try dumpNode(stmt, indent_level + 1);
+        curr_stmt = stmt.next;
+    }
+
+    std.debug.print("\n{s}}}", .{makeIndent(indent_level)});
+}
+
+fn dumpNode(node: anytype, indent_level: usize) anyerror!void {
+    switch(@TypeOf(node)) {
+        *sources.SourceFile => {
+            const index = sources.source_files.getIndex(node);
+            std.debug.print("SourceFile#{d} {s}", .{@enumToInt(index), node.realpath});
+        },
+        *ExpressionNode => switch(node.*) {
+            .identifier, .int_literal, .char_literal, .string_literal => |ident| std.debug.print("{s}", .{try ident.toSlice()}),
+            .bool_literal => |value| std.debug.print("{}", .{value}),
+            .void, .anyopaque, .bool, .type, .undefined => std.debug.print("{s}", .{@tagName(node.*)}),
+            .unsigned_int => |bits| std.debug.print("u{d}", .{bits}),
+            .signed_int => |bits| std.debug.print("i{d}", .{bits}),
+            .pointer_type => |ptr_type| {
+                std.debug.print("*", .{});
+                if (ptr_type.is_const) {
+                    std.debug.print("const ", .{});
+                }
+                if (ptr_type.is_volatile) {
+                    std.debug.print("volatile ", .{});
+                }
+                try dumpNode(expressions.get(ptr_type.child), indent_level);
+            },
+            .import_call => |file_index| {
+                std.debug.print("(", .{});
+                try dumpNode(sources.source_files.get(file_index), indent_level);
+                std.debug.print(")", .{});
+            },
+            .function_call => |call| {
+                try dumpNode(expressions.get(call.callee), indent_level);
+                std.debug.print("(", .{});
+                var curr_arg = call.first_arg;
+                while(expressions.getOpt(curr_arg)) |arg| {
+                    const func_arg = arg.function_argument;
+                    try dumpNode(expressions.get(func_arg.value), indent_level);
+                    if(func_arg.next != .none) {
+                        std.debug.print(", ", .{});
+                    }
+                    curr_arg = func_arg.next;
+                }
+                std.debug.print(")", .{});
+            },
+            .addr_of, .deref => |uop| {
+                try dumpNode(expressions.get(uop.operand), indent_level);
+                switch(node.*) {
+                    .addr_of => std.debug.print(".&", .{}),
+                    .deref => std.debug.print(".*", .{}),
+                    else => unreachable,
+                }
+            },
+            .member_access => |bop| {
+                try dumpNode(expressions.get(bop.lhs), indent_level);
+                std.debug.print(".", .{});
+                try dumpNode(expressions.get(bop.rhs), indent_level);
+            },
+            .parenthesized => |uop| {
+                std.debug.print("(", .{});
+                try dumpNode(expressions.get(uop.operand), indent_level);
+                std.debug.print(")", .{});
+            },
+            .multiply, .multiply_eq, .multiply_mod, .multiply_mod_eq,
+            .divide, .divide_eq, .modulus, .modulus_eq,
+            .plus, .plus_eq, .plus_mod, .plus_mod_eq,
+            .minus, .minus_eq, .minus_mod, .minus_mod_eq,
+            .shift_left, .shift_left_eq, .shift_right, .shift_right_eq,
+            .bitand, .bitand_eq, .bitor, .bitxor_eq, .bitxor, .bitor_eq,
+            .less, .less_equal, .greater, .greater_equal, .equals, .not_equal,
+            .logical_and, .logical_or, .assign, .range,
+            => |bop| {
+                const op = switch(node.*) {
+                    .multiply => "*",
+                    .multiply_eq => "*=",
+                    .multiply_mod => "*%",
+                    .multiply_mod_eq => "*%=",
+                    .divide => "/",
+                    .divide_eq => "/=",
+                    .modulus => "%",
+                    .modulus_eq => "%=",
+                    .plus => "+",
+                    .plus_eq => "+=",
+                    .plus_mod => "+%",
+                    .plus_mod_eq => "+%=",
+                    .minus => "-",
+                    .minus_eq => "-=",
+                    .minus_mod => "-%",
+                    .minus_mod_eq => "-%=",
+                    .shift_left => "<<",
+                    .shift_left_eq => "<<=",
+                    .shift_right => ">>",
+                    .shift_right_eq => ">>=",
+                    .bitand => "&",
+                    .bitand_eq => "&=",
+                    .bitor => "|",
+                    .bitxor_eq => "|=",
+                    .bitxor => "^",
+                    .bitor_eq => "^=",
+                    .less => "<",
+                    .less_equal => "<=",
+                    .greater => ">",
+                    .greater_equal => ">=",
+                    .equals => "==",
+                    .not_equal => "!=",
+                    .logical_and => "&&",
+                    .logical_or => "||",
+                    .assign => "=",
+                    .range => "..",
+                    else => unreachable,
+                };
+
+                try dumpNode(expressions.get(bop.lhs), indent_level);
+                std.debug.print(" {s} ", .{op});
+                try dumpNode(expressions.get(bop.rhs), indent_level);
+            },
+            .discard_underscore => std.debug.print("_", .{}),
+            .unary_plus, .unary_minus, .unary_bitnot, .unary_lognot => |uop| {
+                const op: u8 = switch(node.*) {
+                    .unary_plus => '+',
+                    .unary_minus => '-',
+                    .unary_bitnot => '~',
+                    .unary_lognot => '!',
+                    else => unreachable,
+                };
+                std.debug.print("{c}", .{op});
+                try dumpNode(expressions.get(uop.operand), indent_level);
+            },
+            .function_expression => |func_idx| try dumpNode(functions.get(func_idx), indent_level),
+            .struct_expression => |expr| {
+                std.debug.print("struct ", .{});
+                try dumpStatementChain(expr.first_decl, indent_level);
+            },
+            .array_subscript => |bop| {
+                try dumpNode(expressions.get(bop.lhs), indent_level);
+                std.debug.print("[", .{});
+                try dumpNode(expressions.get(bop.rhs), indent_level);
+                std.debug.print("]", .{});
+            },
+            .array_type => |bop| {
+                std.debug.print("[", .{});
+                try dumpNode(expressions.get(bop.lhs), indent_level);
+                std.debug.print("]", .{});
+                try dumpNode(expressions.get(bop.rhs), indent_level);
+            },
+            .syscall_func => std.debug.print("@syscall", .{}),
+            .truncate_func => std.debug.print("@truncate", .{}),
+            else => |expr| std.debug.panic("Cannot dump expression of type {s}", .{@tagName(expr)}),
+        },
+        *StatementNode => switch(node.value) {
+            .expression_statement => |expr| {
+                try dumpNode(expressions.get(expr.expr), indent_level);
+                std.debug.print(";", .{});
+            },
+            .block_statement => |blk| try dumpStatementChain(blk.first_child, indent_level),
+            .declaration => |decl| {
+                const decl_kw = if (decl.mutable) "var" else "const";
+                std.debug.print("{s} {s}", .{decl_kw, try decl.identifier.toSlice()});
+                if(ExprIndex.unwrap(decl.type)) |type_idx| {
+                    std.debug.print(": ", .{});
+                    try dumpNode(expressions.get(type_idx), indent_level);
+                }
+                std.debug.print(" = ", .{});
+                try dumpNode(expressions.get(decl.init_value), indent_level);
+                std.debug.print(";", .{});
+            },
+            .field_decl => |decl| {
+                std.debug.print("{s}", .{try decl.identifier.toSlice()});
+                if(ExprIndex.unwrap(decl.type)) |type_idx| {
+                    std.debug.print(": ", .{});
+                    try dumpNode(expressions.get(type_idx), indent_level);
+                }
+                if(ExprIndex.unwrap(decl.init_value)) |init_idx| {
+                    std.debug.print(" = ", .{});
+                    try dumpNode(expressions.get(init_idx), indent_level);
+                }
+                std.debug.print(",", .{});
+            },
+            .if_statement => |stmt| {
+                std.debug.print("if (", .{});
+                try dumpNode(expressions.get(stmt.condition), indent_level);
+                std.debug.print(") ", .{});
+                try dumpStatementChain(stmt.first_taken, indent_level);
+                if(stmt.first_not_taken != .empty_block and stmt.first_not_taken != .none) {
+                    std.debug.print(" else ", .{});
+                    try dumpStatementChain(stmt.first_not_taken, indent_level);
+                }
+            },
+            .loop_statement => |stmt| {
+                std.debug.print("loop ", .{});
+                if(ExprIndex.unwrap(stmt.condition)) |cond_idx| {
+                    std.debug.print("(", .{});
+                    try dumpNode(expressions.get(cond_idx), indent_level);
+                    std.debug.print(") ", .{});
+                }
+                try dumpStatementChain(stmt.first_child, indent_level);
+            },
+            .break_statement => std.debug.print("break;", .{}),
+            .return_statement => |stmt| {
+                std.debug.print("return", .{});
+                if(expressions.getOpt(stmt.expr)) |expr| {
+                    std.debug.print(" ", .{});
+                    try dumpNode(expr, indent_level);
+                }
+                std.debug.print(";", .{});
+            },
+            else => |stmt| std.debug.panic("Cannot dump statement of type {s}", .{@tagName(stmt)}),
+        },
+        *FunctionExpression => {
+            std.debug.print("fn(", .{});
+            var curr_param = node.first_param;
+            while(function_params.getOpt(curr_param)) |param| {
+                std.debug.print("{s}: ", .{try param.identifier.toSlice()});
+                try dumpNode(expressions.get(param.type), indent_level);
+                if(param.next != .none) {
+                    std.debug.print(", ", .{});
+                }
+                curr_param = param.next;
+            }
+            std.debug.print(") ", .{});
+            try dumpNode(expressions.get(node.return_type), indent_level);
+            std.debug.print(" ", .{});
+            try dumpStatementChain(node.body, indent_level);
+        },
+        else => @compileError("Cannot dump type " ++ @typeName(@TypeOf(node))),
+    }
+}
+
+pub fn dumpFile(file: *sources.SourceFile) !void {
+    try dumpNode(file, 0);
+    std.debug.print("\n{s}", .{makeIndent(1)});
+    try dumpNode(expressions.get(file.top_level_struct), 1);
+    std.debug.print("\n", .{});
+}
+
 pub var expressions: ExpressionList = undefined;
 pub var statements: StatementList = undefined;
 pub var functions: FunctionList = undefined;
