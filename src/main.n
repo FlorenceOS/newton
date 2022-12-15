@@ -1,5 +1,5 @@
-const print = @import("print.n");
-const syscalls = @import("syscalls.n");
+const print = @import("../lib/print.n");
+const syscalls = @import("../lib/os/syscalls.n");
 
 fn main() void {
     print.str("Hello, world!\n".&);

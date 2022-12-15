@@ -1,4 +1,4 @@
-const syscalls = @import("syscalls.n");
+const syscalls = @import("os/syscalls.n");
 
 const MAX_BUF = 128;
 
@@ -30,10 +30,11 @@ fn decimal(comptime T: type, value: T) void {
 
 fn str(s: *const u8) void {
     loop {
-        if(s.* == 0) {
+        if(s.* != 0) {
+            char(s.*);
+            s = s + 1;
+        } else {
             return;
         }
-        char(s.*);
-        s = s + 1;
     }
 }

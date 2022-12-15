@@ -13,7 +13,7 @@ fn write(fd: u32, buf: *const u8, size: u64) inline u64 {
 
 fn write_all(fd: u32, buf: *const u8, size: u64) void {
     loop {
-        const written = @syscall(SYS.WRITE, fd, buf, size);
+        const written = write(fd, buf, size);
         if(written == size) {
             return;
         }
