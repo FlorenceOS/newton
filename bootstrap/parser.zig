@@ -74,6 +74,7 @@ fn identToAstNode(self: *@This(), tok: anytype) !ast.ExprIndex.Index {
     if(std.mem.eql(u8, tok.body, "@import")) return .import;
     if(std.mem.eql(u8, tok.body, "@syscall")) return .syscall_func;
     if(std.mem.eql(u8, tok.body, "@truncate")) return .truncate_func;
+    if(std.mem.eql(u8, tok.body, "@This")) return .this_func;
 
     return ast.expressions.insert(.{ .identifier = self.toAstIdent(tok) });
 }

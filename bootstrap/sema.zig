@@ -540,9 +540,12 @@ fn semaASTExpr(
                 .scope = struct_scope,
             });
 
-            scopes.get(struct_scope).first_decl = decl_builder.first;
+            const type_idx = try types.insert(.{ .struct_idx = struct_idx });
 
-            return values.insert(.{.type_idx = try types.insert(.{ .struct_idx = struct_idx })});
+            scopes.get(struct_scope).first_decl = decl_builder.first;
+            scopes.get(struct_scope).this_type = TypeIndex.toOpt(type_idx);
+
+            return values.insert(.{.type_idx = type_idx});
         },
 
         .function_expression => |func_idx| {
@@ -581,11 +584,11 @@ fn semaASTExpr(
             }});
         },
         .function_call => |call| {
-            var arg_builder = expressions.builderWithPath("function_arg.next");
             var curr_ast_arg = call.first_arg;
             const ast_callee = ast.expressions.get(call.callee);
             var return_type: ValueIndex.Index = undefined;
             const sema_call = switch(ast_callee.*) {
+                .this_func => return values.insert(.{.type_idx = scopes.get(scope_idx).getThisType().?}),
                 .truncate_func => {
                     const type_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
                     const expr_arg = ast.expressions.getOpt(type_arg.next).?.function_argument;
@@ -605,6 +608,7 @@ fn semaASTExpr(
                     }});
                 },
                 .syscall_func => blk: {
+                    var arg_builder = expressions.builderWithPath("function_arg.next");
                     while(ast.expressions.getOpt(curr_ast_arg)) |ast_arg| {
                         const func_arg = ast_arg.function_argument;
                         var arg_value = try semaASTExpr(scope_idx, func_arg.value, false, null);
@@ -636,15 +640,19 @@ fn semaASTExpr(
                     };
                 },
                 else => blk: {
-                    // TODO: Runtime functions (function pointers)
                     const callee_idx = try semaASTExpr(scope_idx, call.callee, true, null);
                     const callee = values.get(callee_idx);
-                    if(callee.* != .function) {
-                        std.debug.panic("Cannot call non-function: {any}", .{callee});
-                    }
-                    const func_call = try callFunctionWithArgs(callee_idx, scope_idx, call.first_arg);
-                    return_type = callee.function.instantiations.items[func_call.callee.instantiation].return_type;
-                    break :blk func_call;
+                    // TODO: Runtime functions (function pointers)
+                    const gen = switch(callee.*) {
+                        .function => try callFunctionWithArgs(callee_idx, scope_idx, call.first_arg),
+                        .bound_fn => |b| inner: {
+                            ast.expressions.get(b.first_arg).function_argument.next = call.first_arg;
+                            break :inner try callFunctionWithArgs(b.callee, scope_idx, ast.ExprIndex.toOpt(b.first_arg));
+                        },
+                        else => std.debug.panic("Cannot call non-function: {any}", .{callee}),
+                    };
+                    return_type = callee.function.instantiations.items[gen.callee.instantiation].return_type;
+                    break :blk gen;
                 },
             };
             if(force_comptime_eval) {
@@ -712,14 +720,17 @@ fn semaASTExpr(
             const lhs_value = values.get(lhs);
             const rhs_expr = ast.expressions.get(bop.rhs);
             std.debug.assert(rhs_expr.* == .identifier);
+            const token = try rhs_expr.identifier.retokenize();
+            defer token.deinit();
             switch(lhs_value.*) {
                 .decl_ref => |dr| {
-                    const decl = decls.get(dr);
                     const lhs_type = types.get(try lhs_value.getType());
-                    std.debug.assert(lhs_type.* == .struct_idx);
-                    const lhs_struct = structs.get(lhs_type.struct_idx);
-                    const token = try rhs_expr.identifier.retokenize();
-                    defer token.deinit();
+                    const lhs_struct = structs.get(switch(lhs_type.*) {
+                        .struct_idx => |sidx| sidx,
+                        .pointer => |ptr| types.get(ptr.child).struct_idx,
+                        else => |other| std.debug.panic("Can't do member access on {any}", .{other}),
+                    });
+                    const decl = decls.get(dr);
                     if(try lhs_struct.lookupField(token.identifier_value())) |field| {
                         if(force_comptime_eval) @panic("TODO: Comptime eval field access");
                         const member_ptr = try values.addDedupLinear(.{
@@ -747,19 +758,47 @@ fn semaASTExpr(
                             .value_type = member_ref,
                         }});
                     } else {
+                        if(try scopes.get(lhs_struct.scope).lookupDecl(token.identifier_value())) |static_decl| {
+                            try values.get(static_decl.init_value).analyze();
+                            const fn_value = &values.get(static_decl.init_value).function;
+                            const first_param = decls.getOpt(scopes.get(fn_value.generic_param_scope).first_decl).?;
+                            std.debug.assert(!first_param.comptime_param);
+                            const first_param_ast_type = values.get(values.get(first_param.init_value).runtime.value_type).unresolved.expression;
+
+                            const param_type = try semaASTExpr(scope_idx, first_param_ast_type, true, .type);
+                            const first_param_is_ptr = types.get(values.get(param_type).type_idx).* == .pointer;
+
+                            if(lhs_type.* != .pointer and first_param_is_ptr) {
+                                return values.insert(.{.bound_fn = .{
+                                    .callee = static_decl.init_value,
+                                    .first_arg = try ast.expressions.insert(.{.function_argument = .{
+                                        .value = try ast.expressions.insert(.{.addr_of = .{.operand = bop.lhs}}),
+                                    }}),
+                                }});
+                            } else if(lhs_type.* == .pointer and !first_param_is_ptr) {
+                                return values.insert(.{.bound_fn = .{
+                                    .callee = static_decl.init_value,
+                                    .first_arg = try ast.expressions.insert(.{.function_argument = .{
+                                        .value = try ast.expressions.insert(.{.deref = .{.operand = bop.lhs}}),
+                                    }}),
+                                }});
+                            } else {
+                                return values.insert(.{.bound_fn = .{
+                                    .callee = static_decl.init_value,
+                                    .first_arg = bop.lhs,
+                                }});
+                            }
+                        }
                         return error.MemberNotFound;
                     }
                 },
                 .type_idx => |idx| {
                     const lhs_type = types.get(idx);
-                    std.debug.assert(lhs_type.* == .struct_idx);
                     const lhs_struct = structs.get(lhs_type.struct_idx);
-                    const token = try rhs_expr.identifier.retokenize();
-                    defer token.deinit();
-                    if(try scopes.get(lhs_struct.scope).lookupDecl(token.identifier_value())) |member_decl| {
-                        std.debug.assert(!member_decl.mutable);
-                        try values.get(member_decl.init_value).analyze();
-                        return member_decl.init_value;
+                    if(try scopes.get(lhs_struct.scope).lookupDecl(token.identifier_value())) |static_decl| {
+                        std.debug.assert(!static_decl.mutable);
+                        try values.get(static_decl.init_value).analyze();
+                        return static_decl.init_value;
                     } else {
                         return error.MemberNotFound;
                     }
@@ -1000,6 +1039,11 @@ pub const Value = union(enum) {
     signed_int: SizedInt,
     function: Function,
     discard_underscore,
+
+    bound_fn: struct {
+        callee: ValueIndex.Index,
+        first_arg: ast.ExprIndex.Index,
+    },
 
     // Runtime known values
     runtime: RuntimeValue,
@@ -1352,15 +1396,25 @@ pub const Function = struct {
 
 pub const Scope = struct {
     outer_scope: ScopeIndex.OptIndex,
+    this_type: TypeIndex.OptIndex = .none,
     first_decl: DeclIndex.OptIndex = .none,
 
     pub fn lookupDecl(self: *@This(), name: []const u8) !?*Decl {
         var scope_idx = ScopeIndex.toOpt(scopes.getIndex(self));
-        while(scopes.getOpt(scope_idx)) |scope| {
+        while(scopes.getOpt(scope_idx)) |scope| : (scope_idx = scope.outer_scope) {
             if(try genericChainLookup(DeclIndex, Decl, &decls, scope.first_decl, name)) |result| {
                 return result;
             }
-            scope_idx = scope.outer_scope;
+        }
+        return null;
+    }
+
+    fn getThisType(self: *@This()) ?TypeIndex.Index {
+        var scope_idx = ScopeIndex.toOpt(scopes.getIndex(self));
+        while(scopes.getOpt(scope_idx)) |scope| : (scope_idx = scope.outer_scope) {
+            if(TypeIndex.unwrap(scope.this_type)) |idx| {
+                return idx;
+            }
         }
         return null;
     }

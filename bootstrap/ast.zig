@@ -31,6 +31,7 @@ pub const ExprIndex = indexed_list.Indices(u32, opaque{}, .{
     .import = .{.import = {}},
     .syscall_func = .{.syscall_func = {}},
     .truncate_func = .{.truncate_func = {}},
+    .this_func = .{.this_func = {}},
 
     // _ = a;
     // ^ This thing
@@ -102,6 +103,8 @@ pub const ExpressionNode = union(enum) {
     syscall_func,
     // @truncate
     truncate_func,
+    // @This()
+    this_func,
     // @import("whatever")
     import_call: sources.SourceIndex.Index,
 
@@ -402,6 +405,7 @@ fn dumpNode(node: anytype, indent_level: usize) anyerror!void {
             },
             .syscall_func => std.debug.print("@syscall", .{}),
             .truncate_func => std.debug.print("@truncate", .{}),
+            .this_func => std.debug.print("@This", .{}),
             else => |expr| std.debug.panic("Cannot dump expression of type {s}", .{@tagName(expr)}),
         },
         *StatementNode => switch(node.value) {

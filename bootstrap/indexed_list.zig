@@ -98,6 +98,7 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
                         comptime var iter = std.mem.split(u8, next_path, ".");
                         comptime var field_type = T;
                         var offset: usize = 0x0;
+                        @setEvalBranchQuota(99999);
                         inline while(comptime iter.next()) |component| {
                             offset += betterOffsetOf(field_type, component);
                             field_type = std.meta.fieldInfo(
