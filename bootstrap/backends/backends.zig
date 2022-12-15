@@ -271,7 +271,7 @@ pub const Writer = struct {
 
     fn writeSingleFunction(self: *@This(), function_c: sema.InstantiatedFunction) !void {
         var function = function_c; // Workaround for zig miscompilation :zany_face:
-        const head_block = try ir.ssaFunction(function);
+        const head_block = try ir.writeFunction(function);
         try ir.optimizeFunction(head_block);
 
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);

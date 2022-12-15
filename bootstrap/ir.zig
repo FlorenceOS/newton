@@ -470,7 +470,6 @@ fn readVariableRecursive(block_idx: BlockIndex.Index, decl: sema.DeclIndex.Index
             decls.get(new_phi).sema_decl = odecl;
             return addPhiOperands(decl, block_idx, new_phi, true);
         } else {
-            std.debug.assert(blocks.get(first_edge.source_block).is_filled);
             return readVariable(first_edge.source_block, decl);
         }
     }
@@ -609,6 +608,7 @@ pub fn allBlocksReachableFrom(allocator: std.mem.Allocator, head_block: BlockInd
 }
 
 const function_optimizations = .{
+    eliminateUnreachablePhiOperands,
     eliminateCopies,
     eliminateUnreferenced,
     eliminateDeadBlocks,
@@ -626,15 +626,6 @@ const peephole_optimizations = .{
 };
 
 var optimization_allocator = std.heap.GeneralPurposeAllocator(.{}){.backing_allocator = std.heap.page_allocator};
-
-fn shouldInlineFunction(function: sema.InstantiatedFunction) !bool {
-    const callee = sema.values.get(function.function_value);
-    const ast_func = ast.functions.get(callee.function.ast_function);
-    if(ast_func.is_inline) return true;
-    // TODO: Check if function is small enough to be inlined unconditionally
-    // TODO: Check whether or not function is called in multiple places
-    return false;
-}
 
 fn splitBlockAt(block_idx: BlockIndex.Index, decl_idx: DeclIndex.Index) !BlockEdgeIndex.Index {
     const old_block = blocks.get(block_idx);
@@ -700,83 +691,7 @@ pub fn optimizeFunction(head_block: BlockIndex.Index) !void {
                         decl.instr = @unionInit(DeclInstr, @tagName(tag)[0..@tagName(tag).len - 9], .{.lhs = dc.lhs, .rhs = constant});
                     }
                 },
-                .function_call => |fc| blk: {
-                    // Try to perform function inlining
-                    if(try shouldInlineFunction(fc.callee)) {
-                        const callee_head_block_idx = try ssaFunction(fc.callee);
-                        try optimizeFunction(callee_head_block_idx);
-                        const callee_head_block = blocks.get(callee_head_block_idx);
-
-                        var callee_blocks = try allBlocksReachableFrom(arena.allocator(), callee_head_block_idx);
-                        defer callee_blocks.deinit(arena.allocator());
-
-                        // First replace all param_ref's with copies of function call arguments
-                        {
-                            var operand_idx: u8 = 0;
-                            var operand_it = decl.instr.operands();
-                            while(operand_it.next()) |op| : (operand_idx += 1) {
-                                var callee_curr_decl = callee_head_block.first_decl;
-                                while(decls.getOpt(callee_curr_decl)) |curr_decl| : (callee_curr_decl = curr_decl.next) {
-                                    if(curr_decl.instr == .param_ref and curr_decl.instr.param_ref.param_idx == operand_idx) {
-                                        curr_decl.instr = .{.copy = op.*};
-                                    }
-                                }
-                            }
-                        }
-
-                        const split_edge_idx = try splitBlockAt(block, DeclIndex.unwrap(current_decl).?);
-                        const split_edge = edges.get(split_edge_idx);
-
-                        // Next find the enter/leave_function decls
-                        var enter_decl = DeclIndex.OptIndex.none;
-                        var return_value = DeclIndex.OptIndex.none;
-                        {
-                            for(callee_blocks.items) |callee_bidx| {
-                                const callee_block = blocks.get(callee_bidx);
-                                var callee_curr_decl = callee_block.first_decl;
-                                while(decls.getOpt(callee_curr_decl)) |curr_decl| : (callee_curr_decl = curr_decl.next) {
-                                    switch(curr_decl.instr) {
-                                        .enter_function => |stack_size| {
-                                            std.debug.assert(enter_decl == .none and stack_size == 0);
-                                            enter_decl = callee_curr_decl;
-                                            callee_block.first_decl = curr_decl.next;
-                                            decls.getOpt(curr_decl.next).?.prev = .none;
-                                            curr_decl.next = .none;
-                                        },
-                                        .leave_function => |leave| {
-                                            std.debug.assert(return_value == .none);
-                                            const target_block = blocks.get(split_edge.target_block);
-                                            return_value = DeclIndex.toOpt(leave.value);
-                                            callee_block.is_sealed = false;
-                                            target_block.is_sealed = false;
-                                            curr_decl.instr = .{.goto = try addEdge(callee_bidx, split_edge.target_block)};
-                                            try callee_block.seal();
-                                            try target_block.seal();
-                                        },
-                                        else => {},
-                                    }
-                                }
-                            }
-                        }
-
-                        // Temporarily unseal the blocks to work with them
-                        const source_block = blocks.get(split_edge.source_block);
-                        source_block.is_sealed = false;
-                        callee_head_block.is_sealed = false;
-
-                        // Do the actual inlining!
-                        decls.getOpt(source_block.last_decl).?.instr = .{.goto = try addEdge(split_edge.source_block, callee_head_block_idx)};
-                        decl.instr = .{.copy = DeclIndex.unwrap(return_value).?};
-
-                        // Reseal the blocks
-                        try source_block.seal();
-                        try callee_head_block.seal();
-
-                        // Try to optimize the current function further now that we've inlined the callee.  We recursively call
-                        // into `optimizeFunction` because the current state is not valid anymore after all the work we've done.
-                        return optimizeFunction(head_block);
-                    }
-
+                .function_call => |_| blk: {
                     // Try to perform tail call optimization
                     var next_decl = decl.next;
                     var leave_decl = DeclIndex.OptIndex.none;
@@ -870,6 +785,50 @@ fn deduplicateDecls(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
             }
         }
     }
+    return did_something;
+}
+
+fn eliminateUnreachablePhiOperands(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
+    var did_something = false;
+    var reachable_blocks = std.AutoHashMap(BlockIndex.Index, void).init(alloc);
+    try reachable_blocks.put(fn_blocks.items[0], {});
+
+    for(fn_blocks.items) |blk_idx| {
+        const block = blocks.get(blk_idx);
+        const decl = decls.getOpt(block.last_decl).?;
+        const outs = decl.instr.outEdges();
+        for(outs.slice()) |e| {
+            try reachable_blocks.put(edges.get(e.*).target_block, {});
+        }
+    }
+
+    for(fn_blocks.items) |blk_idx| {
+        var current_decl = blocks.get(blk_idx).first_decl;
+        while(decls.getOpt(current_decl)) |decl| : (current_decl = decl.next) {
+            if(decl.instr != .phi) continue;
+
+            var curr_head = &decl.instr.phi;
+            while(phi_operands.getOpt(curr_head.*)) |op| {
+                const edge = edges.get(op.edge);
+                if(reachable_blocks.get(edge.source_block) == null) {
+                    curr_head.* = op.next;
+                    did_something = true;
+                } else {
+                    curr_head = &op.next;
+                }
+            }
+        }
+    }
+
+    var block_list_idx: usize = 1;
+    while(block_list_idx < fn_blocks.items.len) {
+        if(reachable_blocks.get(fn_blocks.items[block_list_idx]) == null) {
+            _ = fn_blocks.swapRemove(block_list_idx);
+        } else {
+            block_list_idx += 1;
+        }
+    }
+
     return did_something;
 }
 
@@ -1321,333 +1280,339 @@ fn addEdge(
     return retval;
 }
 
-fn ssaBlockStatementIntoBasicBlock(
-    first_stmt: sema.StatementIndex.OptIndex,
-    scope: sema.ScopeIndex.Index,
-    basic_block: BlockIndex.Index,
+var function_stack_gpa = std.heap.GeneralPurposeAllocator(.{}){.backing_allocator = std.heap.page_allocator};
+
+const IRWriter = struct {
+    function_stack: std.ArrayListUnmanaged(sema.InstantiatedFunction) = .{},
+    max_stack_usage: u32 = 0,
+    current_stack_offset: u32 = 0,
     return_phi_node: DeclIndex.Index,
-    stack_offset: u32,
-    max_stack_usage: *u32,
-) !BlockIndex.Index {
-    _ = scope;
-    var current_statement = first_stmt;
-    var current_basic_block = basic_block;
-    var current_stack_offset = stack_offset;
+    basic_block: BlockIndex.Index,
 
-    defer max_stack_usage.* = std.math.max(max_stack_usage.*, current_stack_offset);
-    while(sema.statements.getOpt(current_statement)) |stmt| : (current_statement = stmt.next) {
-        switch(stmt.value) {
-            .block => |b| {
-                // A freestanding block statement is part of the same basic block but with a different scope
-                // and TODO: a new break target location
-                current_basic_block = try ssaBlockStatementIntoBasicBlock(
-                    b.first_stmt,
-                    b.scope,
-                    current_basic_block,
-                    return_phi_node,
-                    current_stack_offset,
-                    max_stack_usage,
-                );
-            },
-            .declaration => |decl_idx| {
-                const decl = sema.decls.get(decl_idx);
-                const init_value = sema.values.get(decl.init_value);
+    fn deinit(self: *@This()) void {
+        self.function_stack.deinit(function_stack_gpa.allocator());
+    }
 
-                if(!decl.static) {
-                    if(decl.offset) |*offset| {
-                        const decl_type = sema.types.get(try init_value.getType());
-                        const alignment = try decl_type.getAlignment();
-                        current_stack_offset += alignment - 1;
-                        current_stack_offset &= ~@as(u32, alignment - 1);
-                        current_stack_offset += try decl_type.getSize();
-                        offset.* = current_stack_offset;
+    fn emit(self: *@This(), instr: DeclInstr) !DeclIndex.Index {
+        return appendToBlock(self.basic_block, instr);
+    }
+
+    fn allocStackSpace(self: *@This(), space: u32, alignment: u32) u32 {
+        self.current_stack_offset += alignment - 1;
+        self.current_stack_offset &= ~@as(u32, alignment - 1);
+        self.current_stack_offset += space;
+        self.max_stack_usage = std.math.max(self.max_stack_usage, self.current_stack_offset);
+        return self.current_stack_offset;
+    }
+
+    fn attemptInlineFunction(self: *@This(), function: sema.InstantiatedFunction) !?DeclIndex.Index {
+        const callee = sema.values.get(function.function_value);
+        for(self.function_stack.items) |inst| {
+            // Already on the writing stack, just call it instead to avoid infinite recursion
+            if(std.meta.eql(function, inst)) return null;
+        }
+        // TODO: Check if function is small enough to be inlined unconditionally
+        // TODO: Check whether or not function is called in multiple places
+        if(!ast.functions.get(callee.function.ast_function).is_inline) return null;
+
+        const return_block = try blocks.insert(.{});
+        const return_phi = try appendToBlock(return_block, .{.phi = .none});
+
+        const old_return_phi = self.return_phi_node;
+        defer self.return_phi_node = old_return_phi;
+        self.return_phi_node = return_phi;
+
+        try self.function_stack.append(function_stack_gpa.allocator(), function);
+        defer _ = self.function_stack.pop();
+
+        const inst = callee.function.instantiations.items[function.instantiation];
+        _ = try self.writeBlockStatement(inst.body.first_stmt);
+        std.debug.assert(inst.return_type == .void or !inst.body.reaches_end);
+        if(inst.body.reaches_end) {
+            _ = try self.emit(.{.goto = try addEdge(self.basic_block, return_block)});
+        } else if(inst.return_type == .void) {
+            decls.get(return_phi).instr = .{.undefined = {}};
+        }
+        try blocks.get(return_block).seal();
+        self.basic_block = return_block;
+        return return_phi;
+    }
+
+    fn writeExpression(self: *@This(), expr_idx: sema.ExpressionIndex.Index) !DeclIndex.Index {
+        switch(sema.expressions.get(expr_idx).*) {
+            .value => |val_idx| return self.writeValue(val_idx),
+            .assign => |ass| {
+                // Evaluate rhs first because it makes more lifetime sense for assignment ops
+                const rhs = try self.writeValue(ass.rhs);
+                const rhs_decl = decls.get(rhs);
+
+                const rhs_value = if(rhs_decl.instr.memoryReference()) |mr|
+                    try self.emit(mr.load()) else rhs;
+
+                if(ass.lhs != .discard_underscore) {
+                    const lhs_sema = sema.values.get(ass.lhs);
+                    if(lhs_sema.* == .decl_ref) {
+                        const rhs_value_decl = decls.get(rhs_value);
+                        if(!sema.decls.get(lhs_sema.decl_ref).static) {
+                            const new_rhs = try self.emit(rhs_value_decl.instr);
+                            decls.get(new_rhs).sema_decl = sema.DeclIndex.toOpt(lhs_sema.decl_ref);
+                            return undefined;
+                        }
                     }
+                    const lhs = try self.writeValue(ass.lhs);
+                    const lhs_mr = decls.get(lhs).instr.memoryReference().?;
+                    _ = try self.emit(lhs_mr.store(rhs_value));
                 }
-
-                const value = if(init_value.* == .runtime) blk: {
-                    const expr = init_value.runtime.expr;
-                    break :blk try ssaExpr(
-                        current_basic_block,
-                        sema.ExpressionIndex.unwrap(expr).?,
-                    );
-                } else blk: {
-                    const val = sema.values.get(decl.init_value);
-                    if(val.* == .function) continue;
-                    break :blk try ssaValue(current_basic_block, decl.init_value);
-                };
-                decls.get(value).sema_decl = sema.DeclIndex.toOpt(decl_idx);
-
-                if(!decl.static) {
-                    if(decl.offset) |offset| {
-                        const stack_ref = try appendToBlock(current_basic_block, .{.stack_ref = .{
-                            .offset = offset,
-                            .type = .{
-                                .is_const = !decl.mutable,
-                                .is_volatile = false,
-                                .child = try sema.values.get(decl.init_value).getType(),
-                            },
-                        }});
-                        _ = try appendToBlock(current_basic_block, .{.store = .{.dest = stack_ref, .value = value}});
-                    }
-                }
+                return undefined;
             },
-            .expression => |expr_idx| {
-                _ = try ssaExpr(current_basic_block, expr_idx);
-            },
-            .if_statement => |if_stmt| {
-                const condition_value = try ssaValue(current_basic_block, if_stmt.condition);
-
-                const if_branch = try appendToBlock(current_basic_block, .{.@"if" = .{
-                    .condition = condition_value,
-                    .taken = undefined,
-                    .not_taken = undefined,
-                }});
-                try blocks.get(current_basic_block).filled();
-
-                const taken_entry = try blocks.insert(.{});
-                const not_taken_entry = try blocks.insert(.{});
-                decls.get(if_branch).instr.@"if".taken = try addEdge(current_basic_block, taken_entry);
-                try blocks.get(taken_entry).seal();
-                decls.get(if_branch).instr.@"if".not_taken = try addEdge(current_basic_block, not_taken_entry);
-                try blocks.get(not_taken_entry).seal();
-
-                const if_exit = try blocks.insert(.{});
-                const taken_exit = try ssaBlockStatementIntoBasicBlock(
-                    if_stmt.taken.first_stmt,
-                    if_stmt.taken.scope,
-                    taken_entry,
-                    return_phi_node,
-                    current_stack_offset,
-                    max_stack_usage,
-                );
-                if(if_stmt.taken.reaches_end) {
-                    const taken_exit_branch = try appendToBlock(taken_exit, .{.goto = undefined});
-                    decls.get(taken_exit_branch).instr.goto = try addEdge(taken_exit, if_exit);
-                }
-                try blocks.get(taken_exit).filled();
-
-                const not_taken_exit = try ssaBlockStatementIntoBasicBlock(
-                    if_stmt.not_taken.first_stmt,
-                    if_stmt.not_taken.scope,
-                    not_taken_entry,
-                    return_phi_node,
-                    current_stack_offset,
-                    max_stack_usage,
-                );
-                if (if_stmt.not_taken.reaches_end) {
-                    const not_taken_exit_branch = try appendToBlock(not_taken_exit, .{.goto = undefined});
-                    decls.get(not_taken_exit_branch).instr.goto = try addEdge(not_taken_exit, if_exit);
-                }
-                try blocks.get(not_taken_exit).filled();
-
-                try blocks.get(if_exit).seal();
-
-                current_basic_block = if_exit;
-            },
-            .loop_statement => |loop| {
-                const loop_enter_branch = try appendToBlock(current_basic_block, .{.goto = undefined});
-                const loop_body_entry = try blocks.insert(.{});
-                decls.get(loop_enter_branch).instr.goto = try addEdge(current_basic_block, loop_body_entry);
-                try blocks.get(current_basic_block).filled();
-
-                const exit_block = try blocks.insert(.{});
-                stmt.ir_block = BlockIndex.toOpt(exit_block);
-                const loop_body_end = try ssaBlockStatementIntoBasicBlock(
-                    loop.body.first_stmt,
-                    loop.body.scope,
-                    loop_body_entry,
-                    return_phi_node,
-                    current_stack_offset,
-                    max_stack_usage,
-                );
-                try blocks.get(exit_block).seal();
-                if(loop.body.reaches_end) {
-                    const loop_instr = try appendToBlock(loop_body_end, .{.goto = undefined});
-                    decls.get(loop_instr).instr.goto = try addEdge(loop_body_end, loop_body_entry);
-                }
-                try blocks.get(loop_body_end).filled();
-                try blocks.get(loop_body_entry).seal();
-
-                current_basic_block = exit_block;
-            },
-            .break_statement => |break_block| {
-                const goto_block = BlockIndex.unwrap(sema.statements.get(break_block).ir_block).?;
-                _ = try appendToBlock(current_basic_block, .{.goto = try addEdge(current_basic_block, goto_block)});
-            },
-            .return_statement => |return_stmt| {
-                var value = if(sema.ValueIndex.unwrap(return_stmt)) |sema_value| blk: {
-                    break :blk try ssaValue(current_basic_block, sema_value);
-                } else blk: {
-                    break :blk try appendToBlock(current_basic_block, .{.undefined = {}});
-                };
-
-                const phi_decl = decls.get(return_phi_node);
-                const exit_edge = try addEdge(current_basic_block, phi_decl.block);
-                phi_decl.instr.phi = PhiOperandIndex.toOpt(try phi_operands.insert(.{
-                    .edge = exit_edge,
-                    .decl = value,
-                    .next = phi_decl.instr.phi,
+            inline
+            .add, .add_mod, .sub, .sub_mod,
+            .multiply, .multiply_mod, .divide, .modulus,
+            .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
+            .less, .less_equal, .equals, .not_equal,
+            => |bop, tag| {
+                return self.emit(@unionInit(DeclInstr, @tagName(tag), .{
+                    .lhs = try self.writeValue(bop.lhs),
+                    .rhs = try self.writeValue(bop.rhs),
                 }));
-
-                _ = try appendToBlock(current_basic_block, .{.@"goto" = exit_edge});
             },
+            inline
+            .add_eq, .add_mod_eq, .sub_eq, .sub_mod_eq,
+            .multiply_eq, .multiply_mod_eq, .divide_eq, .modulus_eq,
+            .shift_left_eq, .shift_right_eq, .bit_and_eq, .bit_or_eq, .bit_xor_eq,
+            => |bop, tag| {
+                _ = bop;
+                _ = tag;
+                @panic("TODO: IR Inplace ops");
+            },
+            .greater => |bop| return self.emit(.{.less_equal = .{
+                .lhs = try self.writeValue(bop.rhs),
+                .rhs = try self.writeValue(bop.lhs),
+            }}),
+            .greater_equal => |bop| return self.emit(.{.less = .{
+                .lhs = try self.writeValue(bop.rhs),
+                .rhs = try self.writeValue(bop.lhs),
+            }}),
+            .addr_of => |operand| {
+                return self.emit(.{.addr_of = try self.writeValue(operand)});
+            },
+            .zero_extend => |cast| return self.emit(.{.zero_extend = .{
+                .value = try self.writeValue(cast.value),
+                .type = typeFor(cast.type),
+            }}),
+            .sign_extend => |cast| return self.emit(.{.sign_extend = .{
+                .value = try self.writeValue(cast.value),
+                .type = typeFor(cast.type),
+            }}),
+            .truncate => |cast| return self.emit(.{.truncate = .{
+                .value = try self.writeValue(cast.value),
+                .type = typeFor(cast.type),
+            }}),
+            .function_call => |fcall| {
+                var builder = function_arguments.builder();
+                var curr_arg = fcall.first_arg;
+                while(sema.expressions.getOpt(curr_arg)) |arg| : (curr_arg = arg.function_arg.next) {
+                    const farg = arg.function_arg;
+                    var value = try self.writeValue(farg.value);
+                    if(decls.get(value).instr.memoryReference()) |mr| {
+                        value = try self.emit(mr.load());
+                    }
+                    const copy = try self.emit(.{.copy = value});
+                    decls.get(copy).sema_decl = sema.DeclIndex.toOpt(arg.function_arg.param_decl);
+                    _ = try builder.insert(.{.value = copy });
+                }
+                if(fcall.callee.function_value == .syscall_func) return self.emit(.{.syscall = builder.first});
+                if(try self.attemptInlineFunction(fcall.callee)) |return_stmt| {
+                    return return_stmt;
+                }
+                return self.emit(.{.function_call = .{
+                    .callee = fcall.callee,
+                    .first_argument = builder.first,
+                }});
+            },
+            .global => |offref| return self.emit(.{.global_ref = .{
+                .offset = offref.offset,
+                .type = offref.type,
+            }}),
+            .deref => |sidx| {
+                return self.emit(.{.reference_wrap = .{
+                    .pointer_value = try self.writeValue(sidx),
+                    .sema_pointer_type = sema.types.get(try sema.values.get(sidx).getType()).pointer,
+                }});
+            },
+            else => |expr| std.debug.panic("Unhandled ssaing of expr {s}", .{@tagName(expr)}),
         }
     }
-    return current_basic_block;
-}
 
-fn ssaValue(
-    block_idx: BlockIndex.Index,
-    value_idx: sema.ValueIndex.Index,
-) !DeclIndex.Index {
-    const value = sema.values.get(value_idx);
-    switch(value.*) {
-        .runtime => |rt| return ssaExpr(block_idx, sema.ExpressionIndex.unwrap(rt.expr).?),
-        .decl_ref => |decl_idx| {
-            const rdecl = sema.decls.get(decl_idx);
-            const ref_t = sema.PointerType{
-                .is_const = !rdecl.mutable,
-                .is_volatile = false,
-                .child = try sema.values.get(rdecl.init_value).getType(),
-            };
-            if(rdecl.static) {
-                return appendToBlock(block_idx, .{.global_ref = .{ .offset = rdecl.offset.?, .type = ref_t}});
-            } else if(rdecl.offset) |offset| {
-                return appendToBlock(block_idx, .{.stack_ref = .{ .offset = offset, .type = ref_t}});
-            } else {
-                return readVariable(block_idx, decl_idx);
-            }
-        },
-        .comptime_int => |c| {
-            return appendToBlock(block_idx, .{.load_int_constant = .{
-                .value = @intCast(u64, c),
-                .type = .u64, // TODO
-            }});
-        },
-        .bool => |b| return appendToBlock(block_idx, .{.load_bool_constant = b}),
-        .unsigned_int, .signed_int => |int| {
-            // TODO: Pass value bit width along too
-            return appendToBlock(block_idx, .{.load_int_constant = .{
-                .value = @intCast(u64, int.value),
-                .type = typeForBits(int.bits),
-            }});
-        },
-        .undefined => return appendToBlock(block_idx, .{.undefined = {}}),
-        else => |val| std.debug.panic("Unhandled ssaing of value {s}", .{@tagName(val)}),
-    }
-}
-
-fn ssaExpr(block_idx: BlockIndex.Index, expr_idx: sema.ExpressionIndex.Index) anyerror!DeclIndex.Index {
-    switch(sema.expressions.get(expr_idx).*) {
-        .value => |val_idx| return ssaValue(block_idx, val_idx),
-        .assign => |ass| {
-            // Evaluate rhs first because it makes more lifetime sense for assignment ops
-            const rhs = try ssaValue(block_idx, ass.rhs);
-            const rhs_decl = decls.get(rhs);
-
-            const rhs_value = if(rhs_decl.instr.memoryReference()) |mr|
-                try appendToBlock(block_idx, mr.load()) else rhs;
-
-            if(ass.lhs != .discard_underscore) {
-                const lhs_sema = sema.values.get(ass.lhs);
-                if(lhs_sema.* == .decl_ref) {
-                    const rhs_value_decl = decls.get(rhs_value);
-                    if(!sema.decls.get(lhs_sema.decl_ref).static) {
-                        const new_rhs = try appendToBlock(block_idx, rhs_value_decl.instr);
-                        decls.get(new_rhs).sema_decl = sema.DeclIndex.toOpt(lhs_sema.decl_ref);
-                        return undefined;
-                    }
-                }
-                const lhs = try ssaValue(block_idx, ass.lhs);
-                const lhs_mr = decls.get(lhs).instr.memoryReference().?;
-                _ = try appendToBlock(block_idx, lhs_mr.store(rhs_value));
-            }
-            return undefined;
-        },
-        inline
-        .add, .add_mod, .sub, .sub_mod,
-        .multiply, .multiply_mod, .divide, .modulus,
-        .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
-        .less, .less_equal, .equals, .not_equal,
-        => |bop, tag| {
-            return appendToBlock(block_idx, @unionInit(DeclInstr, @tagName(tag), .{
-                .lhs = try ssaValue(block_idx, bop.lhs),
-                .rhs = try ssaValue(block_idx, bop.rhs),
-            }));
-        },
-        inline
-        .add_eq, .add_mod_eq, .sub_eq, .sub_mod_eq,
-        .multiply_eq, .multiply_mod_eq, .divide_eq, .modulus_eq,
-        .shift_left_eq, .shift_right_eq, .bit_and_eq, .bit_or_eq, .bit_xor_eq,
-        => |bop, tag| {
-            _ = bop;
-            _ = tag;
-            @panic("TODO: IR Inplace ops");
-            // const lhs_ref = try ssaValue(block_idx, bop.lhs);
-            // const rhs_ref = try ssaValue(block_idx, bop.rhs);
-            // const value = try appendToBlock(block_idx, @unionInit(DeclInstr, @tagName(tag)[0..@tagName(tag).len - 3], .{
-            //     .lhs = lhs_ref,
-            //     .rhs = rhs_ref,
-            // }));
-            // return ssaValue(block_idx, bop.lhs);
-        },
-        .greater => |bop| return appendToBlock(block_idx, .{.less_equal = .{
-            .lhs = try ssaValue(block_idx, bop.rhs),
-            .rhs = try ssaValue(block_idx, bop.lhs),
-        }}),
-        .greater_equal => |bop| return appendToBlock(block_idx, .{.less = .{
-            .lhs = try ssaValue(block_idx, bop.rhs),
-            .rhs = try ssaValue(block_idx, bop.lhs),
-        }}),
-        .addr_of => |operand| {
-            return appendToBlock(block_idx, .{.addr_of = try ssaValue(block_idx, operand)});
-        },
-        .zero_extend => |cast| return appendToBlock(block_idx, .{.zero_extend = .{
-            .value = try ssaValue(block_idx, cast.value),
-            .type = typeFor(cast.type),
-        }}),
-        .sign_extend => |cast| return appendToBlock(block_idx, .{.sign_extend = .{
-            .value = try ssaValue(block_idx, cast.value),
-            .type = typeFor(cast.type),
-        }}),
-        .truncate => |cast| return appendToBlock(block_idx, .{.truncate = .{
-            .value = try ssaValue(block_idx, cast.value),
-            .type = typeFor(cast.type),
-        }}),
-        .function_call => |fcall| {
-            var builder = function_arguments.builder();
-            var curr_arg = fcall.first_arg;
-            while(sema.expressions.getOpt(curr_arg)) |arg| : (curr_arg = arg.function_arg.next) {
-                const farg = arg.function_arg;
-                const value = try ssaValue(block_idx, farg.value);
-                if(decls.get(value).instr.memoryReference()) |mr| {
-                    _ = try builder.insert(.{.value = try appendToBlock(block_idx, mr.load())});
+    fn writeValue(self: *@This(), value_idx: sema.ValueIndex.Index) !DeclIndex.Index {
+        switch(sema.values.get(value_idx).*) {
+            .runtime => |rt| return self.writeExpression(sema.ExpressionIndex.unwrap(rt.expr).?),
+            .decl_ref => |decl_idx| {
+                const rdecl = sema.decls.get(decl_idx);
+                const ref_t = sema.PointerType{
+                    .is_const = !rdecl.mutable,
+                    .is_volatile = false,
+                    .child = try sema.values.get(rdecl.init_value).getType(),
+                };
+                if(rdecl.static) {
+                    return self.emit(.{.global_ref = .{ .offset = rdecl.offset.?, .type = ref_t}});
+                } else if(rdecl.offset) |offset| {
+                    return self.emit(.{.stack_ref = .{ .offset = offset, .type = ref_t}});
                 } else {
-                    _ = try builder.insert(.{.value = value });
+                    return readVariable(self.basic_block, decl_idx);
                 }
-            }
-            if(fcall.callee.function_value == .syscall_func) return appendToBlock(block_idx, .{.syscall = builder.first});
-            return appendToBlock(block_idx, .{.function_call = .{
-                .callee = fcall.callee,
-                .first_argument = builder.first,
-            }});
-        },
-        .global => |offref| return appendToBlock(block_idx, .{.global_ref = .{
-            .offset = offref.offset,
-            .type = offref.type,
-        }}),
-        .deref => |sidx| {
-            const pointer_value = try ssaValue(block_idx, sidx);
-            return appendToBlock(block_idx, .{.reference_wrap = .{
-                .pointer_value = pointer_value,
-                .sema_pointer_type = sema.types.get(try sema.values.get(sidx).getType()).pointer,
-            }});
-        },
-        else => |expr| std.debug.panic("Unhandled ssaing of expr {s}", .{@tagName(expr)}),
+            },
+            .comptime_int => |c| {
+                return self.emit(.{.load_int_constant = .{
+                    .value = @intCast(u64, c),
+                    .type = .u64, // TODO
+                }});
+            },
+            .bool => |b| return self.emit(.{.load_bool_constant = b}),
+            .unsigned_int, .signed_int => |int| {
+                // TODO: Pass value bit width along too
+                return self.emit(.{.load_int_constant = .{
+                    .value = @intCast(u64, int.value),
+                    .type = typeForBits(int.bits),
+                }});
+            },
+            .undefined => return self.emit(.{.undefined = {}}),
+            else => |val| std.debug.panic("Unhandled ssaing of value {s}", .{@tagName(val)}),
+        }
     }
-}
 
-pub fn ssaFunction(sema_func: sema.InstantiatedFunction) !BlockIndex.Index {
+    fn writeBlockStatementIntoBlock(
+        self: *@This(),
+        first_stmt: sema.StatementIndex.OptIndex, 
+        target_block: BlockIndex.Index
+    ) !BlockIndex.Index {
+        self.basic_block = target_block;
+        try self.writeBlockStatement(first_stmt);
+        return self.basic_block;
+    }
+
+    fn writeBlockStatement(self: *@This(), first_stmt: sema.StatementIndex.OptIndex) !void {
+        var current_statement = first_stmt;
+        while(sema.statements.getOpt(current_statement)) |stmt| : (current_statement = stmt.next) {
+            switch(stmt.value) {
+                .block => |b| {
+                    // A freestanding block statement is part of the same basic block but with a different scope
+                    // TODO: a new break target location
+                    _ = try self.writeBlockStatement(b.first_stmt);
+                },
+                .declaration => |decl_idx| {
+                    const decl = sema.decls.get(decl_idx);
+                    const init_value = sema.values.get(decl.init_value);
+
+                    if(!decl.static) {
+                        if(decl.offset) |*offset| {
+                            const decl_type = sema.types.get(try init_value.getType());
+                            offset.* = self.allocStackSpace(try decl_type.getSize(), try decl_type.getAlignment());
+                        }
+                    }
+
+                    if(init_value.* == .function) continue;
+                    const value = try self.writeValue(decl.init_value);
+                    decls.get(value).sema_decl = sema.DeclIndex.toOpt(decl_idx);
+
+                    if(!decl.static) {
+                        if(decl.offset) |offset| {
+                            const stack_ref = try self.emit(.{.stack_ref = .{
+                                .offset = offset,
+                                .type = .{
+                                    .is_const = !decl.mutable,
+                                    .is_volatile = false,
+                                    .child = try init_value.getType(),
+                                },
+                            }});
+                            _ = try self.emit(.{.store = .{.dest = stack_ref, .value = value}});
+                        }
+                    }
+                },
+                .expression => |expr_idx| {
+                    _ = try self.writeExpression(expr_idx);
+                },
+                .if_statement => |if_stmt| {
+                    const condition_value = try self.writeValue(if_stmt.condition);
+
+                    const if_branch = try self.emit(.{.@"if" = .{
+                        .condition = condition_value,
+                        .taken = undefined,
+                        .not_taken = undefined,
+                    }});
+                    try blocks.get(self.basic_block).filled();
+
+                    const taken_entry = try blocks.insert(.{});
+                    const not_taken_entry = try blocks.insert(.{});
+                    decls.get(if_branch).instr.@"if".taken = try addEdge(self.basic_block, taken_entry);
+                    try blocks.get(taken_entry).seal();
+                    decls.get(if_branch).instr.@"if".not_taken = try addEdge(self.basic_block, not_taken_entry);
+                    try blocks.get(not_taken_entry).seal();
+
+                    const if_exit = try blocks.insert(.{});
+                    const taken_exit = try self.writeBlockStatementIntoBlock(if_stmt.taken.first_stmt, taken_entry);
+                    if(if_stmt.taken.reaches_end) {
+                        const taken_exit_branch = try self.emit(.{.goto = undefined});
+                        decls.get(taken_exit_branch).instr.goto = try addEdge(taken_exit, if_exit);
+                    }
+                    try blocks.get(taken_exit).filled();
+
+                    const not_taken_exit = try self.writeBlockStatementIntoBlock(if_stmt.not_taken.first_stmt, not_taken_entry);
+                    if (if_stmt.not_taken.reaches_end) {
+                        const not_taken_exit_branch = try self.emit(.{.goto = undefined});
+                        decls.get(not_taken_exit_branch).instr.goto = try addEdge(not_taken_exit, if_exit);
+                    }
+                    try blocks.get(not_taken_exit).filled();
+                    try blocks.get(if_exit).seal();
+
+                    self.basic_block = if_exit;
+                },
+                .loop_statement => |loop| {
+                    const loop_enter_branch = try self.emit(.{.goto = undefined});
+                    const loop_body_entry = try blocks.insert(.{});
+                    decls.get(loop_enter_branch).instr.goto = try addEdge(self.basic_block, loop_body_entry);
+                    try blocks.get(self.basic_block).filled();
+
+                    const exit_block = try blocks.insert(.{});
+                    stmt.ir_block = BlockIndex.toOpt(exit_block);
+                    const loop_body_end = try self.writeBlockStatementIntoBlock(loop.body.first_stmt, loop_body_entry);
+                    try blocks.get(exit_block).seal();
+                    if(loop.body.reaches_end) {
+                        const loop_instr = try self.emit(.{.goto = undefined});
+                        decls.get(loop_instr).instr.goto = try addEdge(loop_body_end, loop_body_entry);
+                    }
+                    try blocks.get(loop_body_end).filled();
+                    try blocks.get(loop_body_entry).seal();
+
+                    self.basic_block = exit_block;
+                },
+                .break_statement => |break_block| {
+                    const goto_block = BlockIndex.unwrap(sema.statements.get(break_block).ir_block).?;
+                    _ = try self.emit(.{.goto = try addEdge(self.basic_block, goto_block)});
+                },
+                .return_statement => |return_stmt| {
+                    var value = if(sema.ValueIndex.unwrap(return_stmt)) |sema_value| blk: {
+                        break :blk try self.writeValue(sema_value);
+                    } else blk: {
+                        break :blk try self.emit(.{.undefined = {}});
+                    };
+
+                    const phi_decl = decls.get(self.return_phi_node);
+                    const exit_edge = try addEdge(self.basic_block, phi_decl.block);
+                    phi_decl.instr.phi = PhiOperandIndex.toOpt(try phi_operands.insert(.{
+                        .edge = exit_edge,
+                        .decl = value,
+                        .next = phi_decl.instr.phi,
+                    }));
+
+                    _ = try self.emit(.{.@"goto" = exit_edge});
+                },
+            }
+        }
+    }
+};
+
+pub fn writeFunction(sema_func: sema.InstantiatedFunction) !BlockIndex.Index {
     const func = &sema.values.get(sema_func.function_value).function.instantiations.items[sema_func.instantiation];
     const first_basic_block = try blocks.insert(.{});
     const enter_decl = try appendToBlock(first_basic_block, .{.enter_function = undefined});
@@ -1670,21 +1635,21 @@ pub fn ssaFunction(sema_func: sema.InstantiatedFunction) !BlockIndex.Index {
     const phi = try appendToBlock(exit_block, .{.phi = .none});
     const exit_return = try appendToBlock(exit_block, .{.leave_function = .{.restore_stack = false, .value = phi}});
 
-    var stack_offset: u32 = 0;
-    const return_block = try ssaBlockStatementIntoBasicBlock(
-        func.body.first_stmt,
-        func.body.scope,
-        first_basic_block,
-        phi,
-        stack_offset,
-        &stack_offset,
-    );
+    var writer = IRWriter{
+        .return_phi_node = phi,
+        .basic_block = first_basic_block,
+    };
+    try writer.function_stack.append(function_stack_gpa.allocator(), sema_func);
+    defer writer.deinit();
+    try writer.writeBlockStatement(func.body.first_stmt);
+    std.debug.assert(func.return_type == .void or !func.body.reaches_end);
     if(func.body.reaches_end) {
-        _ = try appendToBlock(return_block, .{.goto = try addEdge(return_block, exit_block)});
+        _ = try writer.emit(.{.goto = try addEdge(writer.basic_block, exit_block)});
+    } else if(func.return_type == .void) {
+        decls.get(phi).instr = .{.undefined = {}};
     }
-
-    decls.get(enter_decl).instr.enter_function = stack_offset;
-    decls.get(exit_return).instr.leave_function.restore_stack = stack_offset > 0;
+    decls.get(enter_decl).instr.enter_function = writer.max_stack_usage;
+    decls.get(exit_return).instr.leave_function.restore_stack = writer.max_stack_usage > 0;
     return first_basic_block;
 }
 

@@ -620,7 +620,10 @@ fn semaASTExpr(
                             },
                             else => |other| std.debug.panic("Can't pass {s} to syscall", .{@tagName(other)}),
                         }
-                        _ = try arg_builder.insert(.{.function_arg = .{.value = arg_value}});
+                        _ = try arg_builder.insert(.{.function_arg = .{
+                            .value = arg_value,
+                            .param_decl = undefined,
+                        }});
                         curr_ast_arg = func_arg.next;
                     }
                     return_type = .u64_type;
