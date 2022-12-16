@@ -4,6 +4,8 @@ const stderr = 2;
 
 const SYS = struct {
     const WRITE = 1;
+    const MMAP = 9;
+    const MADVISE = 28;
     const EXIT = 60;
 };
 
@@ -24,4 +26,48 @@ fn write_all(fd: u32, buf: *const u8, size: u64) void {
 
 fn exit(exit_code: i64) inline void {
     @syscall(SYS.EXIT, exit_code);
+}
+
+const PROT = struct {
+    const NONE = 0x0;
+    const READ = 0x1;
+    const WRITE = 0x2;
+    const EXEC = 0x4;
+};
+
+const MAP = struct {
+    const FILE = 0x0;
+    const SHARED = 0x1;
+    const PRIVATE = 0x2;
+
+    const FIXED = 0x10;
+    const ANONYMOUS = 0x20;
+    const NORESERVE = 0x4000;
+};
+
+fn mmap(
+    hint: u64,
+    size: u64,
+    prot: u32,
+    flags: u32,
+    fd: u32,
+    offset: u64,
+) inline u64 {
+    return @syscall(SYS.MMAP, hint, size, prot, flags, fd, offset);
+}
+
+const MADV = struct {
+    const NORMAL = 0;
+    const RANDOM = 1;
+    const SEQUENTIAL = 2;
+    const WILLNEED = 3;
+    const DONTNEED = 4;
+};
+
+fn madvise(
+    base: u64,
+    size: u64,
+    advice: u32,
+) inline u64 {
+    return @syscall(SYS.MADVISE, base, size, advice);
 }
