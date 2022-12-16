@@ -627,7 +627,7 @@ fn semaASTExpr(
                     std.debug.assert(expr_arg.next == .none);
 
                     const value = try semaASTExpr(scope_idx, expr_arg.value, false, null);
-                    std.debug.assert(types.get(try values.get(value).getType()).* == .pointer);
+                    std.debug.assert(types.get(try decayValueType(value)).* == .pointer);
 
                     if(force_comptime_eval) @panic("TODO: Comptime ptr_to_int");
                     return values.insert(.{.runtime = .{
