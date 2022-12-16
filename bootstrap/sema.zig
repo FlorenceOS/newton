@@ -87,16 +87,9 @@ fn promoteComptimeInt(value: i65, requested_type: TypeIndex.Index) !ValueIndex.I
 }
 
 fn decayValueType(vidx: ValueIndex.Index) !TypeIndex.Index {
-    const value = values.get(vidx);
-    const ty_idx = try value.getType();
-    switch(value.*) {
-        .runtime => {
-            const value_ty = types.get(ty_idx);
-            if(value_ty.* == .reference) {
-                return value_ty.reference.child;
-            }
-            return ty_idx;
-        },
+    const ty_idx = try values.get(vidx).getType();
+    switch(types.get(ty_idx).*) {
+        .reference => |ptr| return ptr.child,
         else => return ty_idx,
     }
 }
