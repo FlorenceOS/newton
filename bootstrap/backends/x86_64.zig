@@ -500,6 +500,22 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
                 @panic("TODO");
             }
         },
+        .shift_left_constant => |op| {
+            const op_t = decl.instr.getOperationType();
+            const imm = std.mem.asBytes(&op.rhs)[0..1];
+            try mov(writer, uf, op_t, decl_idx, op.lhs, false);
+            try writeOperandReg(writer, uf, op_t, decl_idx, 4, &.{
+                0xC0 | boolToU8(op_t != .u8),
+            }, imm, false);
+        },
+        .shift_right_constant => |op| {
+            const op_t = decl.instr.getOperationType();
+            const imm = std.mem.asBytes(&op.rhs)[0..1];
+            try mov(writer, uf, op_t, decl_idx, op.lhs, false);
+            try writeOperandReg(writer, uf, op_t, decl_idx, 5, &.{
+                0xC0 | boolToU8(op_t != .u8),
+            }, imm, false);
+        },
         .load => |op| {
             const out_reg = uf.findRegByPtr(decl).?;
             if(uf.findReg(op.source)) |src_ptr_reg| {
