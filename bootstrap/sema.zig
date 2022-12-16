@@ -831,7 +831,8 @@ fn semaASTExpr(
                             .bits = 64,
                             .value = try lhs_struct.offsetOf(StructFieldIndex.toOpt(struct_fields.getIndex(field))),
                         }});
-                        const addr_of_expr = try Value.fromExpression(try expressions.insert(.{.addr_of = lhs}), member_ptr);
+                        const addr_of_expr = if(types.get(try decayValueType(lhs)).* == .pointer) lhs else
+                            try Value.fromExpression(try expressions.insert(.{.addr_of = lhs}), member_ptr);
                         const member_ref = try values.addDedupLinear(.{
                             .type_idx = try types.addDedupLinear(.{.reference = .{
                                 .is_const = !decl.mutable,
