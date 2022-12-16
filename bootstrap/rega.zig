@@ -261,11 +261,9 @@ pub fn doRegAlloc(
         }
     }
 
-    std.debug.print("OKAY HERE WE GO\n", .{});
     var uf = UnionFind{};
     for(block_list.items) |blk_idx| {
         const blk = ir.blocks.get(blk_idx);
-        try ir.dumpBlock(blk_idx, null);
         var curr_instr = blk.first_decl;
         while(ir.decls.getOpt(curr_instr)) |instr| : (curr_instr = instr.next) {
             const i = @intCast(i32, @enumToInt(ir.decls.getIndex(instr)));
