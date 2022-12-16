@@ -503,7 +503,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
         .shift_left_constant => |op| {
             const op_t = decl.instr.getOperationType();
             const imm = std.mem.asBytes(&op.rhs)[0..1];
-            try mov(writer, uf, op_t, decl_idx, op.lhs, false);
+            try mov(writer, uf, op_t, decl_idx, op.lhs, true);
             try writeOperandReg(writer, uf, op_t, decl_idx, 4, &.{
                 0xC0 | boolToU8(op_t != .u8),
             }, imm, false);
@@ -511,7 +511,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
         .shift_right_constant => |op| {
             const op_t = decl.instr.getOperationType();
             const imm = std.mem.asBytes(&op.rhs)[0..1];
-            try mov(writer, uf, op_t, decl_idx, op.lhs, false);
+            try mov(writer, uf, op_t, decl_idx, op.lhs, true);
             try writeOperandReg(writer, uf, op_t, decl_idx, 5, &.{
                 0xC0 | boolToU8(op_t != .u8),
             }, imm, false);
@@ -519,7 +519,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
         .bit_and_constant => |op| {
             const op_t = decl.instr.getOperationType();
             const imm = std.mem.asBytes(&op.rhs);
-            try mov(writer, uf, op_t, decl_idx, op.lhs, false);
+            try mov(writer, uf, op_t, decl_idx, op.lhs, true);
             try writeOperandReg(writer, uf, op_t, decl_idx, 4, &.{
                 0x80 | boolToU8(op_t != .u8),
             }, opTypeImm(op_t, imm), false);
