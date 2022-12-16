@@ -709,6 +709,18 @@ fn semaASTExpr(
             }});
         },
 
+        .unary_bitnot => |uop| {
+            const value_idx = try semaASTExpr(scope_idx, uop.operand, force_comptime_eval, null);
+            const value = values.get(value_idx);
+            if(value.isComptime()) {
+                switch(value.*) {
+                    .comptime_int => |int| return values.insert(.{.comptime_int = ~int & 0xFFFFFFFFFFFFFFFF}),
+                    else => unreachable,
+                }
+            }
+            return Value.fromExpression(try expressions.insert(.{.bit_not = value_idx}), try values.insert(.{.type_idx = try value.getType()}));
+        },
+
         inline
         .plus, .plus_eq, .plus_mod, .plus_mod_eq,
         .minus, .minus_eq, .minus_mod, .minus_mod_eq,
@@ -1614,6 +1626,8 @@ pub const Expression = union(enum) {
     logical_or: BinaryOp,
     assign: BinaryOp,
     range: BinaryOp,
+
+    bit_not: ValueIndex.Index,
 
     function_arg: FunctionArgument,
     function_call: FunctionCall,
