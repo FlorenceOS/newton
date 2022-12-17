@@ -878,7 +878,9 @@ fn semaASTExpr(
                             } else {
                                 return values.insert(.{.bound_fn = .{
                                     .callee = static_decl.init_value,
-                                    .first_arg = bop.lhs,
+                                    .first_arg = try ast.expressions.insert(.{.function_argument = .{
+                                        .value = bop.lhs,
+                                    }}),
                                 }});
                             }
                         }
