@@ -856,11 +856,14 @@ fn semaASTExpr(
                             const fn_value = &values.get(static_decl.init_value).function;
                             const first_param = decls.getOpt(scopes.get(fn_value.generic_param_scope).first_decl).?;
                             std.debug.assert(!first_param.comptime_param);
-                            const first_param_ast_type = values.get(values.get(first_param.init_value).runtime.value_type).unresolved.expression;
 
-                            const param_type = try semaASTExpr(scope_idx, first_param_ast_type, true, .type);
+                            const param_type_value = values.get(first_param.init_value).runtime.value_type;
+                            const param_type = switch(values.get(param_type_value).*) {
+                                .unresolved => |ur| try semaASTExpr(scope_idx, ur.expression, true, .type),
+                                else => param_type_value,
+                            };
+
                             const first_param_is_ptr = types.get(values.get(param_type).type_idx).* == .pointer;
-
                             if(lhs_type.* != .pointer and first_param_is_ptr) {
                                 return values.insert(.{.bound_fn = .{
                                     .callee = static_decl.init_value,
