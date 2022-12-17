@@ -779,25 +779,25 @@ fn semaASTExpr(
                     .signed_int => |i| i.value,
                     else => unreachable,
                 };
-                switch(tag) {
-                    .plus, .plus_mod => return values.insert(.{.comptime_int = lhs_int +% rhs_int}),
-                    .minus, .minus_mod => return values.insert(.{.comptime_int = lhs_int -% rhs_int}),
-                    .multiply, .multiply_mod => return values.insert(.{.comptime_int = lhs_int *% rhs_int}),
-                    .divide => return values.insert(.{.comptime_int = @divTrunc(lhs_int, rhs_int)}),
-                    .modulus => return values.insert(.{.comptime_int = @rem(lhs_int, rhs_int)}),
-                    .shift_left => return values.insert(.{.comptime_int = lhs_int << @intCast(u7, rhs_int)}),
-                    .shift_right => return values.insert(.{.comptime_int = lhs_int >> @intCast(u7, rhs_int)}),
-                    .bitand => return values.insert(.{.comptime_int = lhs_int & rhs_int}),
-                    .bitor => return values.insert(.{.comptime_int = lhs_int | rhs_int}),
-                    .bitxor => return values.insert(.{.comptime_int = lhs_int ^ rhs_int}),
-                    .less => return values.insert(.{.bool = lhs_int < rhs_int}),
-                    .less_equal => return values.insert(.{.bool = lhs_int <= rhs_int}),
-                    .greater => return values.insert(.{.bool = lhs_int > rhs_int}),
-                    .greater_equal => return values.insert(.{.bool = lhs_int >= rhs_int}),
-                    .equals => return values.insert(.{.bool = lhs_int == rhs_int}),
-                    .not_equal => return values.insert(.{.bool = lhs_int != rhs_int}),
+                return values.insert(switch(tag) {
+                    .plus, .plus_mod => .{.comptime_int = lhs_int +% rhs_int},
+                    .minus, .minus_mod => .{.comptime_int = lhs_int -% rhs_int},
+                    .multiply, .multiply_mod => .{.comptime_int = lhs_int *% rhs_int},
+                    .divide => .{.comptime_int = @divTrunc(lhs_int, rhs_int)},
+                    .modulus => .{.comptime_int = @rem(lhs_int, rhs_int)},
+                    .shift_left => .{.comptime_int = lhs_int << @intCast(u7, rhs_int)},
+                    .shift_right => .{.comptime_int = lhs_int >> @intCast(u7, rhs_int)},
+                    .bitand => .{.comptime_int = lhs_int & rhs_int},
+                    .bitor => .{.comptime_int = lhs_int | rhs_int},
+                    .bitxor => .{.comptime_int = lhs_int ^ rhs_int},
+                    .less => .{.bool = lhs_int < rhs_int},
+                    .less_equal => .{.bool = lhs_int <= rhs_int},
+                    .greater => .{.bool = lhs_int > rhs_int},
+                    .greater_equal => .{.bool = lhs_int >= rhs_int},
+                    .equals => .{.bool = lhs_int == rhs_int},
+                    .not_equal => .{.bool = lhs_int != rhs_int},
                     else => @panic("TODO: " ++ @tagName(tag)),
-                }
+                });
             }
 
             return values.insert(.{.runtime = .{
