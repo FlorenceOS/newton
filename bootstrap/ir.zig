@@ -627,33 +627,6 @@ const peephole_optimizations = .{
 
 var optimization_allocator = std.heap.GeneralPurposeAllocator(.{}){.backing_allocator = std.heap.page_allocator};
 
-fn splitBlockAt(block_idx: BlockIndex.Index, decl_idx: DeclIndex.Index) !BlockEdgeIndex.Index {
-    const old_block = blocks.get(block_idx);
-    const new_block_idx = try blocks.insert(.{
-        .is_sealed = false,
-        .is_filled = old_block.is_filled,
-    });
-
-    const split_decl = decls.get(decl_idx);
-    const new_block = blocks.get(new_block_idx);
-    const old_to_new_edge = try addEdge(block_idx, new_block_idx);
-    new_block.first_predecessor = BlockEdgeIndex.toOpt(old_to_new_edge);
-    new_block.first_decl = DeclIndex.toOpt(decl_idx);
-    new_block.last_decl = old_block.last_decl;
-
-    var curr_decl = DeclIndex.toOpt(decl_idx);
-    while(decls.getOpt(curr_decl)) |decl| : (curr_decl = decl.next) {
-        decl.block = new_block_idx;
-    }
-
-    old_block.last_decl = split_decl.prev;
-    split_decl.prev = .none;
-
-    _ = try appendToBlock(block_idx, .{.goto = old_to_new_edge});
-    try new_block.seal();
-    return old_to_new_edge;
-}
-
 pub fn optimizeFunction(head_block: BlockIndex.Index) !void {
     var arena = std.heap.ArenaAllocator.init(optimization_allocator.allocator());
     defer arena.deinit();
