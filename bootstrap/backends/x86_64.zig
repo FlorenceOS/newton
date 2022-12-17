@@ -34,7 +34,7 @@ pub const backend = backends.Backend{
         registers.rdi,
         8, 9, 10, 11,
         registers.rbx,
-        12, 13, 14, 15,
+        13, 14, 15, 12,
     },
 };
 
