@@ -304,6 +304,20 @@ pub fn doRegAlloc(
         }
     }
 
+    for(block_list.items) |blk_idx| {
+        const blk = ir.blocks.get(blk_idx);
+        var curr_instr = blk.first_decl;
+        while(ir.decls.getOpt(curr_instr)) |instr| : (curr_instr = instr.next) {
+            if(instr.instr != .reference_wrap) continue;
+            const i = ir.decls.getIndex(instr);
+            var ops_it = instr.instr.operands();
+            while(ops_it.next()) |op| {
+                // Join deref nodes into its params
+                _ = uf.join(op.*, i);
+            }
+        }
+    }
+
     var ins = DeclSetMap{};
     var out = DeclSetMap{};
 
