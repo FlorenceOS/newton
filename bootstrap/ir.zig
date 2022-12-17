@@ -122,6 +122,18 @@ pub const DeclInstr = union(enum) {
     bit_and: Bop,
     bit_or: Bop,
     bit_xor: Bop,
+
+    inplace_add: Bop,
+    inplace_sub: Bop,
+    inplace_multiply: Bop,
+    inplace_divide: Bop,
+    inplace_modulus: Bop,
+    inplace_shift_left: Bop,
+    inplace_shift_right: Bop,
+    inplace_bit_and: Bop,
+    inplace_bit_or: Bop,
+    inplace_bit_xor: Bop,
+
     less: Bop,
     less_equal: Bop,
     greater: Bop,
@@ -154,6 +166,17 @@ pub const DeclInstr = union(enum) {
     bit_and_constant: VariableConstantBop,
     bit_or_constant: VariableConstantBop,
     bit_xor_constant: VariableConstantBop,
+
+    inplace_add_constant: VariableConstantBop,
+    inplace_sub_constant: VariableConstantBop,
+    inplace_multiply_constant: VariableConstantBop,
+    inplace_divide_constant: VariableConstantBop,
+    inplace_modulus_constant: VariableConstantBop,
+    inplace_shift_left_constant: VariableConstantBop,
+    inplace_shift_right_constant: VariableConstantBop,
+    inplace_bit_and_constant: VariableConstantBop,
+    inplace_bit_or_constant: VariableConstantBop,
+    inplace_bit_xor_constant: VariableConstantBop,
 
     less_constant: VariableConstantBop,
     less_equal_constant: VariableConstantBop,
@@ -214,6 +237,8 @@ pub const DeclInstr = union(enum) {
 
             .add, .sub, .multiply, .divide, .modulus,
             .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
+            .inplace_add, .inplace_sub, .inplace_multiply, .inplace_divide, .inplace_modulus,
+            .inplace_shift_left, .inplace_shift_right, .inplace_bit_and, .inplace_bit_or, .inplace_bit_xor,
             .less, .less_equal, .greater, .greater_equal, .equals, .not_equal,
             => |*bop| {
                 bounded_result.value.bounded_iterator.appendAssumeCapacity(&bop.lhs);
@@ -229,8 +254,9 @@ pub const DeclInstr = union(enum) {
 
             .add_constant, .sub_constant, .multiply_constant, .divide_constant, .modulus_constant,
             .shift_left_constant, .shift_right_constant, .bit_and_constant, .bit_or_constant, .bit_xor_constant,
-            .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant,
-            .equals_constant, .not_equal_constant,
+            .inplace_add_constant, .inplace_sub_constant, .inplace_multiply_constant, .inplace_divide_constant, .inplace_modulus_constant,
+            .inplace_shift_left_constant, .inplace_shift_right_constant, .inplace_bit_and_constant, .inplace_bit_or_constant, .inplace_bit_xor_constant,
+            .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant, .equals_constant, .not_equal_constant,
             => |*bop| {
                 bounded_result.value.bounded_iterator.appendAssumeCapacity(&bop.lhs);
             },
@@ -278,6 +304,10 @@ pub const DeclInstr = union(enum) {
         switch(self.*) {
             .incomplete_phi => unreachable,
             .@"if", .leave_function, .goto, .enter_function, .store, .store_constant, .function_call, .syscall,
+            .inplace_add, .inplace_sub, .inplace_multiply, .inplace_divide, .inplace_modulus,
+            .inplace_shift_left, .inplace_shift_right, .inplace_bit_and, .inplace_bit_or, .inplace_bit_xor,
+            .inplace_add_constant, .inplace_sub_constant, .inplace_multiply_constant, .inplace_divide_constant, .inplace_modulus_constant,
+            .inplace_shift_left_constant, .inplace_shift_right_constant, .inplace_bit_and_constant, .inplace_bit_or_constant, .inplace_bit_xor_constant,
             => return true,
             else => return false,
         }
@@ -288,6 +318,10 @@ pub const DeclInstr = union(enum) {
             .incomplete_phi => unreachable,
             .@"if", .leave_function, .goto, .stack_ref, .global_ref, .enter_function,
             .store, .store_constant, .reference_wrap,
+            .inplace_add, .inplace_sub, .inplace_multiply, .inplace_divide, .inplace_modulus,
+            .inplace_shift_left, .inplace_shift_right, .inplace_bit_and, .inplace_bit_or, .inplace_bit_xor,
+            .inplace_add_constant, .inplace_sub_constant, .inplace_multiply_constant, .inplace_divide_constant, .inplace_modulus_constant,
+            .inplace_shift_left_constant, .inplace_shift_right_constant, .inplace_bit_and_constant, .inplace_bit_or_constant, .inplace_bit_xor_constant,
             => return false,
             else => return true,
         }
@@ -329,6 +363,8 @@ pub const DeclInstr = union(enum) {
             .reference_wrap => |rr| return rr.instrType(),
             .add, .sub, .multiply, .divide, .modulus,
             .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
+            .inplace_add, .inplace_sub, .inplace_multiply, .inplace_divide, .inplace_modulus,
+            .inplace_shift_left, .inplace_shift_right, .inplace_bit_and, .inplace_bit_or, .inplace_bit_xor,
             .less, .less_equal, .greater, .greater_equal, .equals, .not_equal,
             => |bop| {
                 const lhs = decls.get(bop.lhs);
@@ -346,6 +382,8 @@ pub const DeclInstr = union(enum) {
             .store => |val| return decls.get(val.value).instr.getOperationType(),
             .add_constant, .sub_constant, .multiply_constant, .divide_constant, .modulus_constant,
             .shift_left_constant, .shift_right_constant, .bit_and_constant, .bit_or_constant, .bit_xor_constant,
+            .inplace_add_constant, .inplace_sub_constant, .inplace_multiply_constant, .inplace_divide_constant, .inplace_modulus_constant,
+            .inplace_shift_left_constant, .inplace_shift_right_constant, .inplace_bit_and_constant, .inplace_bit_or_constant, .inplace_bit_xor_constant,
             .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant, .equals_constant, .not_equal_constant,
             => |bop| return decls.get(bop.lhs).instr.getOperationType(),
             .copy => |decl| return decls.get(decl).instr.getOperationType(),
@@ -917,7 +955,10 @@ fn inlineConstants(decl_idx: DeclIndex.Index) !bool {
         // Commutative ops
         inline
         .add, .multiply,
-        .bit_and, .bit_or, .bit_xor, .equals, .not_equal
+        .inplace_add, .inplace_multiply,
+        .bit_and, .bit_or, .bit_xor,
+        .inplace_bit_and, .inplace_bit_or, .inplace_bit_xor,
+        .equals, .not_equal,
         => |bop, tag| {
             const lhs = decls.get(bop.lhs).instr;
             if(lhs == .load_int_constant) {
@@ -941,7 +982,9 @@ fn inlineConstants(decl_idx: DeclIndex.Index) !bool {
         inline
         .less, .less_equal, .greater, .greater_equal,
         .sub, .divide, .modulus,
+        .inplace_sub,
         .shift_left, .shift_right,
+        .inplace_shift_left, .inplace_shift_right,
         => |bop, tag| {
             const swapped_tag: ?[]const u8 = comptime switch(tag) {
                 .less => "greater_equal",
@@ -1342,9 +1385,14 @@ const IRWriter = struct {
             .add_eq, .sub_eq, .multiply_eq, .divide_eq, .modulus_eq,
             .shift_left_eq, .shift_right_eq, .bit_and_eq, .bit_or_eq, .bit_xor_eq,
             => |bop, tag| {
-                _ = bop;
-                _ = tag;
-                @panic("TODO: IR Inplace ops");
+                const lhs = try self.writeValue(bop.lhs);
+                const rhs = try self.writeValue(bop.rhs);
+                const op_name = @tagName(tag)[0..@tagName(tag).len - 3];
+                if((tag != .divide_eq and tag != .modulus_eq and decls.get(lhs).instr.memoryReference() == null) or !backends.current_backend.optimizations.has_inplace_ops) {
+                    return self.emit(@unionInit(DeclInstr, op_name, .{.lhs = lhs, .rhs = rhs}));
+                } else {
+                    return self.emit(@unionInit(DeclInstr, "inplace_" ++ op_name, .{.lhs = lhs, .rhs = rhs}));
+                }
             },
             .addr_of => |operand| {
                 return self.emit(.{.addr_of = try self.writeValue(operand)});
@@ -1643,13 +1691,16 @@ pub fn dumpBlock(
             inline
             .add, .sub, .multiply, .divide, .modulus,
             .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
+            .inplace_add, .inplace_sub, .inplace_multiply, .inplace_divide, .inplace_modulus,
+            .inplace_shift_left, .inplace_shift_right, .inplace_bit_and, .inplace_bit_or, .inplace_bit_xor,
             .less, .less_equal, .greater, .greater_equal, .equals, .not_equal,
             => |bop, tag| std.debug.print("{s}(${d}, ${d})\n", .{@tagName(tag), @enumToInt(bop.lhs), @enumToInt(bop.rhs)}),
             inline
             .add_constant, .sub_constant, .multiply_constant, .divide_constant, .modulus_constant,
             .shift_left_constant, .shift_right_constant, .bit_and_constant, .bit_or_constant, .bit_xor_constant,
-            .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant,
-            .equals_constant, .not_equal_constant,
+            .inplace_add_constant, .inplace_sub_constant, .inplace_multiply_constant, .inplace_divide_constant, .inplace_modulus_constant,
+            .inplace_shift_left_constant, .inplace_shift_right_constant, .inplace_bit_and_constant, .inplace_bit_or_constant, .inplace_bit_xor_constant,
+            .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant, .equals_constant, .not_equal_constant,
             => |bop, tag| std.debug.print("{s}(${d}, #{d})\n", .{@tagName(tag)[0..@tagName(tag).len-9], @enumToInt(bop.lhs), bop.rhs}),
             .function_call => |fc| {
                 var name: ?ast.SourceRef = null;

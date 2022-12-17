@@ -22,6 +22,7 @@ pub const backend = backends.Backend{
         .has_nonzero_constant_store = false,
         .has_divide_constant = false,
         .has_modulus_constant = false,
+        .has_inplace_ops = false,
     },
     .gprs = &.{
         0,  1,  2,  3,  4,  5,  6,  7,  8,  9,

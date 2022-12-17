@@ -43,6 +43,7 @@ pub const Optimizations = struct {
     has_nonzero_constant_store: bool,
     has_divide_constant: bool,
     has_modulus_constant: bool,
+    has_inplace_ops: bool,
 };
 
 pub var current_backend: *const Backend = undefined;

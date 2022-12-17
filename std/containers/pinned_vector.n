@@ -33,7 +33,7 @@ fn PinnedVector(comptime T: type, comptime capacity: u32) type {
 
         fn append_assume_capacity(self: *@This(), value: T) void {
             self.ptr[self.size] = value;
-            self.size = self.size + 1;
+            self.size += 1;
         }
 
         fn uncommit_unused_pages(self: *@This()) void {

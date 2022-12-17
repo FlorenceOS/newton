@@ -25,6 +25,7 @@ pub const backend = backends.Backend{
         .has_nonzero_constant_store = true,
         .has_divide_constant = false,
         .has_modulus_constant = false,
+        .has_inplace_ops = true,
     },
     .gprs = &.{
         registers.rax,
@@ -469,6 +470,11 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             }
             try writeOperandReg(writer, uf, op_t, op.rhs, 6, &.{0xF6 | boolToU8(op_t != .u8)}, &.{}, false);
         },
+        .inplace_add => |op| {
+            const op_t = decl.instr.getOperationType();
+            const rhs_reg = uf.findReg(op.rhs).?;
+            try writeOperandReg(writer, uf, op_t, op.lhs, rhs_reg, &.{0x00 | boolToU8(op_t != .u8)}, &.{}, true);
+        },
         .add_constant => |op| {
             const dest_reg = uf.findRegByPtr(decl).?;
             const lhs_reg = uf.findReg(op.lhs);
@@ -533,6 +539,15 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             try writeOperandReg(writer, uf, op_t, decl_idx, 4, &.{
                 0x80 | boolToU8(op_t != .u8),
             }, opTypeImm(op_t, imm), false);
+        },
+        .inplace_add_constant => |op| {
+            const op_t = decl.instr.getOperationType();
+            if(op.rhs == 1) {
+                try writeOperandReg(writer, uf, op_t, op.lhs, 0, &.{0xFE | boolToU8(op_t != .u8)}, &.{}, false);
+            } else {
+                const imm = std.mem.asBytes(&op.rhs);
+                try writeOperandReg(writer, uf, op_t, op.lhs, 0, &.{0x80 | boolToU8(op_t != .u8)}, opTypeImm(op_t, imm), false);
+            }
         },
         .load => |op| {
             const out_reg = uf.findRegByPtr(decl).?;
