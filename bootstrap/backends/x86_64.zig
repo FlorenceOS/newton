@@ -421,9 +421,15 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             const lhs_reg = uf.findReg(op.lhs);
             const rhs_reg = uf.findReg(op.rhs);
 
-            if(dest_reg == lhs_reg) {
+            if(dest_reg == lhs_reg and ir.decls.get(op.lhs).instr.memoryReference() == null) {
                 try writeOperandReg(writer, uf, op_t, op.rhs, dest_reg, &.{0x02 | boolToU8(op_t != .u8)}, &.{}, true);
-            } else if(dest_reg == rhs_reg) {
+            } else if(dest_reg == rhs_reg and ir.decls.get(op.rhs).instr.memoryReference() == null) {
+                try writeOperandReg(writer, uf, op_t, op.lhs, dest_reg, &.{0x02 | boolToU8(op_t != .u8)}, &.{}, true);
+            } else if(ir.decls.get(op.lhs).instr.memoryReference() != null) {
+                try mov(writer, uf, op_t, decl_idx, op.lhs, false);
+                try writeOperandReg(writer, uf, op_t, op.rhs, dest_reg, &.{0x02 | boolToU8(op_t != .u8)}, &.{}, true);
+            } else if(ir.decls.get(op.rhs).instr.memoryReference() != null) {
+                try mov(writer, uf, op_t, decl_idx, op.rhs, false);
                 try writeOperandReg(writer, uf, op_t, op.lhs, dest_reg, &.{0x02 | boolToU8(op_t != .u8)}, &.{}, true);
             } else { // lea
                 // TODO: Replace when we support SIB byte memes
