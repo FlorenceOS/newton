@@ -274,7 +274,10 @@ pub const DeclInstr = union(enum) {
                 .pointer_value = self_index,
                 .sema_pointer_type = offref.type,
             },
-            .reference_wrap => |rr| return rr,
+            .reference_wrap => |rr| return .{
+                .pointer_value = self_index,
+                .sema_pointer_type = rr.sema_pointer_type,
+            },
             else => return null,
         }
     }
