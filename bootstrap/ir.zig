@@ -113,11 +113,8 @@ pub const DeclInstr = union(enum) {
     syscall: FunctionArgumentIndex.OptIndex,
 
     add: Bop,
-    add_mod: Bop,
     sub: Bop,
-    sub_mod: Bop,
     multiply: Bop,
-    multiply_mod: Bop,
     divide: Bop,
     modulus: Bop,
     shift_left: Bop,
@@ -148,11 +145,8 @@ pub const DeclInstr = union(enum) {
     reference_wrap: MemoryReference,
 
     add_constant: VariableConstantBop,
-    add_mod_constant: VariableConstantBop,
     sub_constant: VariableConstantBop,
-    sub_mod_constant: VariableConstantBop,
     multiply_constant: VariableConstantBop,
-    multiply_mod_constant: VariableConstantBop,
     divide_constant: VariableConstantBop,
     modulus_constant: VariableConstantBop,
     shift_left_constant: VariableConstantBop,
@@ -218,8 +212,7 @@ pub const DeclInstr = union(enum) {
             .function_call => |fcall| return .{.value = .{.arg_iterator = function_arguments.getOpt(fcall.first_argument)}},
             .syscall => |farg| return .{.value = .{.arg_iterator = function_arguments.getOpt(farg)}},
 
-            .add, .add_mod, .sub, .sub_mod,
-            .multiply, .multiply_mod, .divide, .modulus,
+            .add, .sub, .multiply, .divide, .modulus,
             .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
             .less, .less_equal, .greater, .greater_equal, .equals, .not_equal,
             => |*bop| {
@@ -234,8 +227,7 @@ pub const DeclInstr = union(enum) {
             .zero_extend, .sign_extend, .truncate => |*cast| bounded_result.value.bounded_iterator.appendAssumeCapacity(&cast.value),
             .clobber, .addr_of => |*op| bounded_result.value.bounded_iterator.appendAssumeCapacity(op),
 
-            .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
-            .multiply_constant, .multiply_mod_constant, .divide_constant, .modulus_constant,
+            .add_constant, .sub_constant, .multiply_constant, .divide_constant, .modulus_constant,
             .shift_left_constant, .shift_right_constant, .bit_and_constant, .bit_or_constant, .bit_xor_constant,
             .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant,
             .equals_constant, .not_equal_constant,
@@ -335,8 +327,7 @@ pub const DeclInstr = union(enum) {
             .addr_of, .stack_ref, .global_ref,
             => return backends.current_backend.pointer_type,
             .reference_wrap => |rr| return rr.instrType(),
-            .add, .add_mod, .sub, .sub_mod,
-            .multiply, .multiply_mod, .divide, .modulus,
+            .add, .sub, .multiply, .divide, .modulus,
             .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
             .less, .less_equal, .greater, .greater_equal, .equals, .not_equal,
             => |bop| {
@@ -353,8 +344,7 @@ pub const DeclInstr = union(enum) {
             },
             .syscall, .undefined => return .u64,
             .store => |val| return decls.get(val.value).instr.getOperationType(),
-            .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
-            .multiply_constant, .multiply_mod_constant, .divide_constant, .modulus_constant,
+            .add_constant, .sub_constant, .multiply_constant, .divide_constant, .modulus_constant,
             .shift_left_constant, .shift_right_constant, .bit_and_constant, .bit_or_constant, .bit_xor_constant,
             .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant, .equals_constant, .not_equal_constant,
             => |bop| return decls.get(bop.lhs).instr.getOperationType(),
@@ -738,13 +728,11 @@ fn deduplicateDecls(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
                 .stack_ref, .load_int_constant, .load_bool_constant, .undefined,
                 .addr_of,
 
-                .add, .add_mod, .sub, .sub_mod,
-                .multiply, .multiply_mod, .divide, .modulus,
+                .add, .sub, .multiply, .divide, .modulus,
                 .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
                 .less, .less_equal, .greater, .greater_equal, .equals, .not_equal,
 
-                .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
-                .multiply_constant, .multiply_mod_constant, .divide_constant, .modulus_constant,
+                .add_constant, .sub_constant, .multiply_constant, .divide_constant, .modulus_constant,
                 .shift_left_constant, .shift_right_constant,
                 .bit_and_constant, .bit_or_constant, .bit_xor_constant,
 
@@ -928,7 +916,7 @@ fn inlineConstants(decl_idx: DeclIndex.Index) !bool {
     switch(decl.instr) {
         // Commutative ops
         inline
-        .add, .add_mod, .multiply, .multiply_mod,
+        .add, .multiply,
         .bit_and, .bit_or, .bit_xor, .equals, .not_equal
         => |bop, tag| {
             const lhs = decls.get(bop.lhs).instr;
@@ -952,7 +940,7 @@ fn inlineConstants(decl_idx: DeclIndex.Index) !bool {
         // Noncommutative ops
         inline
         .less, .less_equal, .greater, .greater_equal,
-        .sub, .sub_mod, .divide, .modulus,
+        .sub, .divide, .modulus,
         .shift_left, .shift_right,
         => |bop, tag| {
             const swapped_tag: ?[]const u8 = comptime switch(tag) {
@@ -1004,7 +992,7 @@ fn inlineConstants(decl_idx: DeclIndex.Index) !bool {
 fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
     const decl = decls.get(decl_idx);
     switch(decl.instr) {
-        .add, .add_mod => |bop| {
+        .add => |bop| {
             if(bop.lhs == bop.rhs) {
                 decl.instr = .{.multiply_constant = .{.lhs = bop.lhs, .rhs = 2}};
                 return true;
@@ -1016,7 +1004,7 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
                 return true;
             }
         },
-        .bit_xor, .sub, .sub_mod => |bop| {
+        .bit_xor, .sub => |bop| {
             if(bop.lhs == bop.rhs) {
                 decl.instr = .{.load_int_constant = .{
                     .type = decl.instr.getOperationType(),
@@ -1033,7 +1021,7 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
         },
 
         inline
-        .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
+        .add_constant, .sub_constant,
         .shift_left_constant, .shift_right_constant,
         => |*bop, tag| {
             if(bop.rhs == 0) {
@@ -1052,15 +1040,13 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
             //     return true;
             // }
         },
-        .bit_or_constant, .bit_xor_constant,
-        => |bop| {
+        .bit_or_constant, .bit_xor_constant => |bop| {
             if(bop.rhs == 0) {
                 decl.instr = .{.copy = bop.lhs};
                 return true;
             }
         },
-        .multiply_constant, .multiply_mod_constant,
-        => |bop| {
+        .multiply_constant => |bop| {
             if(bop.rhs == 0) {
                 decl.instr = .{.load_int_constant = .{
                     .type = decl.instr.getOperationType(),
@@ -1137,20 +1123,16 @@ fn eliminateConstantExpressions(decl_idx: DeclIndex.Index) !bool {
             }
         },
         inline
-        .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
-        .multiply_constant, .multiply_mod_constant, .divide_constant, .modulus_constant,
+        .add_constant, .sub_constant, .multiply_constant, .divide_constant, .modulus_constant,
         .shift_left_constant, .shift_right_constant, .bit_and_constant, .bit_or_constant, .bit_xor_constant,
         => |bop, tag| {
             const lhs = decls.get(bop.lhs);
             if(lhs.instr == .load_int_constant) {
                 decl.instr = .{.load_int_constant = .{
                     .value = switch(tag) {
-                        .add_constant => lhs.instr.load_int_constant.value + bop.rhs,
-                        .add_mod_constant => lhs.instr.load_int_constant.value +% bop.rhs,
-                        .sub_constant => lhs.instr.load_int_constant.value - bop.rhs,
-                        .sub_mod_constant => lhs.instr.load_int_constant.value -% bop.rhs,
-                        .multiply_constant => lhs.instr.load_int_constant.value * bop.rhs,
-                        .multiply_mod_constant => lhs.instr.load_int_constant.value *% bop.rhs,
+                        .add_constant => lhs.instr.load_int_constant.value +% bop.rhs,
+                        .sub_constant => lhs.instr.load_int_constant.value -% bop.rhs,
+                        .multiply_constant => lhs.instr.load_int_constant.value *% bop.rhs,
                         .divide_constant => lhs.instr.load_int_constant.value / bop.rhs,
                         .modulus_constant => lhs.instr.load_int_constant.value % bop.rhs,
                         .shift_left_constant => lhs.instr.load_int_constant.value << @intCast(u6, bop.rhs),
@@ -1347,8 +1329,7 @@ const IRWriter = struct {
                 return undefined;
             },
             inline
-            .add, .add_mod, .sub, .sub_mod,
-            .multiply, .multiply_mod, .divide, .modulus,
+            .add, .sub, .multiply, .divide, .modulus,
             .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
             .less, .less_equal, .greater, .greater_equal, .equals, .not_equal,
             => |bop, tag| {
@@ -1358,8 +1339,7 @@ const IRWriter = struct {
                 }));
             },
             inline
-            .add_eq, .add_mod_eq, .sub_eq, .sub_mod_eq,
-            .multiply_eq, .multiply_mod_eq, .divide_eq, .modulus_eq,
+            .add_eq, .sub_eq, .multiply_eq, .divide_eq, .modulus_eq,
             .shift_left_eq, .shift_right_eq, .bit_and_eq, .bit_or_eq, .bit_xor_eq,
             => |bop, tag| {
                 _ = bop;
@@ -1456,7 +1436,7 @@ const IRWriter = struct {
 
     fn writeBlockStatementIntoBlock(
         self: *@This(),
-        first_stmt: sema.StatementIndex.OptIndex, 
+        first_stmt: sema.StatementIndex.OptIndex,
         target_block: BlockIndex.Index
     ) !BlockIndex.Index {
         self.basic_block = target_block;
@@ -1661,14 +1641,12 @@ pub fn dumpBlock(
             .undefined => std.debug.print("undefined\n", .{}),
             .load => |p| std.debug.print("load(${d})\n", .{@enumToInt(p.source)}),
             inline
-            .add, .add_mod, .sub, .sub_mod,
-            .multiply, .multiply_mod, .divide, .modulus,
+            .add, .sub, .multiply, .divide, .modulus,
             .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
             .less, .less_equal, .greater, .greater_equal, .equals, .not_equal,
             => |bop, tag| std.debug.print("{s}(${d}, ${d})\n", .{@tagName(tag), @enumToInt(bop.lhs), @enumToInt(bop.rhs)}),
             inline
-            .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
-            .multiply_constant, .multiply_mod_constant, .divide_constant, .modulus_constant,
+            .add_constant, .sub_constant, .multiply_constant, .divide_constant, .modulus_constant,
             .shift_left_constant, .shift_right_constant, .bit_and_constant, .bit_or_constant, .bit_xor_constant,
             .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant,
             .equals_constant, .not_equal_constant,

@@ -722,9 +722,7 @@ fn semaASTExpr(
         },
 
         inline
-        .plus, .plus_eq, .plus_mod, .plus_mod_eq,
-        .minus, .minus_eq, .minus_mod, .minus_mod_eq,
-        .multiply, .multiply_eq, .multiply_mod, .multiply_mod_eq,
+        .plus, .plus_eq, .minus, .minus_eq, .multiply, .multiply_eq,
         .divide, .divide_eq, .modulus, .modulus_eq,
         .shift_left, .shift_left_eq, .shift_right, .shift_right_eq,
         .bitand, .bitand_eq, .bitor, .bitxor_eq, .bitxor, .bitor_eq,
@@ -736,8 +734,8 @@ fn semaASTExpr(
             var rhs = try semaASTExpr(scope_idx, bop.rhs, force_comptime_eval, null);
 
             const value_type = switch(tag) {
-                .multiply_eq, .multiply_mod_eq, .divide_eq, .modulus_eq, .plus_eq, .plus_mod_eq, .minus_eq,
-                .minus_mod_eq, .shift_left_eq, .shift_right_eq, .bitand_eq, .bitxor_eq, .bitor_eq, .assign
+                .plus_eq, .minus_eq, .multiply_eq, .divide_eq, .modulus_eq,
+                .shift_left_eq, .shift_right_eq, .bitand_eq, .bitxor_eq, .bitor_eq, .assign
                 => blk: {
                     try inplaceOp(lhs, &rhs, tag == .assign);
                     break :blk .void;
@@ -748,8 +746,8 @@ fn semaASTExpr(
                     try plainBinaryOp(&lhs, &rhs);
                     break :blk .bool;
                 },
-                .multiply, .multiply_mod, .divide, .modulus, .plus, .plus_mod,
-                .minus, .minus_mod, .shift_left, .shift_right, .bitand, .bitor, .bitxor,
+                .plus, .minus, .multiply, .divide, .modulus,
+                .shift_left, .shift_right, .bitand, .bitor, .bitxor,
                 => blk: {
                     try plainBinaryOp(&lhs, &rhs);
                     break :blk try values.addDedupLinear(.{.type_idx = try values.get(lhs).getType()});
@@ -757,8 +755,8 @@ fn semaASTExpr(
                 else => std.debug.panic("TODO: {s}", .{@tagName(tag)}),
             };
             const sema_tag = switch(tag) {
-                inline .plus, .plus_eq, .plus_mod, .plus_mod_eq => |a| "add" ++ @tagName(a)[4..],
-                inline .minus, .minus_eq, .minus_mod, .minus_mod_eq => |a| "sub" ++ @tagName(a)[5..],
+                inline .plus, .plus_eq => |a| "add" ++ @tagName(a)[4..],
+                inline .minus, .minus_eq => |a| "sub" ++ @tagName(a)[5..],
                 inline .bitand, .bitand_eq, .bitor, .bitxor_eq, .bitxor, .bitor_eq => |a| "bit_" ++ @tagName(a)[3..],
                 else => |a| @tagName(a),
             };
@@ -780,9 +778,9 @@ fn semaASTExpr(
                     else => unreachable,
                 };
                 return values.insert(switch(tag) {
-                    .plus, .plus_mod => .{.comptime_int = lhs_int +% rhs_int},
-                    .minus, .minus_mod => .{.comptime_int = lhs_int -% rhs_int},
-                    .multiply, .multiply_mod => .{.comptime_int = lhs_int *% rhs_int},
+                    .plus => .{.comptime_int = lhs_int +% rhs_int},
+                    .minus => .{.comptime_int = lhs_int -% rhs_int},
+                    .multiply => .{.comptime_int = lhs_int *% rhs_int},
                     .divide => .{.comptime_int = @divTrunc(lhs_int, rhs_int)},
                     .modulus => .{.comptime_int = @rem(lhs_int, rhs_int)},
                     .shift_left => .{.comptime_int = lhs_int << @intCast(u7, rhs_int)},
@@ -1597,16 +1595,10 @@ pub const Expression = union(enum) {
 
     add: BinaryOp,
     add_eq: BinaryOp,
-    add_mod: BinaryOp,
-    add_mod_eq: BinaryOp,
     sub: BinaryOp,
     sub_eq: BinaryOp,
-    sub_mod: BinaryOp,
-    sub_mod_eq: BinaryOp,
     multiply: BinaryOp,
     multiply_eq: BinaryOp,
-    multiply_mod: BinaryOp,
-    multiply_mod_eq: BinaryOp,
     divide: BinaryOp,
     divide_eq: BinaryOp,
     modulus: BinaryOp,

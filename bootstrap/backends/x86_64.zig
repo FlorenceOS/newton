@@ -353,8 +353,7 @@ fn regAlloc(decl_idx: ir.DeclIndex.Index, param_replacement: *rega.ParamReplacem
         => try rega.allocateRegsForInstr(
             decl_idx, 1, registers.rdx, &.{registers.rax}, &.{registers.rax}, &.{registers.rdx}, true, param_replacement
         ),
-        .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
-        .multiply_constant, .multiply_mod_constant, .divide_constant, .modulus_constant,
+        .add_constant, .sub_constant, .multiply_constant, .divide_constant, .modulus_constant,
         .shift_left_constant, .shift_right_constant,
         .bit_and_constant, .bit_or_constant, .bit_xor_constant,
         => try rega.allocateRegsForInstr(decl_idx, 0, null, &.{}, &.{}, &.{}, true, param_replacement),
