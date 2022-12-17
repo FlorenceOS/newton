@@ -575,7 +575,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
                 @panic(":(");
             }
         },
-        .less, .less_equal, .equals, .not_equal => |op| {
+        .less, .less_equal, .greater, .greater_equal, .equals, .not_equal => |op| {
             const op_t = decl.instr.getOperationType();
             try writeEitherOperandRm(writer, uf, op_t, op.lhs, op.rhs, &.{0x38 | boolToU8(op_t != .u8)}, &.{0x3A | boolToU8(op_t != .u8)}, &.{}, true);
         },
@@ -584,8 +584,8 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             const cond_flag: u8 = switch(op_instr) {
                 .less, .less_constant, => cond_flags.below,
                 .less_equal, .less_equal_constant => cond_flags.below_equal,
-                .greater_constant => cond_flags.not | cond_flags.below_equal,
-                .greater_equal_constant => cond_flags.not | cond_flags.below,
+                .greater, .greater_constant => cond_flags.not | cond_flags.below_equal,
+                .greater_equal, .greater_equal_constant => cond_flags.not | cond_flags.below,
                 .equals, .equals_constant => cond_flags.zero,
                 .not_equal, .not_equal_constant => cond_flags.not | cond_flags.zero,
                 else => unreachable,

@@ -127,6 +127,8 @@ pub const DeclInstr = union(enum) {
     bit_xor: Bop,
     less: Bop,
     less_equal: Bop,
+    greater: Bop,
+    greater_equal: Bop,
     equals: Bop,
     not_equal: Bop,
 
@@ -219,7 +221,7 @@ pub const DeclInstr = union(enum) {
             .add, .add_mod, .sub, .sub_mod,
             .multiply, .multiply_mod, .divide, .modulus,
             .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
-            .less, .less_equal, .equals, .not_equal,
+            .less, .less_equal, .greater, .greater_equal, .equals, .not_equal,
             => |*bop| {
                 bounded_result.value.bounded_iterator.appendAssumeCapacity(&bop.lhs);
                 bounded_result.value.bounded_iterator.appendAssumeCapacity(&bop.rhs);
@@ -298,7 +300,7 @@ pub const DeclInstr = union(enum) {
 
     pub fn isFlagsValue(self: *const @This()) bool {
         switch(self.*) {
-            .less, .less_equal, .equals, .not_equal,
+            .less, .less_equal, .greater, .greater_equal, .equals, .not_equal,
             .less_constant, .less_equal_constant, .greater_constant,
             .greater_equal_constant, .equals_constant, .not_equal_constant,
             => return true,
@@ -333,7 +335,7 @@ pub const DeclInstr = union(enum) {
             .add, .add_mod, .sub, .sub_mod,
             .multiply, .multiply_mod, .divide, .modulus,
             .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
-            .less, .less_equal, .equals, .not_equal,
+            .less, .less_equal, .greater, .greater_equal, .equals, .not_equal,
             => |bop| {
                 const lhs = decls.get(bop.lhs);
                 const lhs_type = lhs.instr.getOperationType();
@@ -736,7 +738,7 @@ fn deduplicateDecls(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
                 .add, .add_mod, .sub, .sub_mod,
                 .multiply, .multiply_mod, .divide, .modulus,
                 .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
-                .less, .less_equal, .equals, .not_equal,
+                .less, .less_equal, .greater, .greater_equal, .equals, .not_equal,
 
                 .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
                 .multiply_constant, .multiply_mod_constant, .divide_constant, .modulus_constant,
@@ -946,12 +948,15 @@ fn inlineConstants(decl_idx: DeclIndex.Index) !bool {
 
         // Noncommutative ops
         inline
-        .less, .less_equal, .sub, .sub_mod, .divide, .modulus,
+        .less, .less_equal, .greater, .greater_equal,
+        .sub, .sub_mod, .divide, .modulus,
         .shift_left, .shift_right,
         => |bop, tag| {
             const swapped_tag: ?[]const u8 = comptime switch(tag) {
                 .less => "greater_equal",
                 .less_equal => "greater",
+                .greater => "less_equal",
+                .greater_equal => "less",
                 else => null,
             };
 
@@ -1342,7 +1347,7 @@ const IRWriter = struct {
             .add, .add_mod, .sub, .sub_mod,
             .multiply, .multiply_mod, .divide, .modulus,
             .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
-            .less, .less_equal, .equals, .not_equal,
+            .less, .less_equal, .greater, .greater_equal, .equals, .not_equal,
             => |bop, tag| {
                 return self.emit(@unionInit(DeclInstr, @tagName(tag), .{
                     .lhs = try self.writeValue(bop.lhs),
@@ -1358,14 +1363,6 @@ const IRWriter = struct {
                 _ = tag;
                 @panic("TODO: IR Inplace ops");
             },
-            .greater => |bop| return self.emit(.{.less_equal = .{
-                .lhs = try self.writeValue(bop.rhs),
-                .rhs = try self.writeValue(bop.lhs),
-            }}),
-            .greater_equal => |bop| return self.emit(.{.less = .{
-                .lhs = try self.writeValue(bop.rhs),
-                .rhs = try self.writeValue(bop.lhs),
-            }}),
             .addr_of => |operand| {
                 return self.emit(.{.addr_of = try self.writeValue(operand)});
             },
@@ -1664,7 +1661,7 @@ pub fn dumpBlock(
             .add, .add_mod, .sub, .sub_mod,
             .multiply, .multiply_mod, .divide, .modulus,
             .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
-            .less, .less_equal, .equals, .not_equal,
+            .less, .less_equal, .greater, .greater_equal, .equals, .not_equal,
             => |bop, tag| std.debug.print("{s}(${d}, ${d})\n", .{@tagName(tag), @enumToInt(bop.lhs), @enumToInt(bop.rhs)}),
             inline
             .add_constant, .add_mod_constant, .sub_constant, .sub_mod_constant,
