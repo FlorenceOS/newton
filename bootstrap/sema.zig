@@ -953,7 +953,7 @@ fn semaASTExpr(
             if(force_comptime_eval) @panic("TODO: comptime eval addr_of");
             const lhs_idx = try semaASTExpr(scope_idx, bop.lhs, force_comptime_eval, null);
             const lhs = values.get(lhs_idx);
-            const lhs_type = types.get(try lhs.getType());
+            const lhs_type = types.get(try decayValueType(lhs_idx));
 
             const child_type = switch(lhs_type.*) {
                 .pointer => |ptr| ptr.child,
