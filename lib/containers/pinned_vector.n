@@ -1,0 +1,64 @@
+/// Paging aware container that never relocates the data so pointers are stable.
+/// Upon creation, the entire capacity is reserved in the virtual address space.
+///   - Before you add any elements, no virtual memory is committed (actually used).
+///   - You can reclaim committed memory by shrinking the commit to the current size.
+///     This is only recommended if you know what you're doing.
+const syscalls = @import("../os/syscalls.n");
+
+fn PinnedVector(comptime T: type, comptime capacity: u32) type {
+    return struct {
+        ptr: *T,
+        size: u32,
+        committed_size: u32,
+
+        fn init(self: *@This()) void {
+            self.ptr = @int_to_ptr(*T, syscalls.mmap(
+                0,
+                @size_of(T) * capacity,
+                syscalls.PROT.READ | syscalls.PROT.WRITE,
+                syscalls.MAP.PRIVATE | syscalls.MAP.ANONYMOUS,
+                0,
+                0,
+            ));
+            self.size = 0;
+            self.committed_size = 0;
+        }
+
+        fn deinit(self: *@This()) inline void {
+            syscalls.munmap(
+                @ptr_to_int(self.ptr),
+                @size_of(T) * capacity,
+            );
+        }
+
+        fn append_assume_capacity(self: *@This(), value: T) void {
+            self.ptr[self.size] = value;
+            self.size = self.size + 1;
+        }
+
+        fn uncommit_unused_pages(self: *@This()) void {
+            const size: u64 = self.size;
+            const committed: u64 = self.committed_size;
+            const used_pages      = ((size      * @size_of(T)) + 0xFFF) & ~0xFFF;
+            const committed_pages = ((committed * @size_of(T)) + 0xFFF) & ~0xFFF;
+
+            if(committed_pages > used_pages) {
+                syscalls.madvise(
+                    @ptr_to_int(self.ptr) + 0x1000 * used_pages,
+                    (committed_pages - used_pages) * 0x1000,
+                    syscalls.MADV.DONTNEED,
+                );
+            }
+            self.committed_size = self.size;
+        }
+
+        fn clear_and_keep_commit(self: *@This()) inline void {
+            self.size = 0;
+        }
+
+        fn clear_and_uncommit(self: *@This()) inline void {
+            self.clear_and_keep_commit();
+            self.uncommit_unused_pages();
+        }
+    };
+}
