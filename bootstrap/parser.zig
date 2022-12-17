@@ -637,31 +637,17 @@ fn parseFile(fidx: sources.SourceIndex.Index) !ast.ExprIndex.Index {
     return ast.expressions.insert(.{ .struct_expression = .{.first_decl = try parser.parseTypeBody()}});
 }
 
-pub fn parseFileIn(path: [:0]u8, current_dir: std.fs.Dir) !sources.SourceIndex.Index {
-    var realpath_buf: [std.os.PATH_MAX]u8 = undefined;
-    const realpath_stack = try current_dir.realpathZ(path.ptr, &realpath_buf);
-    const realpath = try std.heap.page_allocator.dupe(u8, realpath_stack);
+fn createSourceFile(realpath: [:0]u8, current_dir: std.fs.Dir) !sources.SourceIndex.Index {
+    const file_handle = try current_dir.openFileZ(realpath.ptr, .{});
+    const dirname = std.fs.path.dirname(realpath).?;
 
-    if(sources.path_map.get(realpath)) |parsed_file| {
-        return parsed_file;
-    }
-
-    const file_handle = try current_dir.openFileZ(path.ptr, .{});
-
-    const dir_handle = if(std.fs.path.dirname(path)) |dirname| blk: {
-        path[dirname.len] = 0;
-        // Split out into a local here because of compiler bug
-        const dir_path = path[0..dirname.len:0];
-        break :blk try current_dir.openDirZ(dir_path, .{
-            .access_sub_paths = true,
-        }, false);
-    }
-    else blk: {
-        break :blk current_dir;
-    };
+    realpath[dirname.len] = 0;
+    const dir_path = realpath[0..dirname.len:0];
+    const dir_handle = try std.fs.openDirAbsoluteZ(dir_path, .{.access_sub_paths = true});
+    realpath[dirname.len] = '/';
 
     const file_size = try file_handle.getEndPos();
-    const fidx = try sources.source_files.insert(.{
+    return sources.source_files.insert(.{
         .file = file_handle,
         .dir = dir_handle,
         .realpath = realpath,
@@ -674,20 +660,38 @@ pub fn parseFileIn(path: [:0]u8, current_dir: std.fs.Dir) !sources.SourceIndex.I
         ),
         .top_level_struct = undefined,
     });
+}
 
-    try sources.path_map.put(realpath, fidx);
+var path_gpa = std.heap.GeneralPurposeAllocator(.{}){.backing_allocator = std.heap.page_allocator};
 
+pub fn parseFileIn(path: []const u8, current_dir: std.fs.Dir) !sources.SourceIndex.Index {
+    // Try to look up the path as if it were a package name
+    if(std.mem.indexOfScalar(u8, path, '/') == null) {
+        if(sources.path_map.get(path)) |parsed_file| {
+            return parsed_file;
+        }
+    }
+
+    // Try to look up a fully qualified path
+    var realpath_buf: [std.os.PATH_MAX]u8 = undefined;
+    const realpath_stack = try current_dir.realpath(path, &realpath_buf);
+    return sources.path_map.get(realpath_stack) orelse
+        try parsePackageRootFile(realpath_stack, try path_gpa.allocator().dupe(u8, realpath_stack));
+}
+
+pub fn parsePackageRootFile(path: []const u8, name: []const u8) !sources.SourceIndex.Index {
+    var realpath_buf: [std.os.PATH_MAX]u8 = undefined;
+    const current_dir = std.fs.cwd();
+    const realpath_stack = try current_dir.realpath(path, &realpath_buf);
+    const realpath = try path_gpa.allocator().dupeZ(u8, realpath_stack);
+    const fidx = try createSourceFile(realpath, current_dir);
+    try sources.path_map.put(name, fidx);
     std.debug.print("Starting parse of file: {s}\n", .{realpath});
-
     sources.source_files.get(fidx).top_level_struct = try parseFile(fidx);
-
     return fidx;
 }
 
 pub fn parseRootFile(path: [:0]u8) !ast.ExprIndex.Index {
     const fidx = try parseFileIn(path, std.fs.cwd());
-    for(sources.source_files.elements.items[sources.SourceIndex.alloc_base..]) |*file| {
-        try ast.dumpFile(file);
-    }
     return sources.source_files.get(fidx).top_level_struct;
 }

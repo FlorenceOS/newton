@@ -16,7 +16,7 @@ pub const SourceFile = struct {
 
 pub var source_files: SourceFileList = undefined;
 
-// map from realpaths
+// Map from paths or package names to source file indices
 pub var path_map = std.StringHashMap(SourceIndex.Index).init(std.heap.page_allocator);
 
 pub fn init() !void {

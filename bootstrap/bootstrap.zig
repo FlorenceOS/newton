@@ -9,9 +9,14 @@ const sources = @import("sources.zig");
 const ir = @import("ir.zig");
 
 pub fn main() !void {
+    try ast.init();
+    try sources.init();
+
     var output_path: [:0]const u8 = "a.out";
     var target: [:0]const u8 = "x86_64-linux";
     var root_path: ?[:0]u8 = null;
+
+    _ = try parser.parsePackageRootFile("std/lib.n", "std");
 
     {
         const argv = std.os.argv;
@@ -21,14 +26,19 @@ pub fn main() !void {
             if(std.mem.eql(u8, arg, "-o")) {
                 i += 1;
                 output_path = std.mem.span(argv[i]);
-                continue;
-            }
-            if(std.mem.eql(u8, arg, "-target")) {
+            } else if(std.mem.eql(u8, arg, "-target")) {
                 i += 1;
                 target = std.mem.span(argv[i]);
-                continue;
+            } else if(std.mem.eql(u8, arg, "-package")) {
+                i += 1;
+                var split_it = std.mem.split(u8, std.mem.span(argv[i]), ":");
+                const package_name = split_it.next().?;
+                const package_root = split_it.next().?;
+                std.debug.assert(split_it.next() == null);
+                _ = try parser.parsePackageRootFile(package_root, package_name);
+            } else {
+                root_path = std.mem.span(argv[i]);
             }
-            root_path = std.mem.span(argv[i]);
         }
     }
 
@@ -85,13 +95,15 @@ pub fn main() !void {
         backends.current_default_abi = backends.current_os.default_abi;
     }
 
-    try ast.init();
     try sema.init();
-    try sources.init();
     try ir.init();
 
     if(root_path) |rp| {
         const root_ast = try parser.parseRootFile(rp);
+        for(sources.source_files.elements.items[sources.SourceIndex.alloc_base..]) |*file| {
+            try ast.dumpFile(file);
+        }
+
         const root_value_idx = try sema.values.insert(.{
             .unresolved = .{
                 .expression = root_ast,

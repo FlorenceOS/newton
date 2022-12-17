@@ -12,7 +12,7 @@ jobs:
           tar xf zig-linux-x86_64-0.11.0-dev.672+e94504543.tar.xz
           mv zig-linux-x86_64-0.11.0-dev.672+e94504543 zig
       - name: Build example binary
-        run: zig/zig build run -- src/main.n
+        run: zig/zig build run -- selfhost/main.n
       - name: Disassemble the built binary
         run: objdump -d -M intel a.out
       - name: Run the built binary

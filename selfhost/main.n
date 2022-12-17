@@ -1,0 +1,13 @@
+const std = @import("std");
+
+fn main() void {
+    std.print.str("Hello, world!\n".&);
+    std.print.decimal(u64, 69);
+    std.print.decimal(u32, 69);
+    std.print.flush();
+    var vec: std.containers.PinnedVector(u32, 1024) = undefined;
+    vec.init();
+    vec.clear_and_uncommit();
+    vec.append_assume_capacity(1);
+    std.os.syscalls.exit(0);
+}
