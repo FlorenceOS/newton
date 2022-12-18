@@ -31,25 +31,50 @@ fn PinnedVector(comptime T: type, comptime capacity: u32) type {
             );
         }
 
+        fn check_size(size: u32) inline void {
+            if(size > capacity) {
+                // TODO: Return an error or something when we have that
+            }
+        }
+
         fn append_assume_capacity(self: *@This(), value: T) void {
             self.ptr[self.size] = value;
             self.size += 1;
+            if(self.size > self.committed_size) {
+                self.committed_size = self.size;
+            }
+        }
+
+        fn items_to_pages(items: u64) inline u64 {
+            return (items * @size_of(T) + 0xFFF) & ~0xFFF;
+        }
+
+        fn madvise(self: *@This(), offset: u64, size: u64, advice: u32) inline void {
+            syscalls.madvise(@ptr_to_int(self.ptr) + offset, size, advice);
         }
 
         fn uncommit_unused_pages(self: *@This()) void {
-            const size: u64 = self.size;
-            const committed: u64 = self.committed_size;
-            const used_pages      = ((size      * @size_of(T)) + 0xFFF) & ~0xFFF;
-            const committed_pages = ((committed * @size_of(T)) + 0xFFF) & ~0xFFF;
+            const fut_pages = items_to_pages(self.size);
+            const cur_pages = items_to_pages(self.committed_size);
 
-            if(committed_pages > used_pages) {
-                syscalls.madvise(
-                    @ptr_to_int(self.ptr) + 0x1000 * used_pages,
-                    (committed_pages - used_pages) * 0x1000,
-                    syscalls.MADV.DONTNEED,
-                );
+            if(cur_pages > fut_pages) {
+                self.madvise(fut_pages, cur_pages - fut_pages, syscalls.MADV.DONTNEED);
+                self.committed_size = self.size;
             }
-            self.committed_size = self.size;
+        }
+
+        fn commit_total_capacity(self: *@This(), new_commit: u32) void {
+            const cur_pages = items_to_pages(self.committed_size);
+            const fut_pages = items_to_pages(new_commit);
+
+            if(fut_pages > cur_pages) {
+                self.madvise(cur_pages, fut_pages - cur_pages, syscalls.MADV.WILLNEED);
+                self.committed_size = new_commit;
+            }
+        }
+
+        fn commit_free_capacity(self: *@This(), free_capacity: u32) inline void {
+            self.commit_total_capacity(free_capacity + self.size);
         }
 
         fn clear_and_keep_commit(self: *@This()) inline void {

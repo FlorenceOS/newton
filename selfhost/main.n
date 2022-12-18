@@ -8,6 +8,7 @@ fn main() void {
     var vec: std.containers.PinnedVector(u32, 1024) = undefined;
     vec.init();
     vec.clear_and_uncommit();
+    vec.commit_free_capacity(55);
     vec.append_assume_capacity(1);
     std.os.syscalls.exit(0);
 }
