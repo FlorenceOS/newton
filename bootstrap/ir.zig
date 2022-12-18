@@ -1285,6 +1285,10 @@ fn appendToBlock(
 ) !DeclIndex.Index {
     const block = blocks.get(block_idx);
 
+    if(block.is_filled) { // There is a branch from this block already
+        return insertBefore(DeclIndex.unwrap(block.last_decl).?, instr);
+    }
+
     const retval = try decls.insert(.{
         .block = block_idx,
         .instr = instr,
