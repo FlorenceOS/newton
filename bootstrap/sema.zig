@@ -211,6 +211,8 @@ fn promote(vidx: *ValueIndex.Index, target_tidx: TypeIndex.Index, is_assign: boo
                 try values.addDedupLinear(.{.type_idx = target_tidx}),
             );
         },
+        .bool, .type, .void => if(value_ty != ty) return error.IncompatibleTypes,
+        .undefined => vidx.* = try values.addDedupLinear(.{.undefined = target_tidx}),
         else => |other| std.debug.panic("TODO {any}", .{other}),
     }
 }
@@ -361,39 +363,9 @@ fn semaASTExpr(
     type_hint: ?TypeIndex.Index,
 ) anyerror!ValueIndex.Index {
     if(type_hint) |ty| {
-        const evaluated_idx = try semaASTExpr(scope_idx, expr_idx, force_comptime_eval, null);
-        const evaluated = values.get(evaluated_idx);
-        switch(evaluated.*) {
-            .comptime_int => |value| return promoteComptimeInt(value, ty),
-            .unsigned_int, .signed_int => |int| return promoteComptimeInt(int.value, ty),
-            .bool => if(ty == .bool) return evaluated_idx,
-            .type_idx => if(ty == .type) return evaluated_idx,
-            .undefined => return values.addDedupLinear(.{.undefined = ty}),
-            .runtime => |rt| {
-                var result = evaluated_idx;
-                if(values.get(rt.value_type).type_idx == ty) return evaluated_idx;
-                const evaluated_type = types.get(try evaluated.getType());
-
-                if(evaluated_type.* == .pointer) {
-                    try promote(&result, ty, true);
-                    return result;
-                }
-
-                if(evaluated_type.* == .reference and evaluated_type.reference.child == ty) {
-                    return Value.fromExpression(try expressions.insert(.{.value = evaluated_idx}), try values.addDedupLinear(.{.type_idx = ty}));
-                }
-
-                try promote(&result, ty, true);
-                return result;
-            },
-            .decl_ref => |dr| {
-                const decl_type = try values.get(decls.get(dr).init_value).getType();
-                if(decl_type == ty) return evaluated_idx;
-            },
-            else => {},
-        }
-
-        std.debug.panic("Could not evaluate ({any}) {any} with type {any}", .{evaluated.getType(), evaluated, types.get(ty)});
+        var evaluated_idx = try semaASTExpr(scope_idx, expr_idx, force_comptime_eval, null);
+        try promote(&evaluated_idx, ty, true);
+        return evaluated_idx;
     }
 
     switch(ast.expressions.get(expr_idx).*) {
