@@ -1,0 +1,12 @@
+fn equals(comptime T: type, lhs: *const T, rhs: *const T, len: u64) bool {
+    var i: u64 = 0;
+    loop {
+        if(i == len) {
+            return true;
+        }
+        if(lhs[i] != rhs[i]) {
+            return false;
+        }
+        i += 1;
+    }
+}
