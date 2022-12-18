@@ -1431,7 +1431,11 @@ const IRWriter = struct {
                 const rhs = try self.writeValue(bop.rhs);
                 const op_name = @tagName(tag)[0..@tagName(tag).len - 3];
                 if((tag != .divide_eq and tag != .modulus_eq and decls.get(lhs).instr.memoryReference() == null) or !backends.current_backend.optimizations.has_inplace_ops) {
-                    return self.emit(@unionInit(DeclInstr, op_name, .{.lhs = lhs, .rhs = rhs}));
+                    const retval = try self.emit(@unionInit(DeclInstr, op_name, .{.lhs = lhs, .rhs = rhs}));
+                    if(sema.values.get(bop.lhs).* == .decl_ref) {
+                        decls.get(retval).sema_decl = sema.DeclIndex.toOpt(sema.values.get(bop.lhs).decl_ref);
+                    }
+                    return retval;
                 } else {
                     return self.emit(@unionInit(DeclInstr, "inplace_" ++ op_name, .{.lhs = lhs, .rhs = rhs}));
                 }
