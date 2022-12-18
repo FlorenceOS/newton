@@ -524,6 +524,7 @@ pub fn doRegAlloc(
                     for(block_list.items) |blk| {
                         try ir.dumpBlock(blk, uf);
                     }
+                    std.debug.print("Failed to allocate a register for instr: ${d}\n", .{@enumToInt(iidx)});
                     @panic("Couldn't find a free reg!");
                 };
                 break;
