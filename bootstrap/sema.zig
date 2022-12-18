@@ -120,8 +120,22 @@ fn commonType(lhs_ty: TypeIndex.Index, rhs_ty: TypeIndex.Index) !TypeIndex.Index
     }
 
     if(lhs.* == .pointer) {
-        std.debug.assert(rhs.* == .comptime_int or rhs.* == .unsigned_int or rhs.* == .signed_int);
-        return lhs_ty;
+        switch(rhs.*) {
+            .comptime_int,
+            .unsigned_int,
+            .signed_int,
+            => return lhs_ty,
+            .pointer => {
+                if(rhs.pointer.is_volatile != lhs.pointer.is_volatile) return error.IncompatibleTypes;
+                if(rhs.pointer.child != lhs.pointer.child) return error.IncompatibleTypes;
+                return types.addDedupLinear(.{.pointer = .{
+                    .child = lhs.pointer.child,
+                    .is_volatile = lhs.pointer.is_volatile,
+                    .is_const = lhs.pointer.is_const or rhs.pointer.is_const,
+                }});
+            },
+            else => {},
+        }
     }
 
     return error.IncompatibleTypes;
