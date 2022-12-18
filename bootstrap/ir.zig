@@ -1173,6 +1173,7 @@ fn eliminateConstantExpressions(decl_idx: DeclIndex.Index) !bool {
             const lhs = decls.get(bop.lhs);
             if(lhs.instr == .load_int_constant) {
                 decl.instr = .{.load_int_constant = .{
+                    .type = decl.instr.getOperationType(),
                     .value = switch(tag) {
                         .add_constant => lhs.instr.load_int_constant.value +% bop.rhs,
                         .sub_constant => lhs.instr.load_int_constant.value -% bop.rhs,
@@ -1186,7 +1187,6 @@ fn eliminateConstantExpressions(decl_idx: DeclIndex.Index) !bool {
                         .bit_xor_constant => lhs.instr.load_int_constant.value ^ bop.rhs,
                         else => unreachable,
                     },
-                    .type = decl.instr.getOperationType(),
                 }};
                 return true;
             }
