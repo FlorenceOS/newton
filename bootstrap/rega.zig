@@ -56,14 +56,14 @@ fn allocAnyReg(
     decl_idx: ir.DeclIndex.Index,
     gprs: []const u8,
     conflicts: *const DeclSetMap,
-) void {
+) !void {
     const decl = ir.decls.get(decl_idx);
     if(decl.reg_alloc_value != null) return;
 
     for(gprs) |reg| {
         if(tryAllocReg(decl_idx, reg, conflicts)) return;
     }
-    @panic("Couldn't find a free reg!");
+    return error.OutOfRegisters;
 }
 
 pub const UnionFind = struct {
@@ -520,7 +520,12 @@ pub fn doRegAlloc(
             const iidx = decl_node.key_ptr.*;
             const decl = ir.decls.get(iidx);
             if(decl.reg_alloc_value == null) {
-                allocAnyReg(iidx, backends.current_backend.gprs, &conflicts);
+                allocAnyReg(iidx, backends.current_backend.gprs, &conflicts) catch {
+                    for(block_list.items) |blk| {
+                        try ir.dumpBlock(blk, uf);
+                    }
+                    @panic("Couldn't find a free reg!");
+                };
                 break;
             }
         }
