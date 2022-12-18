@@ -2,6 +2,7 @@ const std = @import("std");
 
 const indexed_list = @import("indexed_list.zig");
 const ast = @import("ast.zig");
+const sema = @import("sema.zig");
 
 pub const SourceIndex = indexed_list.Indices(u32, opaque{}, .{});
 const SourceFileList = indexed_list.IndexedList(SourceIndex, SourceFile);
@@ -12,6 +13,7 @@ pub const SourceFile = struct {
     realpath: []const u8,
     contents: [:0]const u8,
     top_level_struct: ast.ExprIndex.Index,
+    sema_struct: sema.ValueIndex.OptIndex,
 };
 
 pub var source_files: SourceFileList = undefined;

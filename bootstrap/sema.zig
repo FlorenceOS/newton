@@ -983,7 +983,18 @@ fn semaASTExpr(
                 }),
             }});
         },
-        .import_call => |import| return semaASTExpr(scope_idx, sources.source_files.get(import).top_level_struct, force_comptime_eval, .type),
+        .import_call => |import| {
+            const sf = sources.source_files.get(import);
+            if(sf.sema_struct == .none) {
+                sf.sema_struct = ValueIndex.toOpt(try semaASTExpr(
+                    scope_idx,
+                    sf.top_level_struct,
+                    force_comptime_eval,
+                    .type,
+                ));
+            }
+            return ValueIndex.unwrap(sf.sema_struct).?;
+        },
 
         else => |expr| std.debug.panic("Could not evaluate: {any}", .{expr}),
     }

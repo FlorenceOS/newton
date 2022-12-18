@@ -659,6 +659,7 @@ fn createSourceFile(realpath: [:0]u8, current_dir: std.fs.Dir) !sources.SourceIn
             0,
         ),
         .top_level_struct = undefined,
+        .sema_struct = .none,
     });
 }
 
