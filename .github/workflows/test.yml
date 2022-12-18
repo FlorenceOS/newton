@@ -17,3 +17,5 @@ jobs:
         run: objdump -d -M intel a.out
       - name: Run the built binary
         run: ./a.out
+      - name: Run the test cases
+        run: ./tests.sh
