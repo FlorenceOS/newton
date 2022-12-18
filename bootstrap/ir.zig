@@ -1216,49 +1216,44 @@ fn eliminateConstantExpressions(decl_idx: DeclIndex.Index) !bool {
 
 fn eliminateOffsetPointers(decl_idx: DeclIndex.Index) !bool {
     const decl = decls.get(decl_idx);
+
+    var offset: i32 = undefined;
+    var operand: DeclIndex.Index = undefined;
+
     switch(decl.instr) {
-        .reference_wrap => |rr| {
-            var offset: i32 = undefined;
-            var operand: DeclIndex.Index = undefined;
-
-            switch(decls.get(rr.pointer_value).instr) {
-                .add_constant => |op| {
-                    operand = op.lhs;
-                    offset = @intCast(i32, @bitCast(i64, op.rhs));
-                },
-                .sub_constant => |op| {
-                    operand = op.lhs;
-                    offset = @intCast(i32, -@bitCast(i64, op.rhs));
-                },
-                else => return false,
-            }
-
-            decl.instr = switch(decls.get(operand).instr) {
-                .stack_ref => |o| .{.stack_ref = .{
-                    .orig_offset = o.orig_offset,
-                    .offset = o.offset -% @bitCast(u32, offset),
-                    .type = rr.sema_pointer_type,
-                }},
-                .global_ref => |o| .{.global_ref = .{
-                    .orig_offset = o.orig_offset,
-                    .offset = o.offset +% @bitCast(u32, offset),
-                    .type = rr.sema_pointer_type,
-                }},
-                .reference_wrap => |o| .{.reference_wrap = .{
-                    .pointer_value = o.pointer_value,
-                    .pointer_value_offset = o.pointer_value_offset +% offset,
-                    .sema_pointer_type = rr.sema_pointer_type,
-                }},
-                else => .{.reference_wrap = .{
-                    .pointer_value = operand,
-                    .pointer_value_offset = offset,
-                    .sema_pointer_type = rr.sema_pointer_type,
-                }},
-            };
-            return true;
+        .add_constant => |op| {
+            operand = op.lhs;
+            offset = @intCast(i32, @bitCast(i64, op.rhs));
+        },
+        .sub_constant => |op| {
+            operand = op.lhs;
+            offset = @intCast(i32, -@bitCast(i64, op.rhs));
         },
         else => return false,
     }
+
+    decl.instr = switch(decls.get(operand).instr) {
+        .addr_of => |ao| switch(decls.get(ao).instr) {
+            .stack_ref => |o| .{.addr_of = try insertBefore(decl_idx, .{.stack_ref = .{
+                .orig_offset = o.orig_offset,
+                .offset = o.offset -% @bitCast(u32, offset),
+                .type = o.type,
+            }})},
+            .global_ref => |o| .{.addr_of = try insertBefore(decl_idx, .{.global_ref = .{
+                .orig_offset = o.orig_offset,
+                .offset = o.offset +% @bitCast(u32, offset),
+                .type = o.type,
+            }})},
+            .reference_wrap => |o| .{.addr_of = try insertBefore(decl_idx, .{.reference_wrap = .{
+                .pointer_value = o.pointer_value,
+                .pointer_value_offset = o.pointer_value_offset +% offset,
+                .sema_pointer_type = o.sema_pointer_type,
+            }})},
+            else => return false,
+        },
+        else => return false,
+    };
+    return true;
 }
 
 pub fn insertBefore(before: DeclIndex.Index, instr: DeclInstr) !DeclIndex.Index {
