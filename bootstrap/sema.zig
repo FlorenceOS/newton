@@ -1223,6 +1223,8 @@ pub const Value = union(enum) {
     pub fn writeTo(self: @This(), writer: anytype) !void {
         return switch(self) {
             .type_idx => |idx| types.get(idx).writeTo(writer),
+            inline .unsigned_int, .signed_int => |i| writer.print("{d}", .{i.value}),
+            .comptime_int => |i| writer.print("{d}", .{i}),
             else => |other| std.debug.panic("TODO: Write {s}", .{@tagName(other)}),
         };
     }
