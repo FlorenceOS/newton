@@ -630,13 +630,8 @@ pub fn allBlocksReachableFrom(allocator: std.mem.Allocator, head_block: BlockInd
     var context = try DiscoverContext.init(allocator, head_block);
 
     while(context.nextBlock()) |block| {
-        var current_decl = block.first_decl;
-        while(decls.getOpt(current_decl)) |decl| {
-            const decl_block_edges = decl.instr.outEdges();
-            for(decl_block_edges.slice()) |edge| {
-                try context.edge(edge.*);
-            }
-            current_decl = decl.next;
+        for(decls.getOpt(block.last_decl).?.instr.outEdges().slice()) |edge| {
+            try context.edge(edge.*);
         }
     }
 
