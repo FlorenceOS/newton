@@ -225,7 +225,7 @@ fn writeOperandReg(
         switch(rm_decl.instr) {
             .global_ref => |offset| return writeRipRelative(writer, op_t, opcodes, reg, offset.offset, immediate, rm_reg_is_reg),
             .stack_ref => |offset| return writeStackOffset(writer, op_t, opcodes, reg, @intCast(i32, offset.offset), immediate, rm_reg_is_reg),
-            .reference_wrap => return writeRegIndirect(writer, op_t, opcodes, uf.findReg(mr.pointer_value).?, reg, 0, immediate, rm_reg_is_reg),
+            .reference_wrap => return writeRegIndirect(writer, op_t, opcodes, uf.findReg(mr.pointer_value).?, reg, mr.pointer_value_offset, immediate, rm_reg_is_reg),
             else => unreachable,
         }
     } else {

@@ -37,6 +37,7 @@ pub const InstrType = enum {
 
 const MemoryReference = struct {
     pointer_value: DeclIndex.Index,
+    pointer_value_offset: i32,
     sema_pointer_type: sema.PointerType,
 
     fn instrType(self: @This()) InstrType {
@@ -86,8 +87,8 @@ pub const DeclInstr = union(enum) {
         param_idx: u8,
         type: InstrType,
     },
-    stack_ref: struct { offset: u32, type: sema.PointerType },
-    global_ref: struct { offset: u32, type: sema.PointerType },
+    stack_ref: struct { offset: u32, orig_offset: u32, type: sema.PointerType },
+    global_ref: struct { offset: u32, orig_offset: u32, type: sema.PointerType },
     load_int_constant: struct {
         value: u64,
         type: InstrType,
@@ -286,14 +287,17 @@ pub const DeclInstr = union(enum) {
         switch(self.*) {
             .stack_ref => |sr| return .{
                 .pointer_value = self_index,
+                .pointer_value_offset = 0,
                 .sema_pointer_type = sr.type,
             },
             .global_ref => |offref| return .{
                 .pointer_value = self_index,
+                .pointer_value_offset = 0,
                 .sema_pointer_type = offref.type,
             },
             .reference_wrap => |rr| return .{
                 .pointer_value = self_index,
+                .pointer_value_offset = rr.pointer_value_offset,
                 .sema_pointer_type = rr.sema_pointer_type,
             },
             else => return null,
@@ -1078,10 +1082,6 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
                 bop.rhs +%= lhs_instr.rhs;
                 return true;
             }
-            // if(lhs_decl.instr == .stack_ref) {
-            //     decl.instr = .{.stack_ref = lhs_decl.instr.stack_ref - @intCast(u32, bop.rhs)};
-            //     return true;
-            // }
         },
         .bit_or_constant, .bit_xor_constant => |bop| {
             if(bop.rhs == 0) {
@@ -1432,12 +1432,14 @@ const IRWriter = struct {
                 }});
             },
             .global => |offref| return self.emit(.{.global_ref = .{
+                .orig_offset = offref.offset,
                 .offset = offref.offset,
                 .type = offref.type,
             }}),
             .deref => |sidx| {
                 return self.emit(.{.reference_wrap = .{
                     .pointer_value = try self.writeValue(sidx),
+                    .pointer_value_offset = 0,
                     .sema_pointer_type = sema.types.get(try sema.values.get(sidx).getType()).pointer,
                 }});
             },
@@ -1456,9 +1458,17 @@ const IRWriter = struct {
                     .child = try sema.values.get(rdecl.init_value).getType(),
                 };
                 if(rdecl.static) {
-                    return self.emit(.{.global_ref = .{ .offset = rdecl.offset.?, .type = ref_t}});
+                    return self.emit(.{.global_ref = .{
+                        .orig_offset = rdecl.offset.?,
+                        .offset = rdecl.offset.?,
+                        .type = ref_t,
+                    }});
                 } else if(rdecl.offset) |offset| {
-                    return self.emit(.{.stack_ref = .{ .offset = offset, .type = ref_t}});
+                    return self.emit(.{.stack_ref = .{
+                        .orig_offset = offset,
+                        .offset = offset,
+                        .type = ref_t,
+                    }});
                 } else {
                     return readVariable(self.basic_block, decl_idx);
                 }
@@ -1519,6 +1529,7 @@ const IRWriter = struct {
                     if(!decl.static) {
                         if(decl.offset) |offset| {
                             const stack_ref = try self.emit(.{.stack_ref = .{
+                                .orig_offset = offset,
                                 .offset = offset,
                                 .type = .{
                                     .is_const = !decl.mutable,
