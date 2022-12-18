@@ -5,6 +5,7 @@ const stderr = 2;
 const SYS = struct {
     const WRITE = 1;
     const MMAP = 9;
+    const MUNMAP = 11;
     const MADVISE = 28;
     const EXIT = 60;
 };
@@ -54,6 +55,13 @@ fn mmap(
     offset: u64,
 ) inline u64 {
     return @syscall(SYS.MMAP, hint, size, prot, flags, fd, offset);
+}
+
+fn munmap(
+    base: u64,
+    size: u64,
+) inline void {
+    @syscall(SYS.MUNMAP, base, size);
 }
 
 const MADV = struct {
