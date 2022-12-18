@@ -330,6 +330,7 @@ pub const DeclInstr = union(enum) {
             .inplace_add_constant, .inplace_sub_constant, .inplace_multiply_constant, .inplace_divide_constant, .inplace_modulus_constant,
             .inplace_shift_left_constant, .inplace_shift_right_constant, .inplace_bit_and_constant, .inplace_bit_or_constant, .inplace_bit_xor_constant,
             => return false,
+            .function_call => |f| return f.tail == .none,
             else => return true,
         }
     }
