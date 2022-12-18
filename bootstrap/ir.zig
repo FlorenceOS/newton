@@ -1737,7 +1737,7 @@ pub fn dumpBlock(
             .enter_function => |stack_size| std.debug.print("enter_function({d})\n", .{stack_size}),
             .leave_function => |leave| std.debug.print("leave_function(${d})\n", .{@enumToInt(leave.value)}),
             .load_int_constant => |value| std.debug.print("{d}\n", .{value.value}),
-            .reference_wrap => |ref| std.debug.print("deref(${d})\n", .{@enumToInt(ref.pointer_value)}),
+            .reference_wrap => |ref| std.debug.print("deref(${d}, #{d})\n", .{@enumToInt(ref.pointer_value), ref.pointer_value_offset}),
             .zero_extend, .sign_extend, .truncate => |cast| std.debug.print("{s}(${d})\n", .{@tagName(decl.instr), @enumToInt(cast.value)}),
             .load_bool_constant => |b| std.debug.print("{}\n", .{b}),
             .undefined => std.debug.print("undefined\n", .{}),
