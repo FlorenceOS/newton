@@ -864,9 +864,15 @@ fn semaASTExpr(
                     const lhs_type = types.get(idx);
                     const lhs_struct = structs.get(lhs_type.struct_idx);
                     if(try scopes.get(lhs_struct.scope).lookupDecl(token.identifier_value())) |static_decl| {
-                        std.debug.assert(!static_decl.mutable);
+                        std.debug.assert(static_decl.static);
                         try values.get(static_decl.init_value).analyze();
-                        return static_decl.init_value;
+                        if(!static_decl.mutable) {
+                            return static_decl.init_value;
+                        }
+                        if(static_decl.offset == null) {
+                            static_decl.offset = @intCast(u32, try values.get(static_decl.init_value).toBytes());
+                        }
+                        return values.addDedupLinear(.{.decl_ref = decls.getIndex(static_decl)});
                     } else {
                         return error.MemberNotFound;
                     }
