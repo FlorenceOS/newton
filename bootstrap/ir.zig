@@ -769,8 +769,7 @@ fn deduplicateDecls(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
         var current_decl = blocks.get(block).first_decl;
         while(decls.getOpt(current_decl)) |decl| : (current_decl = decl.next) {
             switch(decl.instr) {
-                .stack_ref, .load_int_constant, .load_bool_constant, .undefined,
-                .addr_of,
+                .stack_ref, .global_ref, .addr_of,
 
                 .add, .sub, .multiply, .divide, .modulus,
                 .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
@@ -779,9 +778,6 @@ fn deduplicateDecls(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
                 .add_constant, .sub_constant, .multiply_constant, .divide_constant, .modulus_constant,
                 .shift_left_constant, .shift_right_constant,
                 .bit_and_constant, .bit_or_constant, .bit_xor_constant,
-
-                .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant,
-                .equals_constant, .not_equal_constant,
                 => {
                     const value = try decl_dict.getOrPut(decl.instr);
                     if(value.found_existing) {
