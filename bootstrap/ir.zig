@@ -660,6 +660,7 @@ const peephole_optimizations = .{
     inlineConstants,
     eliminateTrivialArithmetic,
     eliminateConstantExpressions,
+    eliminateOffsetPointers,
 };
 
 var optimization_allocator = std.heap.GeneralPurposeAllocator(.{}){.backing_allocator = std.heap.page_allocator};
@@ -1213,6 +1214,53 @@ fn eliminateConstantExpressions(decl_idx: DeclIndex.Index) !bool {
     return false;
 }
 
+fn eliminateOffsetPointers(decl_idx: DeclIndex.Index) !bool {
+    const decl = decls.get(decl_idx);
+    switch(decl.instr) {
+        .reference_wrap => |rr| {
+            var offset: i32 = undefined;
+            var operand: DeclIndex.Index = undefined;
+
+            switch(decls.get(rr.pointer_value).instr) {
+                .add_constant => |op| {
+                    operand = op.lhs;
+                    offset = @intCast(i32, @bitCast(i64, op.rhs));
+                },
+                .sub_constant => |op| {
+                    operand = op.lhs;
+                    offset = @intCast(i32, -@bitCast(i64, op.rhs));
+                },
+                else => return false,
+            }
+
+            decl.instr = switch(decls.get(operand).instr) {
+                .stack_ref => |o| .{.stack_ref = .{
+                    .orig_offset = o.orig_offset,
+                    .offset = o.offset -% @bitCast(u32, offset),
+                    .type = rr.sema_pointer_type,
+                }},
+                .global_ref => |o| .{.global_ref = .{
+                    .orig_offset = o.orig_offset,
+                    .offset = o.offset +% @bitCast(u32, offset),
+                    .type = rr.sema_pointer_type,
+                }},
+                .reference_wrap => |o| .{.reference_wrap = .{
+                    .pointer_value = o.pointer_value,
+                    .pointer_value_offset = o.pointer_value_offset +% offset,
+                    .sema_pointer_type = rr.sema_pointer_type,
+                }},
+                else => .{.reference_wrap = .{
+                    .pointer_value = operand,
+                    .pointer_value_offset = offset,
+                    .sema_pointer_type = rr.sema_pointer_type,
+                }},
+            };
+            return true;
+        },
+        else => return false,
+    }
+}
+
 pub fn insertBefore(before: DeclIndex.Index, instr: DeclInstr) !DeclIndex.Index {
     const retval = blk: {
         const bdecl = decls.get(before);
@@ -1475,7 +1523,7 @@ const IRWriter = struct {
             },
             .comptime_int => |c| {
                 return self.emit(.{.load_int_constant = .{
-                    .value = @intCast(u64, c),
+                    .value = @truncate(u64, @bitCast(u65, c)),
                     .type = .u64, // TODO
                 }});
             },
@@ -1483,7 +1531,7 @@ const IRWriter = struct {
             .unsigned_int, .signed_int => |int| {
                 // TODO: Pass value bit width along too
                 return self.emit(.{.load_int_constant = .{
-                    .value = @intCast(u64, int.value),
+                    .value = @truncate(u64, @bitCast(u65, int.value)),
                     .type = typeForBits(int.bits),
                 }});
             },
