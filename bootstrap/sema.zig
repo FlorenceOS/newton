@@ -900,6 +900,7 @@ fn semaASTExpr(
                         }
                         return values.addDedupLinear(.{.decl_ref = decls.getIndex(static_decl)});
                     } else {
+                        std.debug.print("Member not found: {s}\n", .{token.identifier_value()});
                         return error.MemberNotFound;
                     }
                 },
