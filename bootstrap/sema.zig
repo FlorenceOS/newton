@@ -693,6 +693,18 @@ fn semaASTExpr(
             return Value.fromExpression(try expressions.insert(.{.bit_not = value_idx}), try values.insert(.{.type_idx = try value.getType()}));
         },
 
+        .unary_lognot => |uop| {
+            const value_idx = try semaASTExpr(scope_idx, uop.operand, force_comptime_eval, .bool);
+            const value = values.get(value_idx);
+            if(value.isComptime()) {
+                switch(value.*) {
+                    .bool => |b| return values.addDedupLinear(.{.bool = !b}),
+                    else => unreachable,
+                }
+            }
+            return Value.fromExpression(try expressions.insert(.{.logical_not = value_idx}), .bool);
+        },
+
         inline
         .plus, .plus_eq, .minus, .minus_eq, .multiply, .multiply_eq,
         .divide, .divide_eq, .modulus, .modulus_eq,
@@ -1614,6 +1626,7 @@ pub const Expression = union(enum) {
     range: BinaryOp,
 
     bit_not: ValueIndex.Index,
+    logical_not: ValueIndex.Index,
 
     function_arg: FunctionArgument,
     function_call: FunctionCall,

@@ -420,6 +420,12 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             uf.findRegByPtr(decl).?,
             constant.value,
         ),
+        .load_bool_constant => |constant| try movImmToReg(
+            writer,
+            .u8,
+            uf.findRegByPtr(decl).?,
+            @boolToInt(constant),
+        ),
         .add => |op| {
             const op_t = decl.instr.getOperationType();
             const dest_reg = uf.findRegByPtr(decl).?;
@@ -607,7 +613,10 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
                 .greater_equal, .greater_equal_constant => cond_flags.not | cond_flags.below,
                 .equals, .equals_constant => cond_flags.zero,
                 .not_equal, .not_equal_constant => cond_flags.not | cond_flags.zero,
-                else => unreachable,
+                else => blk: { // It's a bool in a register
+                    try writeOperandReg(writer, uf, .u8, op.condition, 7, &.{0x80}, &.{0}, false);
+                    break :blk cond_flags.not | cond_flags.zero;
+                },
             };
             const taken_reloc_type = writer.pickSmallestRelocationType(
                 op.taken,

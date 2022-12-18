@@ -68,6 +68,7 @@ fn typeFor(type_idx: sema.TypeIndex.Index) InstrType {
     return switch(sema.types.get(type_idx).*) {
         .signed_int, .unsigned_int => |bits| typeForBits(bits),
         .reference, .pointer, .void => backends.current_backend.pointer_type,
+        .bool => .u8,
         else => |other| std.debug.panic("TODO: typeFor {s}", .{@tagName(other)}),
     };
 }
@@ -141,6 +142,8 @@ pub const DeclInstr = union(enum) {
     greater_equal: Bop,
     equals: Bop,
     not_equal: Bop,
+
+    logical_not: DeclIndex.Index,
 
     store: struct {
         dest: DeclIndex.Index,
@@ -251,7 +254,7 @@ pub const DeclInstr = union(enum) {
             },
 
             .zero_extend, .sign_extend, .truncate => |*cast| bounded_result.value.bounded_iterator.appendAssumeCapacity(&cast.value),
-            .clobber, .addr_of => |*op| bounded_result.value.bounded_iterator.appendAssumeCapacity(op),
+            .clobber, .addr_of, .logical_not => |*op| bounded_result.value.bounded_iterator.appendAssumeCapacity(op),
 
             .add_constant, .sub_constant, .multiply_constant, .divide_constant, .modulus_constant,
             .shift_left_constant, .shift_right_constant, .bit_and_constant, .bit_or_constant, .bit_xor_constant,
@@ -391,6 +394,7 @@ pub const DeclInstr = union(enum) {
             .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant, .equals_constant, .not_equal_constant,
             => |bop| return decls.get(bop.lhs).instr.getOperationType(),
             .copy => |decl| return decls.get(decl).instr.getOperationType(),
+            .load_bool_constant, .logical_not => return .u8,
             .phi => |phi_operand| {
                 // TODO:
                 // Block#1:
@@ -649,6 +653,7 @@ const function_optimizations = .{
 
 const peephole_optimizations = .{
     eliminateTrivialPhis,
+    eliminateIfNots,
     eliminateConstantIfs,
     eliminateRedundantIfs,
     eliminateIndirectBranches,
@@ -897,6 +902,22 @@ fn eliminateTrivialPhis(decl_idx: DeclIndex.Index) !bool {
     return false;
 }
 
+fn eliminateIfNots(decl_idx: DeclIndex.Index) !bool {
+    const decl = decls.get(decl_idx);
+
+    if(decl.instr != .@"if") return false;
+    const instr = &decl.instr.@"if";
+
+    switch(decls.get(instr.condition).instr) {
+        .logical_not => |not_operand| {
+            instr.condition = not_operand;
+            std.mem.swap(BlockEdgeIndex.Index, &instr.taken, &instr.not_taken);
+            return true;
+        },
+        else => return false,
+    }
+}
+
 fn eliminateConstantIfs(decl_idx: DeclIndex.Index) !bool {
     const decl = decls.get(decl_idx);
     if(decl.instr == .@"if") {
@@ -1055,6 +1076,20 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
                 }};
                 return true;
             }
+        },
+        .logical_not => |op| {
+            switch(decls.get(op).instr) {
+                .equals => |bop| decl.instr = .{.not_equal = .{.lhs = bop.lhs, .rhs = bop.rhs}},
+                .not_equal => |bop| decl.instr = .{.equals = .{.lhs = bop.lhs, .rhs = bop.rhs}},
+                .less => |bop| decl.instr = .{.greater_equal = .{.lhs = bop.lhs, .rhs = bop.rhs}},
+                .less_equal => |bop| decl.instr = .{.greater = .{.lhs = bop.lhs, .rhs = bop.rhs}},
+                .greater => |bop| decl.instr = .{.less_equal = .{.lhs = bop.lhs, .rhs = bop.rhs}},
+                .greater_equal => |bop| decl.instr = .{.less = .{.lhs = bop.lhs, .rhs = bop.rhs}},
+                .logical_not => |uop| decl.instr = .{.copy = uop},
+                .load_bool_constant => |b| decl.instr = .{.load_bool_constant = !b, },
+                else => return false,
+            }
+            return true;
         },
         .equals, .not_equal => |bop| {
             if(bop.lhs == bop.rhs) {
@@ -1423,6 +1458,7 @@ const IRWriter = struct {
                     .rhs = try self.writeValue(bop.rhs),
                 }));
             },
+            .logical_not => |op| return self.emit(.{.logical_not = try self.writeValue(op)}),
             inline
             .add_eq, .sub_eq, .multiply_eq, .divide_eq, .modulus_eq,
             .shift_left_eq, .shift_right_eq, .bit_and_eq, .bit_or_eq, .bit_xor_eq,
@@ -1745,6 +1781,7 @@ pub fn dumpBlock(
             .load_bool_constant => |b| std.debug.print("{}\n", .{b}),
             .undefined => std.debug.print("undefined\n", .{}),
             .load => |p| std.debug.print("load(${d})\n", .{@enumToInt(p.source)}),
+            .logical_not => |op| std.debug.print("not(${d})\n", .{@enumToInt(op)}),
             inline
             .add, .sub, .multiply, .divide, .modulus,
             .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
