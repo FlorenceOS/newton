@@ -23,7 +23,7 @@ fn char(ch: u8) void {
 fn decimal(comptime T: type, value: T) void {
     const next = value / 10;
     if(next != 0) {
-        decimal(T, @truncate(u8, next));
+        decimal(T, next);
     }
     char('0' + @truncate(u8, value % 10));
 }
