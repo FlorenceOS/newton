@@ -227,7 +227,10 @@ fn promote(vidx: *ValueIndex.Index, target_tidx: TypeIndex.Index, is_assign: boo
         },
         .bool, .type, .void => if(value_ty != ty) return error.IncompatibleTypes,
         .undefined => vidx.* = try values.addDedupLinear(.{.undefined = target_tidx}),
-        else => |other| std.debug.panic("TODO {any}", .{other}),
+        else => |other| {
+            if(std.meta.eql(ty.*, value_ty.*)) return;
+            std.debug.panic("TODO {any} -> {any}", .{other, ty.*});
+        },
     }
 }
 
