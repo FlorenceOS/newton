@@ -209,20 +209,17 @@ pub fn doRegAlloc(
                     false,
                     &param_replacement,
                 ),
-                .function_call => |fc| if(fc.tail != .none) {
-                    try allocateRegsForInstr(decl_idx, 0, null, backends.current_default_abi.param_regs, &.{}, &.{}, false, &param_replacement);
-                } else {
-                    try allocateRegsForInstr(
-                        decl_idx,
-                        0,
-                        backends.current_default_abi.return_reg,
-                        backends.current_default_abi.param_regs,
-                        backends.current_default_abi.caller_saved_regs,
-                        &.{},
-                        false,
-                        &param_replacement,
-                    );
-                },
+                .function_call => try allocateRegsForInstr(
+                    decl_idx,
+                    0,
+                    backends.current_default_abi.return_reg,
+                    backends.current_default_abi.param_regs,
+                    backends.current_default_abi.caller_saved_regs,
+                    &.{},
+                    false,
+                    &param_replacement,
+                ),
+                .tail_call => try allocateRegsForInstr(decl_idx, 0, null, backends.current_default_abi.param_regs, &.{}, &.{}, false, &param_replacement),
                 .syscall => try allocateRegsForInstr(
                     decl_idx,
                     0,

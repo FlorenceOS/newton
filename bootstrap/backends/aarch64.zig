@@ -330,10 +330,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
                 try subImm(writer, registers.sp, registers.sp, @intCast(u12, stack_size));
             }
         },
-        .function_call => |fcall| {
-            std.debug.assert(fcall.tail == .none);
-            try writer.writeIntWithFunctionRelocation(u32, 0x94000000, fcall.callee, .imm26_div4);
-        },
+        .function_call => |fcall| try writer.writeIntWithFunctionRelocation(u32, 0x94000000, fcall.callee, .imm26_div4),
         .syscall => try writer.writeInt(u32, 0xD4000001),
         .leave_function => |leave| {
             const op_reg = uf.findDecl(leave.value).reg_alloc_value.?;

@@ -687,13 +687,13 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             }
         },
         .function_call => |fcall| {
-            if(ir.decls.getOpt(fcall.tail)) |tail| {
-                try writeLeaveFunction(writer, used_registers, tail.instr.leave_function);
-                try writer.writeInt(u8, 0xE9);
-            } else {
-                try writer.writeInt(u8, 0xE8);
-            }
+            try writer.writeInt(u8, 0xE8);
             try writer.writeRelocatedFunction(fcall.callee, .rel32_post_0);
+        },
+        .tail_call => |tcall| {
+            try writeLeaveFunction(writer, used_registers, ir.decls.get(tcall.tail).instr.leave_function);
+            try writer.writeInt(u8, 0xE9);
+            try writer.writeRelocatedFunction(tcall.callee, .rel32_post_0);
         },
         .syscall => {
             try writer.writeInt(u8, 0x0F);

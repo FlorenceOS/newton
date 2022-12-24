@@ -110,7 +110,11 @@ pub const DeclInstr = union(enum) {
     function_call: struct {
         callee: sema.InstantiatedFunction,
         first_argument: FunctionArgumentIndex.OptIndex,
-        tail: DeclIndex.OptIndex = .none,
+    },
+    tail_call: struct {
+        callee: sema.InstantiatedFunction,
+        first_argument: FunctionArgumentIndex.OptIndex,
+        tail: DeclIndex.Index,
     },
     syscall: FunctionArgumentIndex.OptIndex,
 
@@ -237,6 +241,7 @@ pub const DeclInstr = union(enum) {
 
             .phi => |p| return .{.value = .{.phi_iterator = phi_operands.getOpt(p)}},
             .function_call => |fcall| return .{.value = .{.arg_iterator = function_arguments.getOpt(fcall.first_argument)}},
+            .tail_call => |tcall| return .{.value = .{.arg_iterator = function_arguments.getOpt(tcall.first_argument)}},
             .syscall => |farg| return .{.value = .{.arg_iterator = function_arguments.getOpt(farg)}},
 
             .add, .sub, .multiply, .divide, .modulus,
@@ -329,8 +334,8 @@ pub const DeclInstr = union(enum) {
             .inplace_shift_left, .inplace_shift_right, .inplace_bit_and, .inplace_bit_or, .inplace_bit_xor,
             .inplace_add_constant, .inplace_sub_constant, .inplace_multiply_constant, .inplace_divide_constant, .inplace_modulus_constant,
             .inplace_shift_left_constant, .inplace_shift_right_constant, .inplace_bit_and_constant, .inplace_bit_or_constant, .inplace_bit_xor_constant,
+            .tail_call,
             => return false,
-            .function_call => |f| return f.tail == .none,
             else => return true,
         }
     }
@@ -703,8 +708,7 @@ pub fn optimizeFunction(head_block: BlockIndex.Index) !void {
                         decl.instr = @unionInit(DeclInstr, @tagName(tag)[0..@tagName(tag).len - 9], .{.lhs = dc.lhs, .rhs = constant});
                     }
                 },
-                .function_call => |_| blk: {
-                    // Try to perform tail call optimization
+                .function_call => |fc| blk: {
                     var next_decl = decl.next;
                     var leave_decl = DeclIndex.OptIndex.none;
                     while(decls.getOpt(next_decl)) |next| {
@@ -718,9 +722,13 @@ pub fn optimizeFunction(head_block: BlockIndex.Index) !void {
                             else => break :blk,
                         }
                     }
-                    if(leave_decl != .none) {
-                        decl.instr.function_call.tail = leave_decl;
+                    if(DeclIndex.unwrap(leave_decl)) |leave_decl_idx| {
                         decl.next = .none;
+                        decl.instr = .{.tail_call = .{
+                            .callee = fc.callee,
+                            .first_argument = fc.first_argument,
+                            .tail = leave_decl_idx,
+                        }};
                     }
                 },
                 else => {},
@@ -1801,12 +1809,22 @@ pub fn dumpBlock(
                         break;
                     }
                 }
-                if(fc.tail != .none) {
-                    std.debug.print("tail_call(", .{});
-                } else {
-                    std.debug.print("call(", .{});
+                std.debug.print("call({s}", .{try name.?.toSlice()});
+                var ops = decl.instr.operands();
+                while(ops.next()) |op| {
+                    std.debug.print(", ${d}", .{@enumToInt(op.*)});
                 }
-                std.debug.print("{s}", .{try name.?.toSlice()});
+                std.debug.print(")\n", .{});
+            },
+            .tail_call => |fc| {
+                var name: ?ast.SourceRef = null;
+                for(sema.decls.elements.items) |decl_it| {
+                    if(decl_it.init_value == fc.callee.function_value) {
+                        name = decl_it.name;
+                        break;
+                    }
+                }
+                std.debug.print("tail_call({s}", .{try name.?.toSlice()});
                 var ops = decl.instr.operands();
                 while(ops.next()) |op| {
                     std.debug.print(", ${d}", .{@enumToInt(op.*)});
