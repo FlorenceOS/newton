@@ -667,6 +667,7 @@ const peephole_optimizations = .{
     eliminateTrivialArithmetic,
     eliminateConstantExpressions,
     eliminateOffsetPointers,
+    eliminateTrivialLoads,
 };
 
 var optimization_allocator = std.heap.GeneralPurposeAllocator(.{}){.backing_allocator = std.heap.page_allocator};
@@ -1289,6 +1290,126 @@ fn eliminateOffsetPointers(decl_idx: DeclIndex.Index) !bool {
         else => return false,
     };
     return true;
+}
+
+fn arePointersDeeplyEqual(lhs_mr: MemoryReference, rhs_mr: MemoryReference) bool {
+    const lhs = decls.get(lhs_mr.pointer_value);
+    const rhs = decls.get(rhs_mr.pointer_value);
+
+    if(std.meta.activeTag(lhs.instr) != std.meta.activeTag(rhs.instr)) return false;
+    if(lhs_mr.pointer_value == rhs_mr.pointer_value and lhs_mr.pointer_value_offset == rhs_mr.pointer_value_offset) return true;
+
+    switch(lhs.instr) {
+        .stack_ref => |sr| {
+            const lhs_offset = @intCast(u32, @intCast(i32, sr.offset) - lhs_mr.pointer_value_offset);
+            const rhs_offset = @intCast(u32, @intCast(i32, rhs.instr.stack_ref.offset) - rhs_mr.pointer_value_offset);
+            return lhs_offset == rhs_offset;
+        },
+        .global_ref => |gr| {
+            const lhs_offset = @intCast(u32, @intCast(i32, gr.offset) + lhs_mr.pointer_value_offset);
+            const rhs_offset = @intCast(u32, @intCast(i32, rhs.instr.global_ref.offset) + rhs_mr.pointer_value_offset);
+            return lhs_offset == rhs_offset;
+        },
+        else => return false,
+    }
+}
+
+fn canPointersOverlap(lhs_mr: MemoryReference, rhs_mr: MemoryReference) !bool {
+    const lhs = decls.get(lhs_mr.pointer_value);
+    const rhs = decls.get(rhs_mr.pointer_value);
+
+    if(std.meta.activeTag(lhs.instr) != std.meta.activeTag(rhs.instr)) return false;
+    if(lhs_mr.pointer_value == rhs_mr.pointer_value and lhs_mr.pointer_value_offset == rhs_mr.pointer_value_offset) return true;
+
+    switch(lhs.instr) {
+        .stack_ref => |sr| {
+            const rhs_sr = rhs.instr.stack_ref;
+            const lhs_offset = @intCast(u32, @intCast(i32, sr.offset) - lhs_mr.pointer_value_offset);
+            const rhs_offset = @intCast(u32, @intCast(i32, rhs_sr.offset) - rhs_mr.pointer_value_offset);
+            if(lhs_offset - try sema.types.get(sr.type.child).getSize() >= rhs_offset) return false;
+            if(rhs_offset - try sema.types.get(rhs_sr.type.child).getSize() >= lhs_offset) return false;
+            return true;
+        },
+        .global_ref => |gr| {
+            const rhs_gr = rhs.instr.global_ref;
+            const lhs_offset = @intCast(u32, @intCast(i32, gr.offset) + lhs_mr.pointer_value_offset);
+            const rhs_offset = @intCast(u32, @intCast(i32, rhs_gr.offset) + rhs_mr.pointer_value_offset);
+            if(lhs_offset + try sema.types.get(gr.type.child).getSize() <= rhs_offset) return false;
+            if(rhs_offset + try sema.types.get(rhs_gr.type.child).getSize() <= lhs_offset) return false;
+            return true;
+        },
+        else => return true,
+    }
+}
+
+pub fn eliminateTrivialLoads(decl_idx: DeclIndex.Index) !bool {
+    const decl = decls.get(decl_idx);
+    switch(decl.instr) {
+        .copy, .store, .store_constant, .load, .addr_of, .reference_wrap => return false,
+        else => {},
+    }
+
+    var op_it = decl.instr.operands();
+    while(op_it.next()) |op_idx| {
+        const operand = decls.get(op_idx.*);
+        if(operand.instr.memoryReference()) |mr| {
+            var current = decl.prev;
+            while(decls.getOpt(current)) |it_decl| : (current = it_decl.prev) {
+                switch(it_decl.instr) {
+                    .store => |store| {
+                        const store_dest_mr = decls.get(store.dest).instr.memoryReference() orelse return false;
+                        if(!arePointersDeeplyEqual(store_dest_mr, mr)) {
+                            if(try canPointersOverlap(store_dest_mr, mr)) return false;
+                            continue;
+                        }
+                        if(it_decl.instr.getOperationType() != mr.instrType()) {
+                            if(@enumToInt(mr.instrType()) < @enumToInt(it_decl.instr.getOperationType())) {
+                                op_idx.* = try insertBefore(op_idx.*, .{.truncate = .{
+                                    .value = store.value,
+                                    .type = mr.instrType(),
+                                }});
+                            } else {
+                                return false;
+                            }
+                        } else {
+                            op_idx.* = try insertBefore(op_idx.*, .{.copy = store.value});
+                        }
+                        return true;
+                    },
+                    .store_constant => |store| {
+                       const store_dest_mr = decls.get(store.dest).instr.memoryReference() orelse return false;
+                        if(!arePointersDeeplyEqual(store_dest_mr, mr)) {
+                            if(try canPointersOverlap(store_dest_mr, mr)) return false;
+                            continue;
+                        }
+                        if(it_decl.instr.getOperationType() != mr.instrType()) {
+                            if(@enumToInt(mr.instrType()) < @enumToInt(it_decl.instr.getOperationType())) {
+                                const value = switch(mr.instrType()) {
+                                    .u8 => @truncate(u8, store.value),
+                                    .u16 => @truncate(u16, store.value),
+                                    .u32 => @truncate(u32, store.value),
+                                    else => unreachable,
+                                };
+                                op_idx.* = try insertBefore(op_idx.*, .{
+                                    .load_int_constant = .{.value = value, .type = mr.instrType()},
+                                });
+                            } else {
+                                return false;
+                            }
+                        } else {
+                            op_idx.* = try insertBefore(op_idx.*, .{
+                                .load_int_constant = .{.value = store.value, .type = store.type},
+                            });
+                        }
+                        return true;
+                    },
+                    else => if(it_decl.instr.isVolatile()) return false,
+                }
+            }
+        }
+    }
+
+    return false;
 }
 
 pub fn insertBefore(before: DeclIndex.Index, instr: DeclInstr) !DeclIndex.Index {
