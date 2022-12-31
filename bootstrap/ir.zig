@@ -655,6 +655,7 @@ const function_optimizations = .{
     eliminateUnreferenced,
     eliminateDeadBlocks,
     deduplicateDecls,
+    eliminateDeadStackStores,
 };
 
 const peephole_optimizations = .{
@@ -800,6 +801,50 @@ fn deduplicateDecls(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
             }
         }
     }
+    return did_something;
+}
+
+fn eliminateDeadStackStores(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
+    var stores_to_kill = std.AutoHashMap(u32, ?std.ArrayListUnmanaged(DeclIndex.Index)).init(alloc);
+    var did_something = false;
+
+    for(fn_blocks.items) |block| {
+        var current_decl = blocks.get(block).first_decl;
+        while(decls.getOpt(current_decl)) |decl| : (current_decl = decl.next) {
+            switch(decl.instr) {
+                .stack_ref => |sr| _ = try stores_to_kill.getOrPutValue(sr.orig_offset, .{}),
+                inline .store, .store_constant => |store| {
+                    const dest = decls.get(store.dest);
+                    if(dest.instr == .stack_ref) {
+                        if(stores_to_kill.getPtr(dest.instr.stack_ref.orig_offset).?.*) |*stores| try stores.append(alloc, decls.getIndex(decl));
+                    }
+                },
+                else => {
+                    var op_it = decl.instr.operands();
+                    while(op_it.next()) |op_idx| {
+                        const operand = decls.get(op_idx.*);
+                        if(operand.instr == .stack_ref) {
+                            if((try stores_to_kill.fetchPut(operand.instr.stack_ref.orig_offset, null)).?.value) |value| {
+                                var stores_array = value;
+                                stores_array.deinit(alloc);
+                            }
+                        }
+                    }
+                },
+            }
+        }
+    }
+
+    var value_it = stores_to_kill.valueIterator();
+    while(value_it.next()) |value| {
+        var stores_array = value.* orelse continue;
+        for(stores_array.items) |decl_idx| {
+            removeDecl(decl_idx);
+            did_something = true;
+        }
+        stores_array.deinit(alloc);
+    }
+
     return did_something;
 }
 
