@@ -668,6 +668,7 @@ const peephole_optimizations = .{
     eliminateTrivialArithmetic,
     eliminateConstantExpressions,
     eliminateOffsetPointers,
+    eliminateDerefOfAddrOf,
     eliminateTrivialLoads,
 };
 
@@ -1334,6 +1335,35 @@ fn eliminateOffsetPointers(decl_idx: DeclIndex.Index) !bool {
         },
         else => return false,
     };
+    return true;
+}
+
+pub fn eliminateDerefOfAddrOf(decl_idx: DeclIndex.Index) !bool {
+    const decl = decls.get(decl_idx);
+    if(decl.instr != .reference_wrap) return false;
+    const ref_wrap = decl.instr.reference_wrap;
+    const operand = decls.get(ref_wrap.pointer_value);
+    if(operand.instr != .addr_of) return false;
+    const new_instr: DeclInstr = switch(decls.get(operand.instr.addr_of).instr) {
+        .stack_ref => |sr| .{.stack_ref = .{
+            .offset = @intCast(u32, @intCast(i32, sr.offset) - ref_wrap.pointer_value_offset),
+            .orig_offset = sr.orig_offset,
+            .type = ref_wrap.sema_pointer_type,
+        }},
+        .global_ref => |gr| .{.global_ref = .{
+            .offset = @intCast(u32, @intCast(i32, gr.offset) + ref_wrap.pointer_value_offset),
+            .orig_offset = gr.orig_offset,
+            .type = ref_wrap.sema_pointer_type,
+        }},
+        .reference_wrap => |rw| .{.reference_wrap = .{
+            .pointer_value = rw.pointer_value,
+            .pointer_value_offset = rw.pointer_value_offset + ref_wrap.pointer_value_offset,
+            .sema_pointer_type = ref_wrap.sema_pointer_type,
+        }},
+        .copy => return false,
+        else => unreachable,
+    };
+    decl.instr = new_instr;
     return true;
 }
 
