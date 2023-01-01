@@ -1973,6 +1973,9 @@ pub fn dumpBlock(
         if(adecl != decl) {
             std.debug.print(" (-> ${d})", .{@enumToInt(decls.getIndex(adecl))});
         }
+        if(adecl.sema_decl != .none) {
+            std.debug.print(" (sema decl ${d})", .{@enumToInt(adecl.sema_decl)});
+        }
         if(adecl.reg_alloc_value) |reg| {
             std.debug.print(" ({s})", .{backends.current_backend.register_name(reg)});
         }
