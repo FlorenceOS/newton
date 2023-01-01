@@ -589,104 +589,107 @@ fn semaASTExpr(
             const ast_callee = ast.expressions.get(call.callee);
             var return_type: ValueIndex.Index = undefined;
             const sema_call = switch(ast_callee.*) {
-                .this_func => return values.insert(.{.type_idx = scopes.get(scope_idx).getThisType().?}),
-                .size_of_func => {
-                    const type_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
-                    std.debug.assert(type_arg.next == .none);
+                .builtin_function => |bi| switch(bi) {
+                    .import => unreachable,
+                    .This => return values.insert(.{.type_idx = scopes.get(scope_idx).getThisType().?}),
+                    .size_of => {
+                        const type_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
+                        std.debug.assert(type_arg.next == .none);
 
-                    const ty = try semaASTExpr(scope_idx, type_arg.value, true, .type);
-                    const type_value = types.get(values.get(ty).type_idx);
+                        const ty = try semaASTExpr(scope_idx, type_arg.value, true, .type);
+                        const type_value = types.get(values.get(ty).type_idx);
 
-                    return values.insert(.{.comptime_int = try type_value.getSize()});
-                },
-                .is_pointer_func => {
-                    const type_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
-                    std.debug.assert(type_arg.next == .none);
+                        return values.insert(.{.comptime_int = try type_value.getSize()});
+                    },
+                    .is_pointer => {
+                        const type_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
+                        std.debug.assert(type_arg.next == .none);
 
-                    const ty = try semaASTExpr(scope_idx, type_arg.value, true, .type);
-                    return values.insert(.{.bool = types.get(values.get(ty).type_idx).* == .pointer});
-                },
-                .int_to_ptr_func => {
-                    const type_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
-                    const expr_arg = ast.expressions.getOpt(type_arg.next).?.function_argument;
-                    std.debug.assert(expr_arg.next == .none);
+                        const ty = try semaASTExpr(scope_idx, type_arg.value, true, .type);
+                        return values.insert(.{.bool = types.get(values.get(ty).type_idx).* == .pointer});
+                    },
+                    .int_to_ptr => {
+                        const type_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
+                        const expr_arg = ast.expressions.getOpt(type_arg.next).?.function_argument;
+                        std.debug.assert(expr_arg.next == .none);
 
-                    const ty = try semaASTExpr(scope_idx, type_arg.value, true, .type);
-                    std.debug.assert(types.get(values.get(ty).type_idx).* == .pointer);
-                    const value = try semaASTExpr(scope_idx, expr_arg.value, false, null);
+                        const ty = try semaASTExpr(scope_idx, type_arg.value, true, .type);
+                        std.debug.assert(types.get(values.get(ty).type_idx).* == .pointer);
+                        const value = try semaASTExpr(scope_idx, expr_arg.value, false, null);
 
-                    if(force_comptime_eval) @panic("TODO: Comptime int_to_ptr");
-                    return values.insert(.{.runtime = .{
-                        .expr = ExpressionIndex.toOpt(try expressions.insert(.{
-                            .value = value,
-                        })),
-                        .value_type = ty,
-                    }});
-                },
-                .ptr_to_int_func => {
-                    const expr_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
-                    std.debug.assert(expr_arg.next == .none);
-
-                    const value = try semaASTExpr(scope_idx, expr_arg.value, false, null);
-                    std.debug.assert(types.get(try decayValueType(value)).* == .pointer);
-
-                    if(force_comptime_eval) @panic("TODO: Comptime ptr_to_int");
-                    return values.insert(.{.runtime = .{
-                        .expr = ExpressionIndex.toOpt(try expressions.insert(.{
-                            .value = value,
-                        })),
-                        .value_type = .pointer_int_type,
-                    }});
-                },
-                .truncate_func => {
-                    const type_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
-                    const expr_arg = ast.expressions.getOpt(type_arg.next).?.function_argument;
-                    std.debug.assert(expr_arg.next == .none);
-
-                    const ty = try semaASTExpr(scope_idx, type_arg.value, true, .type);
-                    const value = try semaASTExpr(scope_idx, expr_arg.value, false, null);
-
-                    if(force_comptime_eval) @panic("TODO: Comptime truncate");
-
-                    return values.insert(.{.runtime = .{
-                        .expr = ExpressionIndex.toOpt(try expressions.insert(.{.truncate = .{
-                            .value = value,
-                            .type = values.get(ty).type_idx,
-                        }})),
-                        .value_type = ty,
-                    }});
-                },
-                .syscall_func => blk: {
-                    var arg_builder = expressions.builderWithPath("function_arg.next");
-                    while(ast.expressions.getOpt(curr_ast_arg)) |ast_arg| {
-                        const func_arg = ast_arg.function_argument;
-                        var arg_value = try semaASTExpr(scope_idx, func_arg.value, false, null);
-                        const arg_value_type = try values.get(arg_value).getType();
-                        switch(types.get(arg_value_type).*) {
-                            .pointer, .signed_int, .unsigned_int => {},
-                            .comptime_int => {
-                                if(values.get(arg_value).comptime_int < 0) {
-                                    try promote(&arg_value, .i64, false);
-                                } else {
-                                    try promote(&arg_value, .u64, false);
-                                }
-                            },
-                            else => |other| std.debug.panic("Can't pass {s} to syscall", .{@tagName(other)}),
-                        }
-                        _ = try arg_builder.insert(.{.function_arg = .{
-                            .value = arg_value,
-                            .param_decl = undefined,
+                        if(force_comptime_eval) @panic("TODO: Comptime int_to_ptr");
+                        return values.insert(.{.runtime = .{
+                            .expr = ExpressionIndex.toOpt(try expressions.insert(.{
+                                .value = value,
+                            })),
+                            .value_type = ty,
                         }});
-                        curr_ast_arg = func_arg.next;
-                    }
-                    return_type = .u64_type;
-                    break :blk FunctionCall{
-                        .callee = .{
-                            .function_value = .syscall_func,
-                            .instantiation = 0,
-                        },
-                        .first_arg = arg_builder.first,
-                    };
+                    },
+                    .ptr_to_int => {
+                        const expr_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
+                        std.debug.assert(expr_arg.next == .none);
+
+                        const value = try semaASTExpr(scope_idx, expr_arg.value, false, null);
+                        std.debug.assert(types.get(try decayValueType(value)).* == .pointer);
+
+                        if(force_comptime_eval) @panic("TODO: Comptime ptr_to_int");
+                        return values.insert(.{.runtime = .{
+                            .expr = ExpressionIndex.toOpt(try expressions.insert(.{
+                                .value = value,
+                            })),
+                            .value_type = .pointer_int_type,
+                        }});
+                    },
+                    .truncate => {
+                        const type_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
+                        const expr_arg = ast.expressions.getOpt(type_arg.next).?.function_argument;
+                        std.debug.assert(expr_arg.next == .none);
+
+                        const ty = try semaASTExpr(scope_idx, type_arg.value, true, .type);
+                        const value = try semaASTExpr(scope_idx, expr_arg.value, false, null);
+
+                        if(force_comptime_eval) @panic("TODO: Comptime truncate");
+
+                        return values.insert(.{.runtime = .{
+                            .expr = ExpressionIndex.toOpt(try expressions.insert(.{.truncate = .{
+                                .value = value,
+                                .type = values.get(ty).type_idx,
+                            }})),
+                            .value_type = ty,
+                        }});
+                    },
+                    .syscall => blk: {
+                        var arg_builder = expressions.builderWithPath("function_arg.next");
+                        while(ast.expressions.getOpt(curr_ast_arg)) |ast_arg| {
+                            const func_arg = ast_arg.function_argument;
+                            var arg_value = try semaASTExpr(scope_idx, func_arg.value, false, null);
+                            const arg_value_type = try values.get(arg_value).getType();
+                            switch(types.get(arg_value_type).*) {
+                                .pointer, .signed_int, .unsigned_int => {},
+                                .comptime_int => {
+                                    if(values.get(arg_value).comptime_int < 0) {
+                                        try promote(&arg_value, .i64, false);
+                                    } else {
+                                        try promote(&arg_value, .u64, false);
+                                    }
+                                },
+                                else => |other| std.debug.panic("Can't pass {s} to syscall", .{@tagName(other)}),
+                            }
+                            _ = try arg_builder.insert(.{.function_arg = .{
+                                .value = arg_value,
+                                .param_decl = undefined,
+                            }});
+                            curr_ast_arg = func_arg.next;
+                        }
+                        return_type = .u64_type;
+                        break :blk FunctionCall{
+                            .callee = .{
+                                .function_value = .syscall_func,
+                                .instantiation = 0,
+                            },
+                            .first_arg = arg_builder.first,
+                        };
+                    },
                 },
                 else => blk: {
                     const callee_idx = try semaASTExpr(scope_idx, call.callee, true, null);
@@ -1033,7 +1036,7 @@ fn semaASTExpr(
                 }),
             }});
         },
-        .import_call => |import| {
+        .imported_file => |import| {
             const sf = sources.source_files.get(import);
             if(sf.sema_struct == .none) {
                 sf.sema_struct = ValueIndex.toOpt(try semaASTExpr(

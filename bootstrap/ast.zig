@@ -28,15 +28,6 @@ pub const ExprIndex = indexed_list.Indices(u32, opaque{}, .{
     .i32 = .{ .signed_int = 32 },
     .i64 = .{ .signed_int = 64 },
 
-    .import = .{.import = {}},
-    .syscall_func = .{.syscall_func = {}},
-    .truncate_func = .{.truncate_func = {}},
-    .this_func = .{.this_func = {}},
-    .is_pointer_func = .{.is_pointer_func = {}},
-    .ptr_to_int_func = .{.ptr_to_int_func = {}},
-    .int_to_ptr_func = .{.int_to_ptr_func = {}},
-    .size_of_func = .{.size_of_func = {}},
-
     // _ = a;
     // ^ This thing
     .discard_underscore = .{ .discard_underscore = {} },
@@ -94,31 +85,23 @@ pub const FunctionCall = struct {
     first_arg: ExprIndex.OptIndex,
 };
 
+pub const BuiltinFunction = enum {
+    import,
+    int_to_ptr,
+    is_pointer,
+    ptr_to_int,
+    size_of,
+    syscall,
+    This,
+    truncate,
+};
+
 pub const ExpressionNode = union(enum) {
     identifier: SourceRef,
     int_literal: SourceRef,
     char_literal: SourceRef,
     string_literal: SourceRef,
     bool_literal: bool,
-
-    // @import
-    import,
-    // @syscall
-    syscall_func,
-    // @truncate
-    truncate_func,
-    // @This()
-    this_func,
-    // @is_pointer
-    is_pointer_func,
-    // @ptr_to_int
-    ptr_to_int_func,
-    // @int_to_ptr
-    int_to_ptr_func,
-    // @size_of
-    size_of_func,
-    // @import("whatever")
-    import_call: sources.SourceIndex.Index,
 
     parenthesized: Uop,
     force_comptime_eval: Uop,
@@ -141,6 +124,8 @@ pub const ExpressionNode = union(enum) {
     type,
     unsigned_int: u32,
     signed_int: u32,
+    builtin_function: BuiltinFunction,
+    imported_file: sources.SourceIndex.Index,
 
     // Binary expressions, has lhs and rhs populated
     array_subscript: Bop,
@@ -296,7 +281,7 @@ fn dumpNode(node: anytype, indent_level: usize) anyerror!void {
                 }
                 try dumpNode(expressions.get(ptr_type.child), indent_level);
             },
-            .import_call => |file_index| {
+            .imported_file => |file_index| {
                 std.debug.print("(", .{});
                 try dumpNode(sources.source_files.get(file_index), indent_level);
                 std.debug.print(")", .{});
@@ -419,13 +404,7 @@ fn dumpNode(node: anytype, indent_level: usize) anyerror!void {
                 std.debug.print("comptime ", .{});
                 try dumpNode(expressions.get(uop.operand), indent_level);
             },
-            .syscall_func => std.debug.print("@syscall", .{}),
-            .truncate_func => std.debug.print("@truncate", .{}),
-            .this_func => std.debug.print("@This", .{}),
-            .is_pointer_func => std.debug.print("@is_pointer", .{}),
-            .ptr_to_int_func => std.debug.print("@ptr_to_int", .{}),
-            .int_to_ptr_func => std.debug.print("@int_to_ptr", .{}),
-            .size_of_func => std.debug.print("@size_of", .{}),
+            .builtin_function => |bi| std.debug.print("@{s}", .{@tagName(bi)}),
             else => |expr| std.debug.panic("Cannot dump expression of type {s}", .{@tagName(expr)}),
         },
         *StatementNode => switch(node.value) {

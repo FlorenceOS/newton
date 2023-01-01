@@ -71,14 +71,12 @@ fn identToAstNode(self: *@This(), tok: anytype) !ast.ExprIndex.Index {
     if(std.mem.eql(u8, tok.body, "type")) return .type;
     if(std.mem.eql(u8, tok.body, "void")) return .void;
     if(std.mem.eql(u8, tok.body, "anyopaque")) return .anyopaque;
-    if(std.mem.eql(u8, tok.body, "@import")) return .import;
-    if(std.mem.eql(u8, tok.body, "@syscall")) return .syscall_func;
-    if(std.mem.eql(u8, tok.body, "@truncate")) return .truncate_func;
-    if(std.mem.eql(u8, tok.body, "@This")) return .this_func;
-    if(std.mem.eql(u8, tok.body, "@is_pointer")) return .is_pointer_func;
-    if(std.mem.eql(u8, tok.body, "@ptr_to_int")) return .ptr_to_int_func;
-    if(std.mem.eql(u8, tok.body, "@int_to_ptr")) return .int_to_ptr_func;
-    if(std.mem.eql(u8, tok.body, "@size_of")) return .size_of_func;
+
+    inline for(@typeInfo(ast.BuiltinFunction).Enum.fields) |ef| {
+        if(std.mem.eql(u8, tok.body, "@" ++ ef.name)) {
+            return ast.expressions.insert(.{.builtin_function = @intToEnum(ast.BuiltinFunction, ef.value)});
+        }
+    }
 
     return ast.expressions.insert(.{ .identifier = self.toAstIdent(tok) });
 }
@@ -422,17 +420,17 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
                 }
                 _ = try self.expect(.@")_ch");
 
-                if(lhs == .import) {
+                const lhs_expr = ast.expressions.get(lhs);
+                if(lhs_expr.* == .builtin_function and lhs_expr.builtin_function == .import) {
                     std.debug.assert(arg_builder.first == arg_builder.last);
                     const arg = ast.expressions.getOpt(arg_builder.first).?;
                     const arg_expr = arg.function_argument.value;
                     const strlit = ast.expressions.get(arg_expr).string_literal;
                     const path_string = try strlit.retokenize();
                     defer path_string.deinit();
-
                     const dir = sources.source_files.get(self.source_file_index).dir;
                     const parsed_file = try parseFileIn(path_string.string_literal.value, dir);
-                    arg.* = .{ .import_call = parsed_file };
+                    arg.* = .{ .imported_file = parsed_file };
                     lhs = ast.expressions.getIndex(arg);
                 } else {
                     lhs = try ast.expressions.insert(.{ .function_call = .{
@@ -440,7 +438,6 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
                         .first_arg = arg_builder.first,
                     }});
                 }
-
             },
             .@"[_ch" => {
                 _ = try self.tokenize();
