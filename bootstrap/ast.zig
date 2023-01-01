@@ -415,6 +415,10 @@ fn dumpNode(node: anytype, indent_level: usize) anyerror!void {
                 std.debug.print("]", .{});
                 try dumpNode(expressions.get(bop.rhs), indent_level);
             },
+            .force_comptime_eval => |uop| {
+                std.debug.print("comptime ", .{});
+                try dumpNode(expressions.get(uop.operand), indent_level);
+            },
             .syscall_func => std.debug.print("@syscall", .{}),
             .truncate_func => std.debug.print("@truncate", .{}),
             .this_func => std.debug.print("@This", .{}),
