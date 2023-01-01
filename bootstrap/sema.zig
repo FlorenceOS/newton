@@ -161,7 +161,7 @@ fn promote(vidx: *ValueIndex.Index, target_tidx: TypeIndex.Index, is_assign: boo
         const child_type = types.get(ty.pointer.child);
         switch(value_ty.*) {
             .comptime_int, .unsigned_int, .signed_int => {
-                std.debug.assert(!is_assign);
+                if(is_assign) return error.IncompatibleTypes;
                 vidx.* = try Value.fromExpression(
                     try expressions.insert(.{.multiply = .{
                         .lhs = vidx.*,
@@ -960,9 +960,10 @@ fn semaASTExpr(
         },
         .array_subscript => |bop| {
             if(force_comptime_eval) @panic("TODO: comptime eval addr_of");
-            const lhs_idx = try semaASTExpr(scope_idx, bop.lhs, force_comptime_eval, null);
-            const lhs = values.get(lhs_idx);
+            var lhs_idx = try semaASTExpr(scope_idx, bop.lhs, force_comptime_eval, null);
             const lhs_type = types.get(try decayValueType(lhs_idx));
+            try promote(&lhs_idx, types.getIndex(lhs_type), true);
+            const lhs = values.get(lhs_idx);
 
             const child_type = switch(lhs_type.*) {
                 .pointer => |ptr| ptr.child,

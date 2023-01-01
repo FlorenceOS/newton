@@ -899,8 +899,7 @@ fn eliminateCopies(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
 
     for(fn_blocks.items) |block| {
         var current_decl = blocks.get(block).first_decl;
-        while(decls.getOpt(current_decl)) |decl| {
-            current_decl = decl.next;
+        while(decls.getOpt(current_decl)) |decl| : (current_decl = decl.next) {
             var ops = decl.instr.operands();
             while(ops.next()) |op| {
                 try eliminateCopyOperands(op, &copy_dict);
