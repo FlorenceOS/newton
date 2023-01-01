@@ -507,7 +507,11 @@ fn readVariableRecursive(block_idx: BlockIndex.Index, decl: sema.DeclIndex.Index
         return new_phi;
     } else {
         const first_predecessor = block.first_predecessor;
-        const first_edge = edges.getOpt(first_predecessor).?;
+        const first_edge = edges.getOpt(first_predecessor) orelse {
+            var token = try sema.decls.get(decl).name.retokenize();
+            defer token.deinit();
+            std.debug.panic("Internal compiler error: Failed to look up variable {s}\n", .{token.identifier_value()});
+        };
 
         if(edges.getOpt(first_edge.next)) |_| {
             // Block gets new phi node
