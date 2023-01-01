@@ -587,6 +587,13 @@ fn semaASTExpr(
 
                     return values.insert(.{.comptime_int = try type_value.getSize()});
                 },
+                .is_pointer_func => {
+                    const type_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
+                    std.debug.assert(type_arg.next == .none);
+
+                    const ty = try semaASTExpr(scope_idx, type_arg.value, true, .type);
+                    return values.insert(.{.bool = types.get(values.get(ty).type_idx).* == .pointer});
+                },
                 .int_to_ptr_func => {
                     const type_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
                     const expr_arg = ast.expressions.getOpt(type_arg.next).?.function_argument;
