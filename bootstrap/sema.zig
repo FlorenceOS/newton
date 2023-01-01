@@ -301,21 +301,33 @@ fn analyzeStatementChain(
             },
             .if_statement => |if_stmt| {
                 const condition = try semaASTExpr(block_scope_idx, if_stmt.condition, false, .bool);
-                // TODO: Only analyze taken branch if it's compile time known
+                const condition_value = values.get(condition);
                 const taken_scope = try scopes.insert(.{
                     .outer_scope = ScopeIndex.toOpt(block_scope_idx),
                 });
                 const not_taken_scope = try scopes.insert(.{
                     .outer_scope = ScopeIndex.toOpt(block_scope_idx),
                 });
-                const taken_block = try analyzeStatementChain(taken_scope, if_stmt.first_taken, return_type, current_break_block);
-                const not_taken_block = try analyzeStatementChain(not_taken_scope, if_stmt.first_not_taken, return_type, current_break_block);
-                _ = try stmt_builder.insert(.{.value = .{.if_statement = .{
-                    .condition = condition,
-                    .taken = taken_block,
-                    .not_taken = not_taken_block,
-                }}});
-                reaches_end = taken_block.reaches_end or not_taken_block.reaches_end;
+                if(condition_value.* == .bool) {
+                    if(condition_value.bool) {
+                        const taken_block = try analyzeStatementChain(taken_scope, if_stmt.first_taken, return_type, current_break_block);
+                        _ = try stmt_builder.insert(.{.value = .{.block = taken_block}});
+                        reaches_end = taken_block.reaches_end;
+                    } else {
+                        const not_taken_block = try analyzeStatementChain(not_taken_scope, if_stmt.first_not_taken, return_type, current_break_block);
+                        _ = try stmt_builder.insert(.{.value = .{.block = not_taken_block}});
+                        reaches_end = not_taken_block.reaches_end;
+                    }
+                } else {
+                    const taken_block = try analyzeStatementChain(taken_scope, if_stmt.first_taken, return_type, current_break_block);
+                    const not_taken_block = try analyzeStatementChain(not_taken_scope, if_stmt.first_not_taken, return_type, current_break_block);
+                    _ = try stmt_builder.insert(.{.value = .{.if_statement = .{
+                        .condition = condition,
+                        .taken = taken_block,
+                        .not_taken = not_taken_block,
+                    }}});
+                    reaches_end = taken_block.reaches_end or not_taken_block.reaches_end;
+                }
             },
             .loop_statement => |loop| {
                 std.debug.assert(loop.condition == .none);
