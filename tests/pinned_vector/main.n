@@ -14,7 +14,7 @@ fn test_vec(comptime T: type, comptime capacity: u32) void {
 
     test_lib.expect_equal(u32, vec.size, 1);
     test_lib.expect_equal(u32, vec.committed_size, 1);
-    //test_lib.expect_equal(T, vec.ptr[0], 69);
+    test_lib.expect_equal(T, vec.ptr[0], 69);
 
     vec.clear_and_uncommit();
 
@@ -25,7 +25,7 @@ fn test_vec(comptime T: type, comptime capacity: u32) void {
 
     test_lib.expect_equal(u32, vec.size, 1);
     test_lib.expect_equal(u32, vec.committed_size, 1);
-    //test_lib.expect_equal(T, vec.ptr[0], 420);
+    test_lib.expect_equal(T, vec.ptr[0], 420);
 
     vec.clear_and_keep_commit();
 
