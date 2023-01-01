@@ -1589,15 +1589,20 @@ const IRWriter = struct {
         return self.current_stack_offset;
     }
 
-    fn attemptInlineFunction(self: *@This(), function: sema.InstantiatedFunction) !?DeclIndex.Index {
+    fn attemptInlineFunctionPre(self: *@This(), function: sema.InstantiatedFunction) bool {
         const callee = sema.values.get(function.function_value);
         for(self.function_stack.items) |inst| {
             // Already on the writing stack, just call it instead to avoid infinite recursion
-            if(std.meta.eql(function, inst)) return null;
+            if(std.meta.eql(function, inst)) return false;
         }
         // TODO: Check if function is small enough to be inlined unconditionally
         // TODO: Check whether or not function is called in multiple places
-        if(!ast.functions.get(callee.function.ast_function).is_inline) return null;
+        if(!ast.functions.get(callee.function.ast_function).is_inline) return false;
+        return true;
+    }
+
+    fn attemptInlineFunctionCommit(self: *@This(), function: sema.InstantiatedFunction) !DeclIndex.Index {
+        const callee = sema.values.get(function.function_value);
 
         const return_block = try blocks.insert(.{});
         const return_phi = try appendToBlock(return_block, .{.phi = .none});
@@ -1695,6 +1700,8 @@ const IRWriter = struct {
             .function_call => |fcall| {
                 var builder = function_arguments.builder();
                 var curr_arg = fcall.first_arg;
+                const will_inline = fcall.callee.function_value == .syscall_func and
+                    self.attemptInlineFunctionPre(fcall.callee);
                 while(sema.expressions.getOpt(curr_arg)) |arg| : (curr_arg = arg.function_arg.next) {
                     const farg = arg.function_arg;
                     var value = try self.writeValue(farg.value);
@@ -1702,12 +1709,14 @@ const IRWriter = struct {
                         value = try self.emit(mr.load());
                     }
                     const copy = try self.emit(.{.copy = value});
-                    decls.get(copy).sema_decl = sema.DeclIndex.toOpt(arg.function_arg.param_decl);
+                    if(will_inline) {
+                        decls.get(copy).sema_decl = sema.DeclIndex.toOpt(arg.function_arg.param_decl);
+                    }
                     _ = try builder.insert(.{.value = copy });
                 }
                 if(fcall.callee.function_value == .syscall_func) return self.emit(.{.syscall = builder.first});
-                if(try self.attemptInlineFunction(fcall.callee)) |return_stmt| {
-                    return return_stmt;
+                if(will_inline) {
+                    return self.attemptInlineFunctionCommit(fcall.callee);
                 }
                 return self.emit(.{.function_call = .{
                     .callee = fcall.callee,
