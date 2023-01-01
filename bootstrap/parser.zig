@@ -74,7 +74,7 @@ fn identToAstNode(self: *@This(), tok: anytype) !ast.ExprIndex.Index {
 
     inline for(@typeInfo(ast.BuiltinFunction).Enum.fields) |ef| {
         if(std.mem.eql(u8, tok.body, "@" ++ ef.name)) {
-            return ast.expressions.insert(.{.builtin_function = @intToEnum(ast.BuiltinFunction, ef.value)});
+            return ast.expressions.addDedupLinear(.{.builtin_function = @intToEnum(ast.BuiltinFunction, ef.value)});
         }
     }
 
