@@ -18,7 +18,6 @@ pub fn Indices(comptime IndexType: type, comptime _: type, comptime extra_field_
     }
 
     const _Index = @Type(std.builtin.Type{ .Enum = .{
-        .layout = .Auto,
         .tag_type = IndexType,
         .fields = extra_fields,
         .decls = &[_]std.builtin.Type.Declaration{},
@@ -32,7 +31,6 @@ pub fn Indices(comptime IndexType: type, comptime _: type, comptime extra_field_
     current_value += 1;
 
     const _OptIndex = @Type(std.builtin.Type{ .Enum = .{
-        .layout = .Auto,
         .tag_type = IndexType,
         .fields = extra_fields,
         .decls = &[_]std.builtin.Type.Declaration{},
@@ -104,7 +102,7 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
                             field_type = std.meta.fieldInfo(
                                 field_type,
                                 @field(std.meta.FieldEnum(field_type), component),
-                            ).field_type;
+                            ).type;
                         }
                         @intToPtr(*field_type, @ptrToInt(last) + offset).* = opt;
                     }
