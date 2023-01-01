@@ -1573,6 +1573,7 @@ const IRWriter = struct {
     basic_block: BlockIndex.Index,
 
     fn deinit(self: *@This()) void {
+        std.debug.assert(self.function_stack.items.len == 0);
         self.function_stack.deinit(function_stack_gpa.allocator());
     }
 
@@ -1944,8 +1945,9 @@ pub fn writeFunction(sema_func: sema.InstantiatedFunction) !BlockIndex.Index {
         .return_phi_node = phi,
         .basic_block = first_basic_block,
     };
-    try writer.function_stack.append(function_stack_gpa.allocator(), sema_func);
     defer writer.deinit();
+    try writer.function_stack.append(function_stack_gpa.allocator(), sema_func);
+    defer _ = writer.function_stack.pop();
     try writer.writeBlockStatement(func.body.first_stmt);
     std.debug.assert(func.return_type == .void or !func.body.reaches_end);
     if(func.body.reaches_end) {
