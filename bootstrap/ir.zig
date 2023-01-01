@@ -1762,7 +1762,9 @@ const IRWriter = struct {
                         .type = ref_t,
                     }});
                 } else {
-                    return readVariable(self.basic_block, decl_idx);
+                    return self.emit(.{
+                        .copy = try readVariable(self.basic_block, decl_idx),
+                    });
                 }
             },
             .comptime_int => |c| {
