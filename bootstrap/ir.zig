@@ -1700,7 +1700,7 @@ const IRWriter = struct {
             .function_call => |fcall| {
                 var builder = function_arguments.builder();
                 var curr_arg = fcall.first_arg;
-                const will_inline = fcall.callee.function_value == .syscall_func and
+                const will_inline = fcall.callee.function_value != .syscall_func and
                     self.attemptInlineFunctionPre(fcall.callee);
                 while(sema.expressions.getOpt(curr_arg)) |arg| : (curr_arg = arg.function_arg.next) {
                     const farg = arg.function_arg;
