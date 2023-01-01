@@ -20,12 +20,20 @@ fn char(ch: u8) void {
     used = used + 1;
 }
 
-fn decimal(comptime T: type, value: T) void {
+fn unsigned_decimal(value: u64) void {
     const next = value / 10;
     if(next != 0) {
-        decimal(T, next);
+        unsigned_decimal(next);
     }
     char('0' + @truncate(u8, value % 10));
+}
+
+fn unsigned_hex_upper(value: u64) void {
+    const next = value / 16;
+    if(next != 0) {
+        unsigned_hex_upper(next);
+    }
+    char("0123456789ABCDEF".&[@truncate(u8, value % 16)]);
 }
 
 fn str(s: *const u8) void {

@@ -1,0 +1,10 @@
+const std = @import("std");
+const test_lib = @import("../test_lib.n");
+
+fn main() void {
+    std.print.unsigned_decimal(123456789);
+    test_lib.expect_unflushed_output("123456789".&, 9);
+    std.print.unsigned_decimal(42069);
+    test_lib.expect_unflushed_output("42069".&, 5);
+    test_lib.pass_test();
+}

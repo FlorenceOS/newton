@@ -1,0 +1,42 @@
+const std = @import("std");
+const test_lib = @import("../test_lib.n");
+
+const PinnedVector = std.containers.PinnedVector;
+
+fn test_vec(comptime T: type, comptime capacity: u32) void {
+    var vec: PinnedVector(T, capacity) = undefined;
+    vec.init();
+
+    test_lib.expect_equal(u32, vec.size, 0);
+    test_lib.expect_equal(u32, vec.committed_size, 0);
+
+    vec.append_assume_capacity(69);
+
+    test_lib.expect_equal(u32, vec.size, 1);
+    test_lib.expect_equal(u32, vec.committed_size, 1);
+    //test_lib.expect_equal(T, vec.ptr[0], 69);
+
+    vec.clear_and_uncommit();
+
+    test_lib.expect_equal(u32, vec.size, 0);
+    test_lib.expect_equal(u32, vec.committed_size, 0);
+
+    vec.append_assume_capacity(420);
+
+    test_lib.expect_equal(u32, vec.size, 1);
+    test_lib.expect_equal(u32, vec.committed_size, 1);
+    //test_lib.expect_equal(T, vec.ptr[0], 420);
+
+    vec.clear_and_keep_commit();
+
+    test_lib.expect_equal(u32, vec.size, 0);
+    test_lib.expect_equal(u32, vec.committed_size, 1);
+
+    vec.deinit();
+}
+
+fn main() void {
+    test_vec(u32, 1024);
+    test_vec(u64, 16*1024);
+    test_lib.pass_test();
+}

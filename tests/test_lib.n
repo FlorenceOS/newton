@@ -1,26 +1,28 @@
 const std = @import("std");
 
 fn fail_test() void {
-    std.print.used = 0;
-    std.print.str("\x1b[31;1mFAIL\x1b[0m\n".&);
-    std.print.flush();
+    std.os.syscalls.write_all(std.os.syscalls.stderr, "\x1b[31;1mFAIL\x1b[0m\n".&, 16);
     std.os.syscalls.exit(1);
 }
 
 fn pass_test() void {
-    std.print.used = 0;
-    std.print.str("\x1b[32;1mPASS\x1b[0m\n".&);
-    std.print.flush();
+    std.os.syscalls.write_all(std.os.syscalls.stderr, "\x1b[32;1mPASS\x1b[0m\n".&, 16);
     std.os.syscalls.exit(0);
 }
 
 fn expect_unflushed_output(output: *const u8, len: u64) void {
-    if(std.print.used != len) {
-        fail_test();
+    if(std.print.used == len) {
+        if(std.mem.equals(u8, std.print.buffer[0].&, output, len)) {
+            std.print.used = 0;
+            return;
+        }
     }
-    if(!std.mem.equals(u8, std.print.buffer[0].&, output, len)) {
-        fail_test();
-    }
+    std.os.syscalls.write_all(std.os.syscalls.stderr, "Expected output: ".&, 17);
+    std.os.syscalls.write_all(std.os.syscalls.stderr, output, len);
+    std.os.syscalls.write_all(std.os.syscalls.stderr, "\nFound: ".&, 8);
+    std.print.char('\n');
+    std.print.flush();
+    fail_test();
 }
 
 fn expect_equal(comptime T: type, lhs: T, rhs: T) void {
