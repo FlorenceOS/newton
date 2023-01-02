@@ -26,7 +26,7 @@ fn expect_unflushed_output(output: *const u8, len: u64) void {
     fail_test();
 }
 
-fn expect_equal(comptime T: type, got: T, expected: T) inline void {
+fn expect_equal(comptime T: type, got: T, expected: T) void {
     if(got != expected) {
         if(comptime @is_pointer(T)) {
             expect_equal_fail(@ptr_to_int(got), @ptr_to_int(expected));
