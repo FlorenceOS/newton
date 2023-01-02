@@ -407,7 +407,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             const src_type = ir.decls.get(zext.value).instr.getOperationType();
 
             if(dest_type == .u64 and src_type == .u32) {
-                try mov(writer, uf, .u32, decl_idx, zext.value, false);
+                try mov(writer, uf, .u32, decl_idx, zext.value, true);
             } else {
                 // movzx rM r/mN
                 try writeWithOperands(writer, uf, dest_type, zext.value, decl_idx, &.{
