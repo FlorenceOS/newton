@@ -29,14 +29,14 @@ fn expect_unflushed_output(output: *const u8, len: u64) void {
 fn expect_equal(comptime T: type, got: T, expected: T) inline void {
     if(got != expected) {
         if(comptime @is_pointer(T)) {
-            expect_equal_fail(u64, @ptr_to_int(got), @ptr_to_int(expected));
+            expect_equal_fail(@ptr_to_int(got), @ptr_to_int(expected));
         } else {
-            expect_equal_fail(T, got, expected);
+            expect_equal_fail(got, expected);
         }
     }
 }
 
-fn expect_equal_fail(comptime T: type, got: T, expected: T) void {
+fn expect_equal_fail(got: u64, expected: u64) void {
     std.print.log_hex_upper("Got:      ".&, got);
     std.print.log_hex_upper("Expected: ".&, expected);
     fail_test();
