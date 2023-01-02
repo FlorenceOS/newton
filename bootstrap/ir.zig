@@ -1017,9 +1017,10 @@ fn eliminateIndirectBranches(decl_idx: DeclIndex.Index) !bool {
             const first_decl = decls.getOpt(target_block.first_decl) orelse continue;
             if(first_decl.instr == .goto) {
                 const goto_edge = edges.get(first_decl.instr.goto);
-                if(target_edge != goto_edge) {
+                if(target_edge != goto_edge and target_block.first_predecessor == BlockEdgeIndex.toOpt(edge.*) and target_edge.next == .none) {
                     goto_edge.source_block = decl.block;
                     edge.* = first_decl.instr.goto;
+                    first_decl.instr = .{.@"unreachable" = {}};
                     did_something = true;
                 }
             }
