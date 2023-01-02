@@ -552,23 +552,11 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
                 try writeOperandReg(writer, uf, op_t, op.lhs, 0, &.{0x80 | boolToU8(op_t != .u8)}, opTypeImm(op_t, imm), false);
             }
         },
-        .load => |op| {
-            const out_reg = uf.findRegByPtr(decl).?;
-            if(uf.findReg(op.source)) |src_ptr_reg| {
-                try writeRegIndirect(writer, op.type, &.{0x8A | boolToU8(op.type != .u8)}, src_ptr_reg, out_reg, 0, &.{}, true);
-            } else {
-                try mov(writer, uf, op.type, decl_idx, op.source, false);
-            }
-        },
+        .load => |op| try mov(writer, uf, op.type, decl_idx, op.source, false),
         .store => |op| {
             const value = ir.decls.get(op.value);
             const op_t = value.instr.getOperationType();
-            if(uf.findReg(op.dest)) |dest_ptr_reg| {
-                const value_reg = uf.findRegByPtr(value).?;
-                try writeRegIndirect(writer, op_t, &.{0x88 | boolToU8(op_t != .u8)}, dest_ptr_reg, value_reg, 0, &.{}, true);
-            } else {
-                try mov(writer, uf, op_t, op.dest, op.value, false);
-            }
+            try mov(writer, uf, op_t, op.dest, op.value, false);
         },
         .addr_of => |op| try writeWithOperands(writer, uf, .u64, op, decl_idx, &.{0x8D}, &.{}, true),
         .store_constant => |op| {
