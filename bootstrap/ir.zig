@@ -1236,6 +1236,24 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
                 return true;
             }
         },
+
+        .reference_wrap => |*mr| {
+            const pointer_value = decls.get(mr.pointer_value);
+            switch(pointer_value.instr) {
+                .add_constant => |bop| {
+                    mr.pointer_value = bop.lhs;
+                    mr.pointer_value_offset += @intCast(i32, bop.rhs);
+                    return true;
+                },
+                .sub_constant => |bop| {
+                    mr.pointer_value = bop.lhs;
+                    mr.pointer_value_offset -= @intCast(i32, bop.rhs);
+                    return true;
+                },
+                else => {},
+            }
+        },
+
         else => {},
     }
 
