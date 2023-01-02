@@ -593,13 +593,13 @@ fn checkTrivialPhi(phi_decl: DeclIndex.Index) ??DeclIndex.Index {
     var current_operand = decls.get(phi_decl).instr.phi;
     var only_decl: ?DeclIndex.Index = null;
 
-    while(phi_operands.getOpt(current_operand)) |op| {
+    while(phi_operands.getOpt(current_operand)) |op| : (current_operand = op.next) {
+        if(op.decl == phi_decl) continue;
         if(only_decl) |only| {
-            if(only != op.decl and op.decl != phi_decl) return null;
+            if(only != op.decl) return null;
         } else {
             only_decl = op.decl;
         }
-        current_operand = op.next;
     }
 
     return only_decl;
