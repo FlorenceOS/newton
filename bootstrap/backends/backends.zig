@@ -4,6 +4,8 @@ const ir = @import("../ir.zig");
 const rega = @import("../rega.zig");
 const sema = @import("../sema.zig");
 
+pub const any_register = 0xFF;
+
 pub const backends = struct {
     pub const aarch64 = @import("aarch64.zig");
     pub const x86_64 = @import("x86_64.zig");

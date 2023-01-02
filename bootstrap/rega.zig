@@ -152,6 +152,10 @@ pub fn allocateRegsForInstr(
                 if(allocate_gprs) break;
                 @panic("Ran out of param regs");
             }
+            if(param_regs[register_operands] == backends.any_register) {
+                register_operands += 1;
+                continue;
+            }
             op.* = try ir.insertBefore(decl_idx, .{.copy = op.*});
             ir.decls.get(op.*).reg_alloc_value = param_regs[register_operands];
             register_operands += 1;
