@@ -657,7 +657,6 @@ pub fn allBlocksReachableFrom(allocator: std.mem.Allocator, head_block: BlockInd
 }
 
 const function_optimizations = .{
-    eliminateUnreachablePhiOperands,
     eliminateCopies,
     eliminateUnreferenced,
     eliminateDeadBlocks,
@@ -666,6 +665,7 @@ const function_optimizations = .{
 };
 
 const peephole_optimizations = .{
+    eliminateUnreachablePhiOperands,
     eliminateTrivialPhis,
     eliminateIfNots,
     eliminateConstantIfs,
@@ -693,7 +693,11 @@ pub fn optimizeFunction(head_block: BlockIndex.Index) !void {
             while(decls.getOpt(current_decl)) |decl| {
                 current_decl = decl.next;
                 inline for(peephole_optimizations) |pass| {
-                    if(try pass(decls.getIndex(decl))) did_something = true;
+                    if(@typeInfo(@TypeOf(pass)).Fn.params.len == 2) {
+                        if(try pass(decls.getIndex(decl), fn_blocks)) did_something = true;
+                    } else {
+                        if(try pass(decls.getIndex(decl))) did_something = true;
+                    }
                 }
             }
         }
@@ -856,50 +860,6 @@ fn eliminateDeadStackStores(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bo
     return did_something;
 }
 
-fn eliminateUnreachablePhiOperands(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
-    var did_something = false;
-    var reachable_blocks = std.AutoHashMap(BlockIndex.Index, void).init(alloc);
-    try reachable_blocks.put(fn_blocks.items[0], {});
-
-    for(fn_blocks.items) |blk_idx| {
-        const block = blocks.get(blk_idx);
-        const decl = decls.getOpt(block.last_decl).?;
-        const outs = decl.instr.outEdges();
-        for(outs.slice()) |e| {
-            try reachable_blocks.put(edges.get(e.*).target_block, {});
-        }
-    }
-
-    for(fn_blocks.items) |blk_idx| {
-        var current_decl = blocks.get(blk_idx).first_decl;
-        while(decls.getOpt(current_decl)) |decl| : (current_decl = decl.next) {
-            if(decl.instr != .phi) continue;
-
-            var curr_head = &decl.instr.phi;
-            while(phi_operands.getOpt(curr_head.*)) |op| {
-                const edge = edges.get(op.edge);
-                if(reachable_blocks.get(edge.source_block) == null) {
-                    curr_head.* = op.next;
-                    did_something = true;
-                } else {
-                    curr_head = &op.next;
-                }
-            }
-        }
-    }
-
-    var block_list_idx: usize = 1;
-    while(block_list_idx < fn_blocks.items.len) {
-        if(reachable_blocks.get(fn_blocks.items[block_list_idx]) == null) {
-            _ = fn_blocks.swapRemove(block_list_idx);
-        } else {
-            block_list_idx += 1;
-        }
-    }
-
-    return did_something;
-}
-
 fn eliminateCopies(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
     var copy_dict = std.AutoHashMap(DeclIndex.Index, DeclIndex.Index).init(alloc);
     var did_something = false;
@@ -948,6 +908,25 @@ fn eliminateUnreferenced(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool 
         removeDecl(key.*);
         did_something = true;
     }
+    return did_something;
+}
+
+fn eliminateUnreachablePhiOperands(decl_idx: DeclIndex.Index, fn_blocks: BlockList) !bool {
+    const decl = decls.get(decl_idx);
+    if(decl.instr != .phi) return false;
+
+    var did_something = false;
+    var curr_head = &decl.instr.phi;
+    while(phi_operands.getOpt(curr_head.*)) |op| {
+        const edge = edges.get(op.edge);
+        if(std.mem.indexOfScalar(BlockIndex.Index, fn_blocks.items, edge.source_block) == null) {
+            curr_head.* = op.next;
+            did_something = true;
+        } else {
+            curr_head = &op.next;
+        }
+    }
+
     return did_something;
 }
 
