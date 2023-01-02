@@ -354,6 +354,10 @@ fn regAlloc(decl_idx: ir.DeclIndex.Index, param_replacement: *rega.ParamReplacem
         => try rega.allocateRegsForInstr(
             decl_idx, 1, registers.rdx, &.{registers.rax}, &.{registers.rax}, &.{registers.rdx}, true, param_replacement
         ),
+        .shift_left, .shift_right,
+        => try rega.allocateRegsForInstr(
+            decl_idx, 0, null, &.{backends.any_register, registers.rcx}, &.{registers.rcx}, &.{}, true, param_replacement
+        ),
         .add_constant, .sub_constant, .multiply_constant, .divide_constant, .modulus_constant,
         .shift_left_constant, .shift_right_constant,
         .bit_and_constant, .bit_or_constant, .bit_xor_constant,
@@ -476,6 +480,16 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
                 try movImmToReg(writer, op_t, registers.rdx, 0);
             }
             try writeOperandReg(writer, uf, op_t, op.rhs, 6, &.{0xF6 | boolToU8(op_t != .u8)}, &.{}, false);
+        },
+        .shift_left => |op| {
+            const op_t = decl.instr.getOperationType();
+            try mov(writer, uf, op_t, decl_idx, op.lhs, true);
+            try writeOperandReg(writer, uf, op_t, decl_idx, 4, &.{0xD2 | boolToU8(op_t != .u8)}, &.{}, false);
+        },
+        .shift_right => |op| {
+            const op_t = decl.instr.getOperationType();
+            try mov(writer, uf, op_t, decl_idx, op.lhs, true);
+            try writeOperandReg(writer, uf, op_t, decl_idx, 5, &.{0xD2 | boolToU8(op_t != .u8)}, &.{}, false);
         },
         .inplace_add => |op| {
             const op_t = decl.instr.getOperationType();
