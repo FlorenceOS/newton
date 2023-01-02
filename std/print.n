@@ -29,11 +29,14 @@ fn unsigned_decimal(value: u64) void {
 }
 
 fn unsigned_hex_upper(value: u64) void {
-    const next = value / 16;
-    if(next != 0) {
-        unsigned_hex_upper(next);
+    var shift: u64 = 64;
+    loop {
+        shift -= 4;
+        char("0123456789ABCDEF".&[@truncate(u8, (value >> shift) & 0xF)]);
+        if(shift == 0) {
+            return;
+        }
     }
-    char("0123456789ABCDEF".&[@truncate(u8, value % 16)]);
 }
 
 fn log_hex_upper(s: *const u8, value: u64) void {

@@ -3,8 +3,8 @@ const test_lib = @import("../test_lib.n");
 
 fn main() void {
     std.print.unsigned_hex_upper(0xABCDEF);
-    test_lib.expect_unflushed_output("ABCDEF".&, 6);
+    test_lib.expect_unflushed_output("0000000000ABCDEF".&, 16);
     std.print.unsigned_hex_upper(0x42069);
-    test_lib.expect_unflushed_output("42069".&, 5);
+    test_lib.expect_unflushed_output("0000000000042069".&, 16);
     test_lib.pass_test();
 }
