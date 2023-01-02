@@ -1646,9 +1646,8 @@ const IRWriter = struct {
                 if(ass.lhs != .discard_underscore) {
                     const lhs_sema = sema.values.get(ass.lhs);
                     if(lhs_sema.* == .decl_ref) {
-                        const rhs_value_decl = decls.get(rhs_value);
                         if(sema.decls.get(lhs_sema.decl_ref).offset == null) {
-                            const new_rhs = try self.emit(rhs_value_decl.instr);
+                            const new_rhs = try self.emit(.{.copy = rhs_value});
                             decls.get(new_rhs).sema_decl = sema.DeclIndex.toOpt(lhs_sema.decl_ref);
                             return undefined;
                         }
