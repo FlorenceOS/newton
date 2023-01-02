@@ -36,6 +36,13 @@ fn unsigned_hex_upper(value: u64) void {
     char("0123456789ABCDEF".&[@truncate(u8, value % 16)]);
 }
 
+fn log_hex_upper(s: *const u8, value: u64) void {
+    str(s);
+    str(": ".&);
+    unsigned_hex_upper(value);
+    char('\n');
+}
+
 fn str(s: *const u8) void {
     loop {
         if(s.* != 0) {
