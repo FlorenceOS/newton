@@ -216,6 +216,7 @@ pub const StatementNode = struct {
         case_label: struct {
             expr: ExprIndex.Index,
         },
+        unreachable_statement,
         break_statement, // : struct {
         //  label: ?SourceRef,
         //  value: ExprIndex.OptIndex,
@@ -464,6 +465,7 @@ fn dumpNode(node: anytype, indent_level: usize) anyerror!void {
                 }
                 std.debug.print(";", .{});
             },
+            .unreachable_statement => std.debug.print("unreachable;", .{}),
             else => |stmt| std.debug.panic("Cannot dump statement of type {s}", .{@tagName(stmt)}),
         },
         *FunctionExpression => {

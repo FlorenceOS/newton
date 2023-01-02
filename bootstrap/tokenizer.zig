@@ -114,6 +114,7 @@ pub const Token = union(enum) {
     switch_keyword,
     true_keyword,
     undefined_keyword,
+    unreachable_keyword,
     var_keyword,
     volatile_keyword,
     __keyword,

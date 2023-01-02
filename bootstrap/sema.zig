@@ -359,6 +359,10 @@ fn analyzeStatementChain(
                 reaches_end = false;
                 _ = try stmt_builder.insert(.{.value = .{.return_statement =  expr}});
             },
+            .unreachable_statement => {
+                reaches_end = false;
+                _ = try stmt_builder.insert(.{.value = .unreachable_statement});
+            },
             else => |stmt| std.debug.panic("TODO: Sema {s} statement", .{@tagName(stmt)}),
         }
         curr_ast_stmt = ast_stmt.next;
@@ -1608,6 +1612,7 @@ pub const Statement = struct {
             body: Block,
             breaks: bool,
         },
+        unreachable_statement,
         break_statement: StatementIndex.Index,
         return_statement: ValueIndex.OptIndex,
         block: Block,

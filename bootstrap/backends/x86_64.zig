@@ -696,6 +696,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             try writer.writeInt(u8, 0x0F);
             try writer.writeInt(u8, 0x05);
         },
+        .@"unreachable" => try writer.write(&.{0x0F, 0x0B}),
         inline else => |_, tag| @panic("TODO: x86_64 decl " ++ @tagName(tag)),
     }
     return null;

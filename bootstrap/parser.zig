@@ -175,6 +175,11 @@ fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
         .const_keyword, .var_keyword => return self.parseDeclaration(token),
         .continue_keyword => @panic("TODO: continue statement"),
         .endcase_keyword => @panic("TODO: endcase statement"),
+        .unreachable_keyword => {
+            _ = try self.tokenize();
+            _ = try self.expect(.@";_ch");
+            return ast.statements.insert(.{.value = .unreachable_statement});
+        },
         .if_keyword => {
             _ = try self.tokenize();
             _ = try self.expect(.@"(_ch");
@@ -283,6 +288,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
         .if_keyword => @panic("TODO: If expressions"),
         .loop_keyword => @panic("TODO: Loop expressions"),
         .switch_keyword => @panic("TODO: Switch expressions"),
+        .unreachable_keyword => return .@"unreachable",
 
         .@"[_ch" => {
             const size = try self.parseExpression(null);
@@ -553,7 +559,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
             .switch_keyword, .var_keyword, .volatile_keyword, .__keyword, .bool_keyword,
             .type_keyword, .void_keyword, .anyopaque_keyword,
             .end_of_file, .true_keyword, .false_keyword, .undefined_keyword, .comptime_keyword,
-            .inline_keyword,
+            .inline_keyword, .unreachable_keyword,
             => |_, tag| {
                 std.debug.panic("Unexpected post-primary expression token: {s}\n", .{@tagName(tag)});
             },

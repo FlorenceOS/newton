@@ -106,6 +106,7 @@ pub const DeclInstr = union(enum) {
         value: DeclIndex.Index,
     },
     undefined,
+    @"unreachable",
 
     function_call: struct {
         callee: sema.InstantiatedFunction,
@@ -284,6 +285,7 @@ pub const DeclInstr = union(enum) {
             .param_ref, .stack_ref, .global_ref,
             .load_int_constant, .load_bool_constant,
             .undefined, .goto, .enter_function,
+            .@"unreachable",
             => {}, // No operands
         }
 
@@ -320,6 +322,7 @@ pub const DeclInstr = union(enum) {
             .inplace_shift_left, .inplace_shift_right, .inplace_bit_and, .inplace_bit_or, .inplace_bit_xor,
             .inplace_add_constant, .inplace_sub_constant, .inplace_multiply_constant, .inplace_divide_constant, .inplace_modulus_constant,
             .inplace_shift_left_constant, .inplace_shift_right_constant, .inplace_bit_and_constant, .inplace_bit_or_constant, .inplace_bit_xor_constant,
+            .@"unreachable",
             => return true,
             else => return false,
         }
@@ -334,7 +337,7 @@ pub const DeclInstr = union(enum) {
             .inplace_shift_left, .inplace_shift_right, .inplace_bit_and, .inplace_bit_or, .inplace_bit_xor,
             .inplace_add_constant, .inplace_sub_constant, .inplace_multiply_constant, .inplace_divide_constant, .inplace_modulus_constant,
             .inplace_shift_left_constant, .inplace_shift_right_constant, .inplace_bit_and_constant, .inplace_bit_or_constant, .inplace_bit_xor_constant,
-            .tail_call,
+            .tail_call, .@"unreachable",
             => return false,
             else => return true,
         }
@@ -1933,6 +1936,7 @@ const IRWriter = struct {
 
                     _ = try self.emit(.{.@"goto" = exit_edge});
                 },
+                .unreachable_statement => _ = try self.emit(.{.@"unreachable" = {}}),
             }
         }
     }
@@ -2016,6 +2020,7 @@ pub fn dumpBlock(
             .zero_extend, .sign_extend, .truncate => |cast| std.debug.print("{s}(${d})\n", .{@tagName(decl.instr), @enumToInt(cast.value)}),
             .load_bool_constant => |b| std.debug.print("{}\n", .{b}),
             .undefined => std.debug.print("undefined\n", .{}),
+            .@"unreachable" => std.debug.print("unreachable\n", .{}),
             .load => |p| std.debug.print("load(${d})\n", .{@enumToInt(p.source)}),
             .logical_not => |op| std.debug.print("not(${d})\n", .{@enumToInt(op)}),
             inline
