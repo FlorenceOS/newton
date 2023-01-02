@@ -1382,12 +1382,12 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
                                 .value_type = param_type,
                             }}),
                 };
-                _ = try scope_builder.insert(new_param);
+                const new_param_idx = try scope_builder.insert(new_param);
 
                 if(!param.comptime_param) {
                     _ = try runtime_params_builder.insert(.{.function_arg = .{
                         .value = try semaASTExpr(arg_scope.?, arg.value, false, values.get(param_type).type_idx),
-                        .param_decl = decls.getIndex(param),
+                        .param_decl = new_param_idx,
                     }});
                 }
 
@@ -1408,6 +1408,19 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
                 const arg = decls.getOpt(curr_scope_arg).?;
                 if(param.init_value != arg.init_value) break;
             } else {
+                // Patch up the sema decls of the runtime param list to be the ones in the instantiation
+                curr_param = scopes.get(inst.param_scope).first_decl;
+                var curr_arg = runtime_params_builder.first;
+                while(decls.getOpt(curr_param)) |param| : ({
+                    curr_param = param.next;
+                }) {
+                    if(param.comptime_param) continue;
+                    const arg = &expressions.getOpt(curr_arg).?.function_arg;
+                    arg.param_decl = decls.getIndex(param);
+                    curr_arg = arg.next;
+                }
+                std.debug.assert(curr_arg == .none);
+
                 return .{
                     .callee = .{
                         .function_value = fn_idx,
