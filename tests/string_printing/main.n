@@ -2,7 +2,7 @@ const std = @import("std");
 const test_lib = @import("../test_lib.n");
 
 fn main() void {
-	std.print.str("Hello, world!\n".&);
-	test_lib.expect_unflushed_output("Hello, world!\n".&, 14);
+    std.print.str("Hello, world!\n".&);
+    test_lib.expect_unflushed_output("Hello, world!\n".&, 14);
     test_lib.pass_test();
 }
