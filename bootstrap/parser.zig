@@ -297,12 +297,12 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
         .switch_keyword => @panic("TODO: Switch expressions"),
         .unreachable_keyword => return .@"unreachable",
 
-        .@"[_ch" => {
+        .@"[_ch" => blk: {
             const size = try self.parseExpression(null);
             _ = try self.expect(.@"]_ch");
             const child_type = try self.parseExpression(precedence_in);
 
-            return ast.expressions.insert(.{ .array_type = .{
+            break :blk try ast.expressions.insert(.{ .array_type = .{
                 .lhs = size,
                 .rhs = child_type,
             }});
