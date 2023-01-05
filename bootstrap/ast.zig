@@ -228,6 +228,7 @@ pub const FunctionExpression = struct {
     first_param: FunctionParamIndex.OptIndex,
     return_type: ExprIndex.Index,
     body: StmtIndex.OptIndex,
+    return_location: ?SourceRef,
     is_inline: bool,
 };
 
@@ -482,6 +483,9 @@ fn dumpNode(node: anytype, indent_level: usize) anyerror!void {
             std.debug.print(") ", .{});
             try dumpNode(expressions.get(node.return_type), indent_level);
             std.debug.print(" ", .{});
+            if(node.return_location) |ret_loc| {
+                std.debug.print("|{s}| ", .{try ret_loc.toSlice()});
+            }
             try dumpStatementChain(node.body, indent_level);
         },
         else => @compileError("Cannot dump type " ++ @typeName(@TypeOf(node))),
