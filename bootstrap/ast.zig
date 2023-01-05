@@ -8,6 +8,7 @@ const ExpressionList = indexed_list.IndexedList(ExprIndex, ExpressionNode);
 const StatementList = indexed_list.IndexedList(StmtIndex, StatementNode);
 const FunctionList = indexed_list.IndexedList(FunctionIndex, FunctionExpression);
 const FunctionParamList = indexed_list.IndexedList(FunctionParamIndex, FunctionParameter);
+const TypeInitValueList = indexed_list.IndexedList(TypeInitValueIndex, TypeInitValue);
 
 pub const ExprIndex = indexed_list.Indices(u32, opaque{}, .{
     // Commonly used constants
@@ -38,6 +39,7 @@ pub const StmtIndex = indexed_list.Indices(u32, opaque{}, .{
 });
 pub const FunctionIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const FunctionParamIndex = indexed_list.Indices(u32, opaque{}, .{});
+pub const TypeInitValueIndex = indexed_list.Indices(u32, opaque{}, .{});
 
 pub const TypeBody = struct {
     first_decl: StmtIndex.OptIndex,
@@ -126,6 +128,11 @@ pub const ExpressionNode = union(enum) {
     signed_int: u32,
     builtin_function: BuiltinFunction,
     imported_file: sources.SourceIndex.Index,
+
+    type_init_list: struct {
+        specified_type: ExprIndex.OptIndex,
+        first_value: TypeInitValueIndex.OptIndex,
+    },
 
     // Binary expressions, has lhs and rhs populated
     array_subscript: Bop,
@@ -237,6 +244,12 @@ pub const FunctionParameter = struct {
     type: ExprIndex.Index,
     next: FunctionParamIndex.OptIndex = .none,
     is_comptime: bool,
+};
+
+pub const TypeInitValue = struct {
+    identifier: ?SourceRef,
+    value: ExprIndex.Index,
+    next: TypeInitValueIndex.OptIndex = .none,
 };
 
 fn makeIndent(indent_level: usize) []const u8 {
@@ -407,6 +420,29 @@ fn dumpNode(node: anytype, indent_level: usize) anyerror!void {
                 try dumpNode(expressions.get(uop.operand), indent_level);
             },
             .builtin_function => |bi| std.debug.print("@{s}", .{@tagName(bi)}),
+            .type_init_list => |til| {
+                if(ExprIndex.unwrap(til.specified_type)) |st| {
+                    try dumpNode(expressions.get(st), indent_level);
+                } else {
+                    std.debug.print(".", .{});
+                }
+                std.debug.print("{{", .{});
+                var curr = til.first_value;
+                if(curr == .none) {
+                    std.debug.print("}}", .{});
+                    return;
+                }
+                std.debug.print("\n", .{});
+                while(type_init_values.getOpt(curr)) |value| : (curr = value.next) {
+                    std.debug.print("{s}", .{makeIndent(indent_level + 1)});
+                    if(value.identifier) |ident| {
+                        std.debug.print(".{s} = ", .{try ident.toSlice()});
+                    }
+                    try dumpNode(expressions.get(value.value), indent_level + 1);
+                    std.debug.print(",\n", .{});
+                }
+                std.debug.print("{s}}}", .{makeIndent(indent_level)});
+            },
             else => |expr| std.debug.panic("Cannot dump expression of type {s}", .{@tagName(expr)}),
         },
         *StatementNode => switch(node.value) {
@@ -503,10 +539,12 @@ pub var expressions: ExpressionList = undefined;
 pub var statements: StatementList = undefined;
 pub var functions: FunctionList = undefined;
 pub var function_params: FunctionParamList = undefined;
+pub var type_init_values: TypeInitValueList = undefined;
 
 pub fn init() !void {
     expressions = try ExpressionList.init(std.heap.page_allocator);
     statements = try StatementList.init(std.heap.page_allocator);
     functions = try FunctionList.init(std.heap.page_allocator);
     function_params = try FunctionParamList.init(std.heap.page_allocator);
+    type_init_values = try TypeInitValueList.init(std.heap.page_allocator);
 }

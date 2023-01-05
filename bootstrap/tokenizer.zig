@@ -63,6 +63,7 @@ pub const Token = union(enum) {
     @"/=_ch",
     @"%_ch",
     @"%=_ch",
+    @".{_ch",
     @"{_ch",
     @"}_ch",
     @"(_ch",

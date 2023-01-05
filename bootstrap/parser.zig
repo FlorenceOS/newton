@@ -247,7 +247,7 @@ fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
         .comptime_keyword => @panic("TODO: Comptime statement"),
 
         inline
-        .int_literal, .char_literal, .string_literal,
+        .int_literal, .char_literal, .string_literal, .@".{_ch",
         .@".._ch", .@"._ch", .@",_ch", .@":_ch",
         .@"++_ch", .@"++=_ch", .@"=_ch", .@";_ch",
         .@"+_ch", .@"+=_ch", .@"-_ch", .@"-=_ch", .@"*_ch", .@"*=_ch",
@@ -268,6 +268,43 @@ fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
             return error.UnexpectedToken;
         },
     }
+}
+
+fn parseTypeInitList(self: *@This(), specified_type: ast.ExprIndex.OptIndex) anyerror!ast.ExprIndex.Index {
+    var builder = ast.type_init_values.builder();
+
+    switch(try self.peekToken()) {
+        .@"._ch" => { // Nonempty struct literal
+            while((try self.peekToken()) != .@"}_ch") {
+                _ = try self.expect(.@"._ch");
+                var ident = try self.expect(.identifier);
+                defer ident.deinit();
+                _ = try self.expect(.@"=_ch");
+                _ = try builder.insert(.{
+                    .identifier = self.toAstIdent(ident),
+                    .value = try self.parseExpression(null),
+                });
+                if((try self.tryConsume(.@",_ch")) == null) break;
+            }
+            try self.expect(.@"}_ch");
+        },
+        // .@"}_ch" => {}, // Empty tuple
+        else => { // Nonempty tuple
+            while((try self.peekToken()) != .@"}_ch") {
+                _ = try builder.insert(.{
+                    .identifier = null,
+                    .value = try self.parseExpression(null),
+                });
+                if((try self.tryConsume(.@",_ch")) == null) break;
+            }
+            try self.expect(.@"}_ch");
+        },
+    }
+
+    return ast.expressions.insert(.{.type_init_list = .{
+        .specified_type = specified_type,
+        .first_value = builder.first,
+    }});
 }
 
 fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex.Index {
@@ -379,6 +416,8 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
             break :blk try self.identToAstNode(ident);
         },
 
+        .@".{_ch" => try self.parseTypeInitList(.none),
+
         inline
         .@".._ch", .@",_ch", .@"._ch", .@":_ch", .@";_ch",
         .@"=_ch", .@"==_ch", .@"!=_ch",
@@ -467,6 +506,12 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
 
     while(true) {
         switch(try self.peekToken()) {
+            .@"{_ch" => {
+                if(precedence < 1) return lhs;
+                _ = try self.tokenize();
+                lhs = try self.parseTypeInitList(ast.ExprIndex.toOpt(lhs));
+            },
+
             // Binary operators
             inline
             .@".._ch", .@"=_ch", .@"==_ch", .@"!=_ch",
@@ -549,17 +594,17 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
             },
 
             // Terminate the expression, regardless of precedence
-            .@")_ch", .@"]_ch", .@";_ch", .@",_ch", .@"{_ch",
+            .@")_ch", .@"]_ch", .@"}_ch", .@";_ch", .@",_ch",
             => return lhs,
 
             // Following tokens are unreachable because they are handled in the
             // postfix operators above
-            .@"._ch", .@"(_ch", .@"[_ch",
+            .@"._ch", .@"(_ch", .@"[_ch", .@".{_ch",
             => unreachable,
 
             inline
             .identifier, .int_literal, .char_literal, .string_literal,
-            .@":_ch", .@"}_ch", .@"~_ch", .@"!_ch",
+            .@":_ch", .@"~_ch", .@"!_ch",
             .break_keyword, .case_keyword, .const_keyword, .continue_keyword,
             .else_keyword, .endcase_keyword, .enum_keyword, .fn_keyword,
             .if_keyword, .loop_keyword, .return_keyword, .struct_keyword,
