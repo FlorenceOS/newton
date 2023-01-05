@@ -337,7 +337,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
         .@"[_ch" => blk: {
             const size = try self.parseExpression(null);
             _ = try self.expect(.@"]_ch");
-            const child_type = try self.parseExpression(precedence_in);
+            const child_type = try self.parseExpression(0);
 
             break :blk try ast.expressions.insert(.{ .array_type = .{
                 .lhs = size,
