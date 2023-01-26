@@ -46,6 +46,7 @@ pub const ScopeIndex = indexed_list.Indices(u32, opaque{}, .{
 });
 pub const StatementIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const ExpressionIndex = indexed_list.Indices(u32, opaque{}, .{});
+pub const StructLiteralFieldIndex = indexed_list.Indices(u32, opaque{}, .{});
 
 const TypeList = indexed_list.IndexedList(TypeIndex, Type);
 const ValueList = indexed_list.IndexedList(ValueIndex, Value);
@@ -55,6 +56,7 @@ const StructList = indexed_list.IndexedList(StructIndex, Struct);
 const ScopeList = indexed_list.IndexedList(ScopeIndex, Scope);
 const StatementList = indexed_list.IndexedList(StatementIndex, Statement);
 const ExpressionList = indexed_list.IndexedList(ExpressionIndex, Expression);
+const StructLiteralFieldList = indexed_list.IndexedList(StructLiteralFieldIndex, StructLiteralField);
 
 fn canFitNumber(value: i65, requested_type: TypeIndex.Index) bool {
     switch(types.get(requested_type).*) {
@@ -1181,6 +1183,9 @@ pub const Value = union(enum) {
     signed_int: SizedInt,
     function: Function,
     discard_underscore,
+    empty_tuple,
+    //tuple_literal: TupleFieldIndex.OptIndex,
+    struct_literal: StructLiteralFieldIndex.OptIndex,
 
     bound_fn: struct {
         callee: ValueIndex.Index,
@@ -1693,6 +1698,12 @@ pub const Expression = union(enum) {
     function_call: FunctionCall,
 };
 
+pub const StructLiteralField = struct {
+    field_name: ast.SourceRef,
+    value: ValueIndex.Index,
+    next: StructLiteralFieldIndex.OptIndex = .none,
+};
+
 pub var types: TypeList = undefined;
 pub var values: ValueList = undefined;
 pub var decls: DeclList = undefined;
@@ -1701,6 +1712,7 @@ pub var structs: StructList = undefined;
 pub var scopes: ScopeList = undefined;
 pub var statements: StatementList = undefined;
 pub var expressions: ExpressionList = undefined;
+pub var struct_literal_fields: StructLiteralFieldList = undefined;
 
 pub fn init() !void {
     types = try TypeList.init(std.heap.page_allocator);
@@ -1711,6 +1723,7 @@ pub fn init() !void {
     scopes = try ScopeList.init(std.heap.page_allocator);
     statements = try StatementList.init(std.heap.page_allocator);
     expressions = try ExpressionList.init(std.heap.page_allocator);
+    struct_literal_fields = try StructLiteralFieldList.init(std.heap.page_allocator);
 
     types.get(.pointer_int).* = switch(backends.current_backend.pointer_type) {
         .u64 => .{.unsigned_int = 64},
