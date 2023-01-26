@@ -46,7 +46,7 @@ pub const ScopeIndex = indexed_list.Indices(u32, opaque{}, .{
 });
 pub const StatementIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const ExpressionIndex = indexed_list.Indices(u32, opaque{}, .{});
-pub const StructLiteralFieldIndex = indexed_list.Indices(u32, opaque{}, .{});
+pub const TypeInitValueIndex = indexed_list.Indices(u32, opaque{}, .{});
 
 const TypeList = indexed_list.IndexedList(TypeIndex, Type);
 const ValueList = indexed_list.IndexedList(ValueIndex, Value);
@@ -56,7 +56,7 @@ const StructList = indexed_list.IndexedList(StructIndex, Struct);
 const ScopeList = indexed_list.IndexedList(ScopeIndex, Scope);
 const StatementList = indexed_list.IndexedList(StatementIndex, Statement);
 const ExpressionList = indexed_list.IndexedList(ExpressionIndex, Expression);
-const StructLiteralFieldList = indexed_list.IndexedList(StructLiteralFieldIndex, StructLiteralField);
+const TypeInitValueList = indexed_list.IndexedList(TypeInitValueIndex, TypeInitValue);
 
 fn canFitNumber(value: i65, requested_type: TypeIndex.Index) bool {
     switch(types.get(requested_type).*) {
@@ -229,6 +229,58 @@ fn promote(vidx: *ValueIndex.Index, target_tidx: TypeIndex.Index, is_assign: boo
         },
         .bool, .type, .void => if(value_ty != ty) return error.IncompatibleTypes,
         .undefined => vidx.* = try values.addDedupLinear(.{.undefined = target_tidx}),
+        .type_of_value => switch(ty.*) {
+            .struct_idx => |sidx| {
+                const target_struct = structs.get(sidx);
+
+                var builder = type_init_values.builder();
+                var current_field = target_struct.first_field;
+                while(struct_fields.getOpt(current_field)) |field| : (current_field = field.next) {
+                    const field_name = try field.name.retokenize();
+                    defer field_name.deinit();
+
+                    var field_value = ValueIndex.OptIndex.none;
+                    var current_iv = value.type_init;
+                    while(type_init_values.getOpt(current_iv)) |tiv| : (current_iv = tiv.next) {
+                        std.debug.assert(tiv.field_name != null);
+
+                        const tiv_field_name = try tiv.field_name.?.retokenize();
+                        defer tiv_field_name.deinit();
+
+                        if(std.mem.eql(u8, tiv_field_name.identifier_value(), field_name.identifier_value())) {
+                            if(field_value != .none) {
+                                std.debug.panic("Value for field {s} was specified multiple times", .{field_name.identifier_value()});
+                            }
+                            field_value = ValueIndex.toOpt(tiv.value);
+                        }
+                    }
+
+                    if(field_value == .none) {
+                        if(values.get(field.init_value).* == .runtime) {
+                            std.debug.panic("Missing value for field {s}", .{field_name.identifier_value()});
+                        }
+                        field_value = ValueIndex.toOpt(field.init_value);
+                    }
+
+                    _ = try builder.insert(.{.field_name = field.name, .value = ValueIndex.unwrap(field_value).?});
+                }
+
+                var current_iv = value.type_init;
+                outer: while(type_init_values.getOpt(current_iv)) |tiv| : (current_iv = tiv.next) {
+                    const tiv_field_name = try tiv.field_name.?.retokenize();
+                    defer tiv_field_name.deinit();
+
+                    if(try target_struct.lookupField(tiv_field_name.identifier_value())) |_| {
+                        continue :outer;
+                    }
+
+                    std.debug.panic("Provided field {s} does not exist on struct", .{tiv_field_name.identifier_value()});
+                }
+
+                vidx.* = try values.insert(.{.struct_value = .{.struct_idx = sidx, .values = builder.first}});
+            },
+            else => |other| std.debug.panic("TODO init value of {s}", .{@tagName(other)}),
+        },
         else => |other| {
             if(std.meta.eql(ty.*, value_ty.*)) return;
             std.debug.panic("TODO {any} -> {any}", .{other, ty.*});
@@ -1054,7 +1106,23 @@ fn semaASTExpr(
             }
             return ValueIndex.unwrap(sf.sema_struct).?;
         },
+        .type_init_list => |til| {
+            var builder = type_init_values.builder();
+            var current = til.first_value;
+            while(ast.type_init_values.getOpt(current)) |tiv| : (current = tiv.next) {
+                _ = try builder.insert(.{
+                    .field_name = tiv.identifier,
+                    .value = try semaASTExpr(scope_idx, tiv.value, false, null),
+                });
+            }
 
+            var value = try values.insert(.{.type_init = builder.first});
+            if(ast.ExprIndex.unwrap(til.specified_type)) |st| {
+                const st_value = try semaASTExpr(scope_idx, st, true, .type);
+                try promote(&value, values.get(st_value).type_idx, false);
+            }
+            return value;
+        },
         else => |expr| std.debug.panic("Could not evaluate: {any}", .{expr}),
     }
 }
@@ -1107,6 +1175,7 @@ pub const Type = union(enum) {
     struct_idx: StructIndex.Index,
     pointer: PointerType,
     reference: PointerType,
+    type_of_value: ValueIndex.Index,
     array: struct {
         child: TypeIndex.Index,
         size: u32,
@@ -1157,6 +1226,7 @@ pub const Type = union(enum) {
                 try writer.print("[{d}]", .{arr.size});
                 try types.get(arr.child).writeTo(writer);
             },
+            .type_of_value => @panic("TODO: Write out type_of_value"),
             .reference => unreachable,
         }
     }
@@ -1184,8 +1254,11 @@ pub const Value = union(enum) {
     function: Function,
     discard_underscore,
     empty_tuple,
-    //tuple_literal: TupleFieldIndex.OptIndex,
-    struct_literal: StructLiteralFieldIndex.OptIndex,
+    type_init: TypeInitValueIndex.OptIndex,
+    struct_value: struct {
+        struct_idx: StructIndex.Index,
+        values: TypeInitValueIndex.OptIndex,
+    },
 
     bound_fn: struct {
         callee: ValueIndex.Index,
@@ -1230,6 +1303,8 @@ pub const Value = union(enum) {
             .signed_int => |int| try types.addDedupLinear(.{.signed_int = int.bits}),
             .runtime => |rt| values.get(rt.value_type).type_idx,
             .decl_ref => |dr| return values.get(decls.get(dr).init_value).getType(),
+            .type_init => return types.addDedupLinear(.{.type_of_value = values.getIndex(self)}),
+            .struct_value => |sv| return types.addDedupLinear(.{.struct_idx = sv.struct_idx}),
             else => |other| std.debug.panic("TODO: Get type of {s}", .{@tagName(other)}),
         };
     }
@@ -1698,10 +1773,10 @@ pub const Expression = union(enum) {
     function_call: FunctionCall,
 };
 
-pub const StructLiteralField = struct {
-    field_name: ast.SourceRef,
+pub const TypeInitValue = struct {
+    field_name: ?ast.SourceRef,
     value: ValueIndex.Index,
-    next: StructLiteralFieldIndex.OptIndex = .none,
+    next: TypeInitValueIndex.OptIndex = .none,
 };
 
 pub var types: TypeList = undefined;
@@ -1712,7 +1787,7 @@ pub var structs: StructList = undefined;
 pub var scopes: ScopeList = undefined;
 pub var statements: StatementList = undefined;
 pub var expressions: ExpressionList = undefined;
-pub var struct_literal_fields: StructLiteralFieldList = undefined;
+pub var type_init_values: TypeInitValueList = undefined;
 
 pub fn init() !void {
     types = try TypeList.init(std.heap.page_allocator);
@@ -1723,7 +1798,7 @@ pub fn init() !void {
     scopes = try ScopeList.init(std.heap.page_allocator);
     statements = try StatementList.init(std.heap.page_allocator);
     expressions = try ExpressionList.init(std.heap.page_allocator);
-    struct_literal_fields = try StructLiteralFieldList.init(std.heap.page_allocator);
+    type_init_values = try TypeInitValueList.init(std.heap.page_allocator);
 
     types.get(.pointer_int).* = switch(backends.current_backend.pointer_type) {
         .u64 => .{.unsigned_int = 64},
