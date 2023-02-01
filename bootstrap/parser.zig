@@ -144,6 +144,15 @@ fn parseFunctionExpr(self: *@This()) anyerror!ast.FunctionIndex.Index {
     });
 }
 
+fn parseBlockExpression(self: *@This(), block_label: ast.ExprIndex.OptIndex) anyerror!ast.ExprIndex.Index {
+    const block = try self.parseBlockStatementBody();
+    _ = try self.expect(.@"}_ch");
+    return ast.expressions.insert(.{.block_expression = .{
+        .block = block,
+        .label = block_label,
+    }});
+}
+
 // {
 //   ^ Call this after open curly
 //   var a = 5;
@@ -175,8 +184,15 @@ fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
         },
         .break_keyword => {
             _ = try self.tokenize();
+            if(try self.tryConsume(.@":_ch")) |_| {
+                @panic("TODO: Break labels");
+            }
+            const break_value = if((try self.peekToken()) != .@";_ch")
+                ast.ExprIndex.toOpt(try self.parseExpression(0)) else .none;
             _ = try self.expect(.@";_ch");
-            return ast.statements.insert(.{.value = .break_statement});
+            return ast.statements.insert(.{.value = .{ .break_statement = .{
+                .value = break_value,
+            }}});
         },
         .case_keyword => @panic("TODO: case statement"),
         .const_keyword, .var_keyword => return self.parseDeclaration(token),
@@ -417,6 +433,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
         },
 
         .@".{_ch" => try self.parseTypeInitList(.none),
+        .@"{_ch" => try self.parseBlockExpression(.none),
 
         inline
         .@".._ch", .@",_ch", .@"._ch", .@":_ch", .@";_ch",
@@ -428,7 +445,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
         .@"<_ch", .@"<<_ch", .@"<=_ch", .@"<<=_ch",
         .@">_ch", .@">>_ch", .@">=_ch", .@">>=_ch",
         .@"|_ch", .@"|=_ch", .@"&_ch", .@"&=_ch",
-        .@"^_ch", .@"^=_ch", .@"||_ch", .@"&&_ch", .@"{_ch",
+        .@"^_ch", .@"^=_ch", .@"||_ch", .@"&&_ch",
         .case_keyword, .const_keyword, .var_keyword, .volatile_keyword, .else_keyword,
         .end_of_file, .return_keyword, .inline_keyword,
         => |_, tag| {

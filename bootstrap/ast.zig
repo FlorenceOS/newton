@@ -175,6 +175,11 @@ pub const ExpressionNode = union(enum) {
     assign: Bop,
     range: Bop,
 
+    block_expression: struct {
+        block: StmtIndex.OptIndex,
+        label: ExprIndex.OptIndex,
+    },
+
     function_expression: FunctionIndex.Index,
 
     // Function calls
@@ -224,10 +229,10 @@ pub const StatementNode = struct {
             expr: ExprIndex.Index,
         },
         unreachable_statement,
-        break_statement, // : struct {
-        //  label: ?SourceRef,
-        //  value: ExprIndex.OptIndex,
-        // },
+        break_statement: struct {
+            //label: ?SourceRef,
+            value: ExprIndex.OptIndex,
+        },
     },
 };
 
@@ -443,6 +448,7 @@ fn dumpNode(node: anytype, indent_level: usize) anyerror!void {
                 }
                 std.debug.print("{s}}}", .{makeIndent(indent_level)});
             },
+            .block_expression => |blk| try dumpStatementChain(blk.block, indent_level),
             else => |expr| std.debug.panic("Cannot dump expression of type {s}", .{@tagName(expr)}),
         },
         *StatementNode => switch(node.value) {
@@ -493,7 +499,14 @@ fn dumpNode(node: anytype, indent_level: usize) anyerror!void {
                 }
                 try dumpStatementChain(stmt.first_child, indent_level);
             },
-            .break_statement => std.debug.print("break;", .{}),
+            .break_statement => |stmt| {
+                std.debug.print("break", .{});
+                if(ExprIndex.unwrap(stmt.value)) |value| {
+                    std.debug.print(" ", .{});
+                    try dumpNode(expressions.get(value), indent_level);
+                }
+                std.debug.print(";", .{});
+            },
             .return_statement => |stmt| {
                 std.debug.print("return", .{});
                 if(expressions.getOpt(stmt.expr)) |expr| {
