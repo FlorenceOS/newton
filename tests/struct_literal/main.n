@@ -29,6 +29,5 @@ fn main() void {
 
     const d: T = .{};
     test_lib.expect_equal(u64, d.field, 5);
-
-    const arr = [_]u8{a, c, d};
+    test_lib.pass_test();
 }

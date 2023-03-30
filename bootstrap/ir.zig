@@ -1739,6 +1739,12 @@ const IRWriter = struct {
                     .sema_pointer_type = sema.types.get(try sema.values.get(sidx).getType()).pointer,
                 }});
             },
+            .block => |blk| {
+                // This will be a phi node with the break value in the future
+                const undef = self.emit(.{.@"undefined" = {}});
+                try self.writeBlockStatement(blk.first_stmt);
+                return undef;
+            },
             else => |expr| std.debug.panic("Unhandled ssaing of expr {s}", .{@tagName(expr)}),
         }
     }

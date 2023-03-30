@@ -2,8 +2,10 @@ const std = @import("std");
 const test_lib = @import("../test_lib.n");
 
 fn main() void {
-    const value: u32 = {
-        break 5;
+    var value: u32 = undefined;
+    _ = {
+        value = 5;
     };
     test_lib.expect_equal(u32, value, 5);
+    test_lib.pass_test();
 }

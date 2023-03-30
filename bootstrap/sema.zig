@@ -143,6 +143,73 @@ fn commonType(lhs_ty: TypeIndex.Index, rhs_ty: TypeIndex.Index) !TypeIndex.Index
     return error.IncompatibleTypes;
 }
 
+const TilAssignment = struct {
+    // StructFieldIndex
+    identifier: u32,
+    assignment: union (enum) {
+        default: ValueIndex.Index,
+        normal: ast.ExprIndex.Index,
+    },
+};
+
+fn typeTil(first_value: ast.TypeInitValueIndex.OptIndex, target_type: TypeIndex.Index) !std.BoundedArray(TilAssignment, 256) {
+    var result = std.BoundedArray(TilAssignment, 256){};
+
+    switch(types.get(target_type).*) {
+        .struct_idx => |sidx| {
+            const target_struct = structs.get(sidx);
+
+            var current_iv = first_value;
+            while(ast.type_init_values.getOpt(current_iv)) |tiv| : (current_iv = tiv.next) {
+                const tiv_field_name = try tiv.identifier.?.retokenize();
+                defer tiv_field_name.deinit();
+
+                var found_field = false;
+
+                var current_field = target_struct.first_field;
+                while(struct_fields.getOpt(current_field)) |field| : (current_field = field.next) {
+                    const struct_field_name = try field.name.retokenize();
+                    defer struct_field_name.deinit();
+
+                    if(std.mem.eql(u8, tiv_field_name.identifier_value(), struct_field_name.identifier_value())) {
+                        found_field = true;
+                        for(result.slice()) |ass| {
+                            if(ass.identifier == @enumToInt(current_field)) {
+                                std.debug.panic("Duplicate field '{s}'", .{tiv_field_name.identifier_value()});
+                            }
+                        }
+                        try result.append(.{
+                            .identifier = @enumToInt(current_field),
+                            .assignment = .{.normal = tiv.value},
+                        });
+                    }
+                }
+
+                if(!found_field) {
+                    std.debug.panic("Field '{s}' is specified but does not exist in struct type", .{tiv_field_name.identifier_value()});
+                }
+            }
+
+            var current_field = target_struct.first_field;
+            while(struct_fields.getOpt(current_field)) |field| : (current_field = field.next) {
+                if(for(result.slice()) |ass| {
+                    if(ass.identifier == @enumToInt(current_field)) {
+                        break false;
+                    }
+                } else true) {
+                    try result.append(.{
+                        .identifier = @enumToInt(current_field),
+                        .assignment = .{.default = field.init_value},
+                    });
+                }
+            }
+        },
+        else => |t| std.debug.panic("typeTil for type {s}", .{@tagName(t)}),
+    }
+
+    return result;
+}
+
 fn promote(vidx: *ValueIndex.Index, target_tidx: TypeIndex.Index, is_assign: bool) !void {
     var value = values.get(vidx.*);
 
@@ -229,58 +296,6 @@ fn promote(vidx: *ValueIndex.Index, target_tidx: TypeIndex.Index, is_assign: boo
         },
         .bool, .type, .void => if(value_ty != ty) return error.IncompatibleTypes,
         .undefined => vidx.* = try values.addDedupLinear(.{.undefined = target_tidx}),
-        .type_of_value => switch(ty.*) {
-            .struct_idx => |sidx| {
-                const target_struct = structs.get(sidx);
-
-                var builder = type_init_values.builder();
-                var current_field = target_struct.first_field;
-                while(struct_fields.getOpt(current_field)) |field| : (current_field = field.next) {
-                    const field_name = try field.name.retokenize();
-                    defer field_name.deinit();
-
-                    var field_value = ValueIndex.OptIndex.none;
-                    var current_iv = value.type_init;
-                    while(type_init_values.getOpt(current_iv)) |tiv| : (current_iv = tiv.next) {
-                        std.debug.assert(tiv.field_name != null);
-
-                        const tiv_field_name = try tiv.field_name.?.retokenize();
-                        defer tiv_field_name.deinit();
-
-                        if(std.mem.eql(u8, tiv_field_name.identifier_value(), field_name.identifier_value())) {
-                            if(field_value != .none) {
-                                std.debug.panic("Value for field {s} was specified multiple times", .{field_name.identifier_value()});
-                            }
-                            field_value = ValueIndex.toOpt(tiv.value);
-                        }
-                    }
-
-                    if(field_value == .none) {
-                        if(values.get(field.init_value).* == .runtime) {
-                            std.debug.panic("Missing value for field {s}", .{field_name.identifier_value()});
-                        }
-                        field_value = ValueIndex.toOpt(field.init_value);
-                    }
-
-                    _ = try builder.insert(.{.field_name = field.name, .value = ValueIndex.unwrap(field_value).?});
-                }
-
-                var current_iv = value.type_init;
-                outer: while(type_init_values.getOpt(current_iv)) |tiv| : (current_iv = tiv.next) {
-                    const tiv_field_name = try tiv.field_name.?.retokenize();
-                    defer tiv_field_name.deinit();
-
-                    if(try target_struct.lookupField(tiv_field_name.identifier_value())) |_| {
-                        continue :outer;
-                    }
-
-                    std.debug.panic("Provided field {s} does not exist on struct", .{tiv_field_name.identifier_value()});
-                }
-
-                vidx.* = try values.insert(.{.struct_value = .{.struct_idx = sidx, .values = builder.first}});
-            },
-            else => |other| std.debug.panic("TODO init value of {s}", .{@tagName(other)}),
-        },
         else => |other| {
             if(std.meta.eql(ty.*, value_ty.*)) return;
             std.debug.panic("TODO {any} -> {any}", .{other, ty.*});
@@ -289,8 +304,12 @@ fn promote(vidx: *ValueIndex.Index, target_tidx: TypeIndex.Index, is_assign: boo
 }
 
 fn inplaceOp(lhs_idx: ValueIndex.Index, rhs_idx: *ValueIndex.Index, is_assign: bool) !void {
-    const op_ty = try decayValueType(lhs_idx);
-    try promote(rhs_idx, op_ty, is_assign);
+    if(lhs_idx != .discard_underscore) {
+        const op_ty = try decayValueType(lhs_idx);
+        try promote(rhs_idx, op_ty, is_assign);
+    } else {
+        std.debug.assert(is_assign);
+    }
 }
 
 fn plainBinaryOp(lhs_idx: *ValueIndex.Index, rhs_idx: *ValueIndex.Index) !void {
@@ -321,11 +340,7 @@ fn analyzeStatementChain(
             .declaration => |decl| {
                 var decl_type: ?TypeIndex.Index = null;
                 if(ast.ExprIndex.unwrap(decl.type)) |dt| {
-                    decl_type = values.get(try semaASTExpr(block_scope_idx, dt, true, .type)).type_idx;
-                }
-                const init_value = try semaASTExpr(block_scope_idx, decl.init_value, false, decl_type);
-                if(decl_type == null) {
-                    decl_type = try values.get(init_value).getType();
+                    decl_type = values.get(try semaASTExpr(block_scope_idx, dt, true, .type, null)).type_idx;
                 }
                 const new_decl = try decl_builder.insert(.{
                     .mutable = decl.mutable,
@@ -334,11 +349,26 @@ fn analyzeStatementChain(
                     .offset = null,
                     .function_param_idx = null,
                     .name = decl.identifier,
-                    .init_value = init_value,
+                    .init_value = undefined,
                 });
-                switch(types.get(decl_type.?).*) {
-                    .struct_idx, .array => decls.get(new_decl).offset = @as(u32, undefined),
-                    else => {},
+                const decl_ref = try values.insert(.{.decl_ref = new_decl});
+                const return_location_ptr = try values.insert(.{.runtime = .{
+                    .expr = ExpressionIndex.toOpt(try expressions.insert(.{.addr_of = decl_ref})),
+                    .value_type = try values.addDedupLinear(.{
+                        .type_idx = try types.addDedupLinear(.{.pointer = .{
+                            .is_const = false,
+                            .is_volatile = false,
+                            .child = .void,
+                        }}),
+                    }),
+                }});
+                const init_value = try semaASTExpr(block_scope_idx, decl.init_value, false, decl_type, return_location_ptr);
+                decls.get(new_decl).init_value = init_value;
+                if(decl_type == null) {
+                    decl_type = try values.get(init_value).getType();
+                }
+                if(types.get(decl_type.?).isContainer()) {
+                    decls.get(new_decl).offset = @as(u32, undefined);
                 }
                 _ = try stmt_builder.insert(.{.value = .{.declaration = new_decl}});
                 if(block_scope.first_decl == .none) block_scope.first_decl = decl_builder.first;
@@ -349,12 +379,12 @@ fn analyzeStatementChain(
                 _ = try stmt_builder.insert(.{.value = .{.block = block}});
             },
             .expression_statement => |ast_expr| {
-                const value = try semaASTExpr(block_scope_idx, ast_expr.expr, false, null);
+                const value = try semaASTExpr(block_scope_idx, ast_expr.expr, false, null, null);
                 const expr = try expressions.insert(.{.value = value});
                 _ = try stmt_builder.insert(.{.value = .{.expression = expr}});
             },
             .if_statement => |if_stmt| {
-                const condition = try semaASTExpr(block_scope_idx, if_stmt.condition, false, .bool);
+                const condition = try semaASTExpr(block_scope_idx, if_stmt.condition, false, .bool, null);
                 const condition_value = values.get(condition);
                 const taken_scope = try scopes.insert(.{
                     .outer_scope = ScopeIndex.toOpt(block_scope_idx),
@@ -406,7 +436,7 @@ fn analyzeStatementChain(
             .return_statement => |ret_stmt| {
                 var expr = ValueIndex.OptIndex.none;
                 if(ast.ExprIndex.unwrap(ret_stmt.expr)) |ret_expr| {
-                    expr = ValueIndex.toOpt(try semaASTExpr(block_scope_idx, ret_expr, false, return_type));
+                    expr = ValueIndex.toOpt(try semaASTExpr(block_scope_idx, ret_expr, false, return_type, null));
                 } else {
                     std.debug.assert(return_type == .void);
                 }
@@ -443,20 +473,25 @@ fn evaluateComptimeCall(fn_call: FunctionCall) ValueIndex.Index {
     unreachable;
 }
 
+fn fixupTypeHint(value_idx: ValueIndex.Index, type_hint: ?TypeIndex.Index) !ValueIndex.Index {
+    var vidx = value_idx;
+    if(type_hint) |ty| {
+        try promote(&vidx, ty, true);
+    }
+    return vidx;
+}
+
 fn semaASTExpr(
     scope_idx: ScopeIndex.Index,
     expr_idx: ast.ExprIndex.Index,
     force_comptime_eval: bool,
     type_hint: ?TypeIndex.Index,
+    // MUST match the type hint if provided
+    // You can ONLY use this value if the resulting value is a container
+    return_location_ptr: ?ValueIndex.Index,
 ) anyerror!ValueIndex.Index {
-    if(type_hint) |ty| {
-        var evaluated_idx = try semaASTExpr(scope_idx, expr_idx, force_comptime_eval, null);
-        try promote(&evaluated_idx, ty, true);
-        return evaluated_idx;
-    }
-
-    switch(ast.expressions.get(expr_idx).*) {
-        .identifier => |ident| {
+    return fixupTypeHint(switch(ast.expressions.get(expr_idx).*) {
+        .identifier => |ident| blk: {
             const scope = scopes.get(scope_idx);
             const token = try ident.retokenize();
             defer token.deinit();
@@ -464,33 +499,27 @@ fn semaASTExpr(
                 const init_value = values.get(decl.init_value);
                 try init_value.analyze();
                 if(init_value.* != .runtime and !decl.mutable) {
-                    return decl.init_value;
+                    break :blk decl.init_value;
                 }
                 if(decl.static and decl.offset == null) {
                     decl.offset = @intCast(u32, try init_value.toBytes());
                 }
-                return values.addDedupLinear(.{.decl_ref = decls.getIndex(decl)});
+                break :blk try values.addDedupLinear(.{.decl_ref = decls.getIndex(decl)});
             }
             std.debug.print("Cannot find identifier {s}\n", .{token.identifier_value()});
             return error.IdentifierNotFound;
         },
-        .discard_underscore => return .discard_underscore,
-        .parenthesized => |uop| return semaASTExpr(scope_idx, uop.operand, force_comptime_eval, type_hint),
+        .discard_underscore => .discard_underscore,
+        .parenthesized => |uop| return semaASTExpr(scope_idx, uop.operand, force_comptime_eval, type_hint, return_location_ptr),
         .force_comptime_eval => |uop| {
             if(force_comptime_eval) @panic("Redundant comptime expression, already in comptime context");
-            return semaASTExpr(scope_idx, uop.operand, true, type_hint);
+            return semaASTExpr(scope_idx, uop.operand, true, type_hint, null);
         },
 
-        .int_literal => |lit| {
-            const tok = try lit.retokenize();
-            return values.addDedupLinear(.{.comptime_int = tok.int_literal.value});
-        },
-        .char_literal => |lit| {
-            const tok = try lit.retokenize();
-            return values.addDedupLinear(.{.comptime_int = tok.char_literal.value});
-        },
-        .undefined => return .undefined,
-        .string_literal => |sr| {
+        .int_literal => |lit| try values.addDedupLinear(.{.comptime_int = (try lit.retokenize()).int_literal.value}),
+        .char_literal => |lit| try values.addDedupLinear(.{.comptime_int = (try lit.retokenize()).char_literal.value}),
+        .undefined => .undefined,
+        .string_literal => |sr| blk: {
             const token = try sr.retokenize();
             defer token.deinit();
             const offset = backends.writer.currentOffset();
@@ -521,33 +550,33 @@ fn semaASTExpr(
                 .name = sr,
                 .init_value = init_value,
             });
-            return init_value;
+            break :blk init_value;
         },
 
-        .bool_literal => |lit| return values.addDedupLinear(.{.bool = lit}),
-        .void => return values.addDedupLinear(.{.type_idx = .void}),
-        .bool => return values.addDedupLinear(.{.type_idx = .bool}),
-        .type => return values.addDedupLinear(.{.type_idx = .type}),
-        .unsigned_int => |bits| return values.addDedupLinear(.{.type_idx = try types.addDedupLinear(.{.unsigned_int = bits})}),
-        .signed_int => |bits| return values.addDedupLinear(.{.type_idx = try types.addDedupLinear(.{.signed_int = bits})}),
+        .bool_literal => |lit| try values.addDedupLinear(.{.bool = lit}),
+        .void => try values.addDedupLinear(.{.type_idx = .void}),
+        .bool => try values.addDedupLinear(.{.type_idx = .bool}),
+        .type => try values.addDedupLinear(.{.type_idx = .type}),
+        .unsigned_int => |bits| try values.addDedupLinear(.{.type_idx = try types.addDedupLinear(.{.unsigned_int = bits})}),
+        .signed_int => |bits| try values.addDedupLinear(.{.type_idx = try types.addDedupLinear(.{.signed_int = bits})}),
 
-        .array_type => |arr| {
-            const size = try semaASTExpr(scope_idx, arr.lhs, true, .pointer_int);
-            const child = try semaASTExpr(scope_idx, arr.rhs, true, .type);
-            return values.addDedupLinear(.{.type_idx = try types.addDedupLinear(.{.array = .{
+        .array_type => |arr| blk: {
+            const size = try semaASTExpr(scope_idx, arr.lhs, true, .pointer_int, null);
+            const child = try semaASTExpr(scope_idx, arr.rhs, true, .type, null);
+            break :blk try values.addDedupLinear(.{.type_idx = try types.addDedupLinear(.{.array = .{
                 .child = values.get(child).type_idx,
                 .size = @intCast(u32, values.get(size).unsigned_int.value),
             }})});
         },
-        .pointer_type => |ptr| {
-            const child_type = try semaASTExpr(scope_idx, ptr.child, true, .type);
-            return values.insert(.{.type_idx = try types.addDedupLinear(.{.pointer = .{
+        .pointer_type => |ptr| blk: {
+            const child_type = try semaASTExpr(scope_idx, ptr.child, true, .type, null);
+            break :blk try values.insert(.{.type_idx = try types.addDedupLinear(.{.pointer = .{
                 .is_const = ptr.is_const,
                 .is_volatile = ptr.is_volatile,
                 .child = values.get(child_type).type_idx,
             }})});
         },
-        .struct_expression => |type_body| {
+        .struct_expression => |type_body| blk: {
             const struct_scope = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx)});
             var decl_builder = decls.builder();
             var field_builder = struct_fields.builder();
@@ -575,12 +604,13 @@ fn semaASTExpr(
                             struct_scope,
                             ast.ExprIndex.unwrap(field_decl.type).?,
                             true,
-                            .type
+                            .type,
+                            null,
                         );
                         _ = try field_builder.insert(.{
                             .name = field_decl.identifier,
                             .init_value = if(ast.ExprIndex.unwrap(field_decl.init_value)) |iv|
-                                    try semaASTExpr(struct_scope, iv, true, values.get(field_type).type_idx)
+                                    try semaASTExpr(struct_scope, iv, true, values.get(field_type).type_idx, null)
                                 else
                                     try values.insert(.{.runtime = .{
                                         .expr = .none,
@@ -604,10 +634,9 @@ fn semaASTExpr(
             scopes.get(struct_scope).first_decl = decl_builder.first;
             scopes.get(struct_scope).this_type = TypeIndex.toOpt(type_idx);
 
-            return values.insert(.{.type_idx = type_idx});
+            break :blk try values.insert(.{.type_idx = type_idx});
         },
-
-        .function_expression => |func_idx| {
+        .function_expression => |func_idx| blk: {
             const func = ast.functions.get(func_idx);
             const param_scope_idx = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx)});
             const param_scope = scopes.get(param_scope_idx);
@@ -635,48 +664,48 @@ fn semaASTExpr(
 
             param_scope.first_decl = param_builder.first;
 
-            return values.insert(.{.function = .{
+            break :blk try values.insert(.{.function = .{
                 .ast_function = func_idx,
                 .generic_param_scope = param_scope_idx,
                 .generic_body = func.body,
                 .generic_return_type = func.return_type,
             }});
         },
-        .function_call => |call| {
+        .function_call => |call| outer: {
             var curr_ast_arg = call.first_arg;
             const ast_callee = ast.expressions.get(call.callee);
             var return_type: ValueIndex.Index = undefined;
             const sema_call = switch(ast_callee.*) {
                 .builtin_function => |bi| switch(bi) {
                     .import => unreachable,
-                    .This => return values.insert(.{.type_idx = scopes.get(scope_idx).getThisType().?}),
+                    .This => break :outer try values.insert(.{.type_idx = scopes.get(scope_idx).getThisType().?}),
                     .size_of => {
                         const type_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
                         std.debug.assert(type_arg.next == .none);
 
-                        const ty = try semaASTExpr(scope_idx, type_arg.value, true, .type);
+                        const ty = try semaASTExpr(scope_idx, type_arg.value, true, .type, null);
                         const type_value = types.get(values.get(ty).type_idx);
 
-                        return values.insert(.{.comptime_int = try type_value.getSize()});
+                        break :outer try values.insert(.{.comptime_int = try type_value.getSize()});
                     },
                     .is_pointer => {
                         const type_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
                         std.debug.assert(type_arg.next == .none);
 
-                        const ty = try semaASTExpr(scope_idx, type_arg.value, true, .type);
-                        return values.insert(.{.bool = types.get(values.get(ty).type_idx).* == .pointer});
+                        const ty = try semaASTExpr(scope_idx, type_arg.value, true, .type, null);
+                        break :outer try values.insert(.{.bool = types.get(values.get(ty).type_idx).* == .pointer});
                     },
                     .int_to_ptr => {
                         const type_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
                         const expr_arg = ast.expressions.getOpt(type_arg.next).?.function_argument;
                         std.debug.assert(expr_arg.next == .none);
 
-                        const ty = try semaASTExpr(scope_idx, type_arg.value, true, .type);
+                        const ty = try semaASTExpr(scope_idx, type_arg.value, true, .type, null);
                         std.debug.assert(types.get(values.get(ty).type_idx).* == .pointer);
-                        const value = try semaASTExpr(scope_idx, expr_arg.value, false, null);
+                        const value = try semaASTExpr(scope_idx, expr_arg.value, false, null, null);
 
                         if(force_comptime_eval) @panic("TODO: Comptime int_to_ptr");
-                        return values.insert(.{.runtime = .{
+                        break :outer try values.insert(.{.runtime = .{
                             .expr = ExpressionIndex.toOpt(try expressions.insert(.{
                                 .value = value,
                             })),
@@ -687,11 +716,11 @@ fn semaASTExpr(
                         const expr_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
                         std.debug.assert(expr_arg.next == .none);
 
-                        const value = try semaASTExpr(scope_idx, expr_arg.value, false, null);
+                        const value = try semaASTExpr(scope_idx, expr_arg.value, false, null, null);
                         std.debug.assert(types.get(try decayValueType(value)).* == .pointer);
 
                         if(force_comptime_eval) @panic("TODO: Comptime ptr_to_int");
-                        return values.insert(.{.runtime = .{
+                        break :outer try values.insert(.{.runtime = .{
                             .expr = ExpressionIndex.toOpt(try expressions.insert(.{
                                 .value = value,
                             })),
@@ -703,12 +732,12 @@ fn semaASTExpr(
                         const expr_arg = ast.expressions.getOpt(type_arg.next).?.function_argument;
                         std.debug.assert(expr_arg.next == .none);
 
-                        const ty = try semaASTExpr(scope_idx, type_arg.value, true, .type);
-                        const value = try semaASTExpr(scope_idx, expr_arg.value, false, null);
+                        const ty = try semaASTExpr(scope_idx, type_arg.value, true, .type, null);
+                        const value = try semaASTExpr(scope_idx, expr_arg.value, false, null, null);
 
                         if(force_comptime_eval) @panic("TODO: Comptime truncate");
 
-                        return values.insert(.{.runtime = .{
+                        break :outer try values.insert(.{.runtime = .{
                             .expr = ExpressionIndex.toOpt(try expressions.insert(.{.truncate = .{
                                 .value = value,
                                 .type = values.get(ty).type_idx,
@@ -716,11 +745,11 @@ fn semaASTExpr(
                             .value_type = ty,
                         }});
                     },
-                    .syscall => blk: {
+                    .syscall => inner: {
                         var arg_builder = expressions.builderWithPath("function_arg.next");
                         while(ast.expressions.getOpt(curr_ast_arg)) |ast_arg| {
                             const func_arg = ast_arg.function_argument;
-                            var arg_value = try semaASTExpr(scope_idx, func_arg.value, false, null);
+                            var arg_value = try semaASTExpr(scope_idx, func_arg.value, false, null, null);
                             const arg_value_type = try values.get(arg_value).getType();
                             switch(types.get(arg_value_type).*) {
                                 .pointer, .signed_int, .unsigned_int => {},
@@ -740,7 +769,7 @@ fn semaASTExpr(
                             curr_ast_arg = func_arg.next;
                         }
                         return_type = .u64_type;
-                        break :blk FunctionCall{
+                        break :inner FunctionCall{
                             .callee = .{
                                 .function_value = .syscall_func,
                                 .instantiation = 0,
@@ -749,57 +778,57 @@ fn semaASTExpr(
                         };
                     },
                 },
-                else => blk: {
-                    const callee_idx = try semaASTExpr(scope_idx, call.callee, true, null);
+                else => inner: {
+                    const callee_idx = try semaASTExpr(scope_idx, call.callee, true, null, null);
                     const callee = values.get(callee_idx);
                     // TODO: Runtime functions (function pointers)
                     switch(callee.*) {
                         .function => {
                             const gen = try callFunctionWithArgs(callee_idx, scope_idx, call.first_arg);
                             return_type = callee.function.instantiations.items[gen.callee.instantiation].return_type;
-                            break :blk gen;
+                            break :inner gen;
                         },
                         .bound_fn => |b| {
                             ast.expressions.get(b.first_arg).function_argument.next = call.first_arg;
                             const gen = try callFunctionWithArgs(b.callee, scope_idx, ast.ExprIndex.toOpt(b.first_arg));
                             return_type = values.get(b.callee).function.instantiations.items[gen.callee.instantiation].return_type;
-                            break :blk gen;
+                            break :inner gen;
                         },
                         else => std.debug.panic("Cannot call non-function: {any}", .{callee}),
                     }
                 },
             };
             if(force_comptime_eval) {
-                return evaluateComptimeCall(sema_call);
+                break :outer evaluateComptimeCall(sema_call);
             }
-            return values.insert(.{.runtime = .{
+            break :outer try values.insert(.{.runtime = .{
                 .expr = ExpressionIndex.toOpt(try expressions.insert(.{.function_call = sema_call})),
                 .value_type = return_type,
             }});
         },
 
-        .unary_bitnot => |uop| {
-            const value_idx = try semaASTExpr(scope_idx, uop.operand, force_comptime_eval, null);
+        .unary_bitnot => |uop| blk: {
+            const value_idx = try semaASTExpr(scope_idx, uop.operand, force_comptime_eval, null, null);
             const value = values.get(value_idx);
             if(value.isComptime()) {
                 switch(value.*) {
-                    .comptime_int => |int| return values.insert(.{.comptime_int = ~int & 0xFFFFFFFFFFFFFFFF}),
+                    .comptime_int => |int| break :blk try values.insert(.{.comptime_int = ~int & 0xFFFFFFFFFFFFFFFF}),
                     else => unreachable,
                 }
             }
-            return Value.fromExpression(try expressions.insert(.{.bit_not = value_idx}), try values.insert(.{.type_idx = try value.getType()}));
+            break :blk try Value.fromExpression(try expressions.insert(.{.bit_not = value_idx}), try values.insert(.{.type_idx = try value.getType()}));
         },
 
-        .unary_lognot => |uop| {
-            const value_idx = try semaASTExpr(scope_idx, uop.operand, force_comptime_eval, .bool);
+        .unary_lognot => |uop| blk: {
+            const value_idx = try semaASTExpr(scope_idx, uop.operand, force_comptime_eval, .bool, null);
             const value = values.get(value_idx);
             if(value.isComptime()) {
                 switch(value.*) {
-                    .bool => |b| return values.addDedupLinear(.{.bool = !b}),
+                    .bool => |b| break :blk try values.addDedupLinear(.{.bool = !b}),
                     else => unreachable,
                 }
             }
-            return Value.fromExpression(try expressions.insert(.{.logical_not = value_idx}), .bool);
+            break :blk try Value.fromExpression(try expressions.insert(.{.logical_not = value_idx}), .bool);
         },
 
         inline
@@ -811,8 +840,9 @@ fn semaASTExpr(
         .equals, .not_equal, .logical_and, .logical_or,
         .assign, .range,
         => |bop, tag| {
-            var lhs = try semaASTExpr(scope_idx, bop.lhs, force_comptime_eval, null);
-            var rhs = try semaASTExpr(scope_idx, bop.rhs, force_comptime_eval, null);
+            var lhs = try semaASTExpr(scope_idx, bop.lhs, force_comptime_eval, null, null);
+            // TODO: Assign RLS
+            var rhs = try semaASTExpr(scope_idx, bop.rhs, force_comptime_eval, null, null);
 
             const value_type = switch(tag) {
                 .plus_eq, .minus_eq, .multiply_eq, .divide_eq, .modulus_eq,
@@ -887,7 +917,7 @@ fn semaASTExpr(
             }});
         },
         .member_access => |bop| {
-            var lhs = try semaASTExpr(scope_idx, bop.lhs, force_comptime_eval, null);
+            var lhs = try semaASTExpr(scope_idx, bop.lhs, force_comptime_eval, null, null);
             const lhs_value = values.get(lhs);
             const rhs_expr = ast.expressions.get(bop.rhs);
             std.debug.assert(rhs_expr.* == .identifier);
@@ -913,7 +943,7 @@ fn semaASTExpr(
                         });
                         const offset_expr = try values.insert(.{.unsigned_int = .{
                             .bits = 64,
-                            .value = try lhs_struct.offsetOf(StructFieldIndex.toOpt(struct_fields.getIndex(field))),
+                            .value = try lhs_struct.offsetOf(struct_fields.getIndex(field)),
                         }});
                         const addr_of_expr = if(types.get(try decayValueType(lhs)).* == .pointer) lhs else
                             try Value.fromExpression(try expressions.insert(.{.addr_of = lhs}), member_ptr);
@@ -938,7 +968,7 @@ fn semaASTExpr(
 
                             const param_type_value = values.get(first_param.init_value).runtime.value_type;
                             const param_type = switch(values.get(param_type_value).*) {
-                                .unresolved => |ur| try semaASTExpr(scope_idx, ur.expression, true, .type),
+                                .unresolved => |ur| try semaASTExpr(scope_idx, ur.expression, true, .type, null),
                                 else => param_type_value,
                             };
 
@@ -992,7 +1022,7 @@ fn semaASTExpr(
         },
         .addr_of => |uop| {
             if(force_comptime_eval) @panic("TODO: comptime eval addr_of");
-            const operand_idx = try semaASTExpr(scope_idx, uop.operand, force_comptime_eval, null);
+            const operand_idx = try semaASTExpr(scope_idx, uop.operand, force_comptime_eval, null, null);
             const operand = values.get(operand_idx);
             const result_type = switch(operand.*) {
                 .decl_ref => |decl_idx| blk: {
@@ -1027,7 +1057,7 @@ fn semaASTExpr(
         },
         .deref => |uop| {
             if(force_comptime_eval) @panic("TODO: comptime eval addr_of");
-            const operand_idx = try semaASTExpr(scope_idx, uop.operand, force_comptime_eval, null);
+            const operand_idx = try semaASTExpr(scope_idx, uop.operand, force_comptime_eval, null, null);
             const operand = values.get(operand_idx);
             const operand_type = types.get(try operand.getType());
             std.debug.assert(operand_type.* == .pointer);
@@ -1040,7 +1070,7 @@ fn semaASTExpr(
         },
         .array_subscript => |bop| {
             if(force_comptime_eval) @panic("TODO: comptime eval addr_of");
-            var lhs_idx = try semaASTExpr(scope_idx, bop.lhs, force_comptime_eval, null);
+            var lhs_idx = try semaASTExpr(scope_idx, bop.lhs, force_comptime_eval, null, null);
             const lhs_type = types.get(try decayValueType(lhs_idx));
             try promote(&lhs_idx, types.getIndex(lhs_type), true);
             const lhs = values.get(lhs_idx);
@@ -1068,7 +1098,7 @@ fn semaASTExpr(
                 .bits = 64,
                 .value = @as(i65, @intCast(i64, try types.get(child_type).getSize())),
             }});
-            var rhs_idx = try semaASTExpr(scope_idx, bop.rhs, force_comptime_eval, null);
+            var rhs_idx = try semaASTExpr(scope_idx, bop.rhs, force_comptime_eval, null, null);
             try inplaceOp(size_expr, &rhs_idx, false);
             const rhs = values.get(rhs_idx);
             const rhs_type = types.get(try rhs.getType());
@@ -1100,31 +1130,113 @@ fn semaASTExpr(
                 sf.sema_struct = ValueIndex.toOpt(try semaASTExpr(
                     scope_idx,
                     sf.top_level_struct,
-                    force_comptime_eval,
+                    true,
                     .type,
+                    null,
                 ));
             }
             return ValueIndex.unwrap(sf.sema_struct).?;
         },
-        .type_init_list => |til| {
-            var builder = type_init_values.builder();
-            var current = til.first_value;
-            while(ast.type_init_values.getOpt(current)) |tiv| : (current = tiv.next) {
-                _ = try builder.insert(.{
-                    .field_name = tiv.identifier,
-                    .value = try semaASTExpr(scope_idx, tiv.value, false, null),
-                });
-            }
+        .type_init_list => |til| blk: {
+            var target_type: ?TypeIndex.Index = if(ast.ExprIndex.unwrap(til.specified_type)) |st| inner: {
+                const st_value = try semaASTExpr(scope_idx, st, true, .type, null);
+                if(type_hint) |th| {
+                    if(values.get(st_value).type_idx != th) {
+                        @panic("Mismatched type hint and tiv type");
+                    }
+                }
+                break :inner values.get(st_value).type_idx;
+            } else type_hint;
 
-            var value = try values.insert(.{.type_init = builder.first});
-            if(ast.ExprIndex.unwrap(til.specified_type)) |st| {
-                const st_value = try semaASTExpr(scope_idx, st, true, .type);
-                try promote(&value, values.get(st_value).type_idx, false);
+            if(target_type) |ttyp| {
+                if(return_location_ptr) |rloc| {
+                    const new_scope_idx = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx)});
+                    const typed = try typeTil(til.first_value, ttyp);
+                    var builder = statements.builder();
+
+                    for(typed.slice()) |ass| {
+                        var field_type: TypeIndex.Index = undefined;
+                        var field_offset: u32 = undefined;
+
+                        switch(types.get(ttyp).*) {
+                            .struct_idx => |sidx| {
+                                const fidx = @intToEnum(StructFieldIndex.Index, ass.identifier);
+                                field_type = try values.get(struct_fields.get(fidx).init_value).getType();
+                                field_offset = try structs.get(sidx).offsetOf(fidx);
+                            },
+                            else => unreachable,
+                        }
+
+                        // TODO: Propagate pointer qualifiers
+                        const field_pointer_type = try values.addDedupLinear(.{.type_idx = try types.insert(.{.pointer = .{
+                            .child = field_type,
+                            .is_const = false,
+                            .is_volatile = false,
+                        }})});
+
+                        const field_reference_type = try values.addDedupLinear(.{.type_idx = try types.insert(.{.reference = .{
+                            .child = field_type,
+                            .is_const = false,
+                            .is_volatile = false,
+                        }})});
+
+                        const field_result_location = try values.insert(.{.runtime = .{
+                            .expr = ExpressionIndex.toOpt(try expressions.insert(.{.add = .{
+                                .lhs = rloc,
+                                .rhs = try values.insert(.{.comptime_int = field_offset}),
+                            }})),
+                            .value_type = field_pointer_type,
+                        }});
+
+                        const value = switch(ass.assignment) {
+                            .default => |def| def,
+                            .normal => |norm| try semaASTExpr(
+                                scope_idx,
+                                norm,
+                                force_comptime_eval,
+                                field_type,
+                                field_result_location,
+                            ),
+                        };
+
+                        _ = try builder.insert(.{.value = .{
+                            .expression = try expressions.insert(.{.assign = .{
+                                .lhs = try values.insert(.{.runtime = .{
+                                    .expr = ExpressionIndex.toOpt(try expressions.insert(.{.deref = field_result_location})),
+                                    .value_type = field_reference_type,
+                                }}),
+                                .rhs = value,
+                            }}),
+                        }});
+                    }
+
+                    break :blk try values.insert(.{.runtime = .{
+                        .expr = ExpressionIndex.toOpt(try expressions.insert(.{.block = .{
+                            .scope = new_scope_idx,
+                            .first_stmt = builder.first,
+                            .reaches_end = true,
+                        }})),
+                        .value_type = try values.addDedupLinear(.{.type_idx = ttyp}),
+                    }});
+                }
             }
-            return value;
+            break :blk try values.insert(.{.type_init = til.first_value});
+        },
+        .block_expression => |ast_blk| blk: {
+            const new_scope_idx = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx)});
+
+            break :blk try values.insert(.{.runtime = .{
+                .expr = ExpressionIndex.toOpt(try expressions.insert(.{.block = try analyzeStatementChain(
+                    new_scope_idx,
+                    ast_blk.block,
+                    .void,
+                    .none,
+                )})),
+                .value_type = .void,
+            }});
         },
         else => |expr| std.debug.panic("Could not evaluate: {any}", .{expr}),
-    }
+    }, type_hint);
 }
 
 const Unresolved = struct {
@@ -1141,13 +1253,13 @@ const Unresolved = struct {
         self.analysis_started = true;
         if(values.getOpt(self.requested_type)) |request| {
             const eval_type = switch(request.*) {
-                .unresolved => |u| values.get(try semaASTExpr(self.scope, u.expression, true, .type)).type_idx,
+                .unresolved => |u| values.get(try semaASTExpr(self.scope, u.expression, true, .type, null)).type_idx,
                 .type_idx => |t| t,
                 else => unreachable,
             };
-            return semaASTExpr(self.scope, self.expression, true, eval_type);
+            return semaASTExpr(self.scope, self.expression, true, eval_type, null);
         } else {
-            return semaASTExpr(self.scope, self.expression, true, null);
+            return semaASTExpr(self.scope, self.expression, true, null, null);
         }
     }
 };
@@ -1184,6 +1296,8 @@ pub const Type = union(enum) {
     pub fn getSize(self: @This()) !u32 {
         return switch(self) {
             .void, .undefined, .comptime_int, .type => 0,
+            .anyopaque => error.AnyopaqueHasNoSize,
+            .type_of_value => @panic("type_of_value size"),
             .bool => 1,
             .unsigned_int, .signed_int => |bits| @as(u32, 1) << @intCast(u5, std.math.log2_int_ceil(u32, @divTrunc(bits + 7, 8))),
             .pointer, .reference => switch(backends.current_backend.pointer_type) {
@@ -1193,18 +1307,28 @@ pub const Type = union(enum) {
                 .u8 => 1,
             },
             .array => |arr| try types.get(arr.child).getSize() * arr.size,
-            .struct_idx => |struct_idx| try structs.get(struct_idx).offsetOf(.none),
-            else => |other| std.debug.panic("TODO: getSize of type {s}", .{@tagName(other)}),
+            .struct_idx => |struct_idx| try structs.get(struct_idx).offsetOf(null),
         };
     }
 
     pub fn getAlignment(self: @This()) !u32 {
         return switch(self) {
-            .void, .undefined, .comptime_int, .type => 1,
+            .void, .undefined, .comptime_int, .type, .anyopaque => 1,
+            .type_of_value => @panic("type_of_value align"),
             .bool, .unsigned_int, .signed_int, .pointer, .reference => self.getSize(),
             .struct_idx => |struct_idx| structs.get(struct_idx).getAlignment(),
             .array => |arr| types.get(arr.child).getAlignment(),
-            else => |other| std.debug.panic("TODO: getAlignment of type {s}", .{@tagName(other)}),
+        };
+    }
+
+    pub fn isContainer(self: @This()) bool {
+        return switch(self) {
+            .reference => |r| types.get(r.child).isContainer(),
+            .void, .undefined, .comptime_int, .type, .anyopaque,
+            .bool, .unsigned_int, .signed_int, .pointer,
+            => false,
+            .struct_idx, .array, .type_of_value,
+            => true,
         };
     }
 
@@ -1254,11 +1378,7 @@ pub const Value = union(enum) {
     function: Function,
     discard_underscore,
     empty_tuple,
-    type_init: TypeInitValueIndex.OptIndex,
-    struct_value: struct {
-        struct_idx: StructIndex.Index,
-        values: TypeInitValueIndex.OptIndex,
-    },
+    type_init: ast.TypeInitValueIndex.OptIndex,
 
     bound_fn: struct {
         callee: ValueIndex.Index,
@@ -1304,7 +1424,6 @@ pub const Value = union(enum) {
             .runtime => |rt| values.get(rt.value_type).type_idx,
             .decl_ref => |dr| return values.get(decls.get(dr).init_value).getType(),
             .type_init => return types.addDedupLinear(.{.type_of_value = values.getIndex(self)}),
-            .struct_value => |sv| return types.addDedupLinear(.{.struct_idx = sv.struct_idx}),
             else => |other| std.debug.panic("TODO: Get type of {s}", .{@tagName(other)}),
         };
     }
@@ -1403,7 +1522,7 @@ pub const Struct = struct {
         return alignment;
     }
 
-    pub fn offsetOf(self: *@This(), field_idx: StructFieldIndex.OptIndex) anyerror!u32 {
+    pub fn offsetOf(self: *@This(), field_idx: ?StructFieldIndex.Index) anyerror!u32 {
         var offset: u32 = 0;
         var curr_field = self.first_field;
         while(struct_fields.getOpt(curr_field)) |field| : (curr_field = field.next) {
@@ -1411,10 +1530,10 @@ pub const Struct = struct {
             const alignment = try field_type.getAlignment();
             offset += alignment - 1;
             offset &= ~(alignment - 1);
-            if(field_idx == curr_field) return offset;
+            if(field_idx == struct_fields.getIndex(field)) return offset;
             offset += try field_type.getSize();
         }
-        std.debug.assert(field_idx == .none);
+        std.debug.assert(field_idx == null);
         const alignment = try self.getAlignment();
         offset += alignment - 1;
         offset &= ~(alignment - 1);
@@ -1448,7 +1567,8 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
                     new_scope_idx,
                     values.get(values.get(param.init_value).runtime.value_type).unresolved.expression,
                     true,
-                    .type
+                    .type,
+                    null,
                 );
 
                 var new_param: Decl = .{
@@ -1459,7 +1579,7 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
                     .function_param_idx = param.function_param_idx,
                     .name = param.name,
                     .init_value = if(param.comptime_param)
-                            try semaASTExpr(arg_scope.?, arg.value, true, values.get(param_type).type_idx)
+                            try semaASTExpr(arg_scope.?, arg.value, true, values.get(param_type).type_idx, null)
                         else
                             try values.insert(.{.runtime = .{
                                 .expr = .none,
@@ -1470,7 +1590,7 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
 
                 if(!param.comptime_param) {
                     _ = try runtime_params_builder.insert(.{.function_arg = .{
-                        .value = try semaASTExpr(arg_scope.?, arg.value, false, values.get(param_type).type_idx),
+                        .value = try semaASTExpr(arg_scope.?, arg.value, false, values.get(param_type).type_idx, null),
                         .param_decl = new_param_idx,
                     }});
                 }
@@ -1515,7 +1635,7 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
             }
         }
 
-        const return_type = try semaASTExpr(new_scope_idx, func.generic_return_type, true, .type);
+        const return_type = try semaASTExpr(new_scope_idx, func.generic_return_type, true, .type, null);
         const instantiation = func.instantiations.items.len;
         try func.instantiations.append(func_instantiation_alloc.allocator(), .{
             .param_scope = new_scope_idx,
@@ -1548,11 +1668,11 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
                 const param_rt = &values.get(param.init_value).runtime;
                 if(values.get(param_rt.value_type).* == .unresolved) {
                     const param_type = &values.get(param_rt.value_type).unresolved;
-                    param_rt.value_type = try semaASTExpr(func.generic_param_scope, param_type.expression, true, .type);
+                    param_rt.value_type = try semaASTExpr(func.generic_param_scope, param_type.expression, true, .type, null);
                 }
             }
 
-            const return_type = try semaASTExpr(func.generic_param_scope, func.generic_return_type, true, .type);
+            const return_type = try semaASTExpr(func.generic_param_scope, func.generic_return_type, true, .type, null);
             func.instantiations.appendAssumeCapacity(.{
                 .param_scope = func.generic_param_scope,
                 .return_type = return_type,
@@ -1576,6 +1696,7 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
                     func_arg.value,
                     false,
                     values.get(values.get(curr_param.init_value).runtime.value_type).type_idx,
+                    null,
                 ),
                 .param_decl = decls.getIndex(curr_param),
             }});
@@ -1771,6 +1892,8 @@ pub const Expression = union(enum) {
 
     function_arg: FunctionArgument,
     function_call: FunctionCall,
+
+    block: Block,
 };
 
 pub const TypeInitValue = struct {
