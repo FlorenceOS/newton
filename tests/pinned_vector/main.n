@@ -3,7 +3,7 @@ const test_lib = @import("../test_lib.n");
 
 const PinnedVector = std.containers.PinnedVector;
 
-fn test_vec(comptime T: type, comptime capacity: u32) void {
+fn test_vec(comptime T: type, comptime capacity: u32) inline void {
     var vec: PinnedVector(T, capacity) = undefined;
     vec.init();
 
