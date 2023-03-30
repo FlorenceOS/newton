@@ -468,7 +468,9 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             if(dest_reg == lhs_reg) {
                 try writeOperandReg(writer, uf, op_t, op.rhs, dest_reg, &.{0x2A | boolToU8(op_t != .u8)}, &.{}, true);
             } else if(dest_reg == rhs_reg) {
-                @panic("TODO: Sub into rhs");
+                try writeOperandReg(writer, uf, op_t, op.lhs, dest_reg, &.{0x2A | boolToU8(op_t != .u8)}, &.{}, true);
+                // neg dest_reg
+                try writeDirect(writer, op_t, &.{0xF6 | boolToU8(op_t != .u8)}, dest_reg, 3, &.{}, false);
             } else {
                 @panic("TODO: Sub no common regs");
             }
