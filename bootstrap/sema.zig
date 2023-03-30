@@ -510,10 +510,10 @@ fn semaASTExpr(
             return error.IdentifierNotFound;
         },
         .discard_underscore => .discard_underscore,
-        .parenthesized => |uop| return semaASTExpr(scope_idx, uop.operand, force_comptime_eval, type_hint, return_location_ptr),
-        .force_comptime_eval => |uop| {
+        .parenthesized => |uop| try semaASTExpr(scope_idx, uop.operand, force_comptime_eval, type_hint, return_location_ptr),
+        .force_comptime_eval => |uop| blk: {
             if(force_comptime_eval) @panic("Redundant comptime expression, already in comptime context");
-            return semaASTExpr(scope_idx, uop.operand, true, type_hint, null);
+            break :blk try semaASTExpr(scope_idx, uop.operand, true, type_hint, null);
         },
 
         .int_literal => |lit| try values.addDedupLinear(.{.comptime_int = (try lit.retokenize()).int_literal.value}),
@@ -839,7 +839,7 @@ fn semaASTExpr(
         .less, .less_equal, .greater, .greater_equal,
         .equals, .not_equal, .logical_and, .logical_or,
         .assign, .range,
-        => |bop, tag| {
+        => |bop, tag| outer: {
             var lhs = try semaASTExpr(scope_idx, bop.lhs, force_comptime_eval, null, null);
             // TODO: Assign RLS
             var rhs = try semaASTExpr(scope_idx, bop.rhs, force_comptime_eval, null, null);
@@ -888,7 +888,7 @@ fn semaASTExpr(
                     .signed_int => |i| i.value,
                     else => unreachable,
                 };
-                return values.insert(switch(tag) {
+                break :outer try values.insert(switch(tag) {
                     .plus => .{.comptime_int = lhs_int +% rhs_int},
                     .minus => .{.comptime_int = lhs_int -% rhs_int},
                     .multiply => .{.comptime_int = lhs_int *% rhs_int},
@@ -909,14 +909,14 @@ fn semaASTExpr(
                 });
             }
 
-            return values.insert(.{.runtime = .{
+            break :outer try values.insert(.{.runtime = .{
                 .expr = ExpressionIndex.toOpt(try expressions.insert(
                     @unionInit(Expression, sema_tag, .{.lhs = lhs, .rhs = rhs}),
                 )),
                 .value_type = value_type,
             }});
         },
-        .member_access => |bop| {
+        .member_access => |bop| blk: {
             var lhs = try semaASTExpr(scope_idx, bop.lhs, force_comptime_eval, null, null);
             const lhs_value = values.get(lhs);
             const rhs_expr = ast.expressions.get(bop.rhs);
@@ -955,7 +955,7 @@ fn semaASTExpr(
                             }}),
                         });
                         const add_expr = try Value.fromExpression(try expressions.insert(.{.add = .{.lhs = addr_of_expr, .rhs = offset_expr}}), member_ptr);
-                        return values.insert(.{.runtime = .{
+                        break :blk try values.insert(.{.runtime = .{
                             .expr = ExpressionIndex.toOpt(try expressions.insert(.{.deref = add_expr})),
                             .value_type = member_ref,
                         }});
@@ -974,21 +974,21 @@ fn semaASTExpr(
 
                             const first_param_is_ptr = types.get(values.get(param_type).type_idx).* == .pointer;
                             if(lhs_type.* != .pointer and first_param_is_ptr) {
-                                return values.insert(.{.bound_fn = .{
+                                break :blk try values.insert(.{.bound_fn = .{
                                     .callee = static_decl.init_value,
                                     .first_arg = try ast.expressions.insert(.{.function_argument = .{
                                         .value = try ast.expressions.insert(.{.addr_of = .{.operand = bop.lhs}}),
                                     }}),
                                 }});
                             } else if(lhs_type.* == .pointer and !first_param_is_ptr) {
-                                return values.insert(.{.bound_fn = .{
+                                break :blk try values.insert(.{.bound_fn = .{
                                     .callee = static_decl.init_value,
                                     .first_arg = try ast.expressions.insert(.{.function_argument = .{
                                         .value = try ast.expressions.insert(.{.deref = .{.operand = bop.lhs}}),
                                     }}),
                                 }});
                             } else {
-                                return values.insert(.{.bound_fn = .{
+                                break :blk try values.insert(.{.bound_fn = .{
                                     .callee = static_decl.init_value,
                                     .first_arg = try ast.expressions.insert(.{.function_argument = .{
                                         .value = bop.lhs,
@@ -1006,12 +1006,12 @@ fn semaASTExpr(
                         std.debug.assert(static_decl.static);
                         try values.get(static_decl.init_value).analyze();
                         if(!static_decl.mutable) {
-                            return static_decl.init_value;
+                            break :blk static_decl.init_value;
                         }
                         if(static_decl.offset == null) {
                             static_decl.offset = @intCast(u32, try values.get(static_decl.init_value).toBytes());
                         }
-                        return values.addDedupLinear(.{.decl_ref = decls.getIndex(static_decl)});
+                        break :blk try values.addDedupLinear(.{.decl_ref = decls.getIndex(static_decl)});
                     } else {
                         std.debug.print("Member not found: {s}\n", .{token.identifier_value()});
                         return error.MemberNotFound;
@@ -1020,7 +1020,7 @@ fn semaASTExpr(
                 else => |other| std.debug.panic("TODO: member_access of {s}", .{@tagName(other)}),
             }
         },
-        .addr_of => |uop| {
+        .addr_of => |uop| outer: {
             if(force_comptime_eval) @panic("TODO: comptime eval addr_of");
             const operand_idx = try semaASTExpr(scope_idx, uop.operand, force_comptime_eval, null, null);
             const operand = values.get(operand_idx);
@@ -1050,25 +1050,25 @@ fn semaASTExpr(
                 else => |other| std.debug.panic("Can't take the addr of {s}", .{@tagName(other)}),
             };
 
-            return values.insert(.{.runtime = .{
+            break :outer try values.insert(.{.runtime = .{
                 .expr = ExpressionIndex.toOpt(try expressions.insert(.{.addr_of = operand_idx})),
                 .value_type = result_type,
             }});
         },
-        .deref => |uop| {
+        .deref => |uop| blk: {
             if(force_comptime_eval) @panic("TODO: comptime eval addr_of");
             const operand_idx = try semaASTExpr(scope_idx, uop.operand, force_comptime_eval, null, null);
             const operand = values.get(operand_idx);
             const operand_type = types.get(try operand.getType());
             std.debug.assert(operand_type.* == .pointer);
-            return values.insert(.{.runtime = .{
+            break :blk try values.insert(.{.runtime = .{
                 .expr = ExpressionIndex.toOpt(try expressions.insert(.{.deref = operand_idx})),
                 .value_type = try values.addDedupLinear(.{
                     .type_idx = try types.addDedupLinear(.{.reference = operand_type.pointer})
                 }),
             }});
         },
-        .array_subscript => |bop| {
+        .array_subscript => |bop| outer: {
             if(force_comptime_eval) @panic("TODO: comptime eval addr_of");
             var lhs_idx = try semaASTExpr(scope_idx, bop.lhs, force_comptime_eval, null, null);
             const lhs_type = types.get(try decayValueType(lhs_idx));
@@ -1117,14 +1117,14 @@ fn semaASTExpr(
                 try expressions.insert(.{.add = .{.lhs = pointer_expr, .rhs = offset_expr}}),
                  try values.addDedupLinear(.{.type_idx = try types.addDedupLinear(.{.pointer = child_ptr})}),
             );
-            return values.insert(.{.runtime = .{
+            break :outer try values.insert(.{.runtime = .{
                 .expr = ExpressionIndex.toOpt(try expressions.insert(.{.deref = ptr_expr})),
                 .value_type = try values.addDedupLinear(.{
                     .type_idx = try types.addDedupLinear(.{.reference = child_ptr})
                 }),
             }});
         },
-        .imported_file => |import| {
+        .imported_file => |import| blk: {
             const sf = sources.source_files.get(import);
             if(sf.sema_struct == .none) {
                 sf.sema_struct = ValueIndex.toOpt(try semaASTExpr(
@@ -1135,7 +1135,7 @@ fn semaASTExpr(
                     null,
                 ));
             }
-            return ValueIndex.unwrap(sf.sema_struct).?;
+            break :blk ValueIndex.unwrap(sf.sema_struct).?;
         },
         .type_init_list => |til| blk: {
             var target_type: ?TypeIndex.Index = if(ast.ExprIndex.unwrap(til.specified_type)) |st| inner: {
