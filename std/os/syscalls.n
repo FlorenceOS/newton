@@ -63,11 +63,6 @@ fn lseek(fd: u32, offset: u64, whence: u32) inline u64 {
     return @syscall(SYS.LSEEK, fd, offset, whence);
 }
 
-fn exit(exit_code: i64) inline noreturn {
-    @syscall(SYS.EXIT, exit_code);
-    unreachable;
-}
-
 const PROT = struct {
     const NONE = 0x0;
     const READ = 0x1;
@@ -117,6 +112,11 @@ fn madvise(
     advice: u32,
 ) inline u64 {
     return @syscall(SYS.MADVISE, base, size, advice);
+}
+
+fn exit(exit_code: i64) inline noreturn {
+    @syscall(SYS.EXIT, exit_code);
+    unreachable;
 }
 
 const AT = struct {
