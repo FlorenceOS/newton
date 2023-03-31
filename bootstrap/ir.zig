@@ -2018,6 +2018,7 @@ pub fn dumpBlock(
             .undefined => std.debug.print("undefined\n", .{}),
             .@"unreachable" => std.debug.print("unreachable\n", .{}),
             .load => |p| std.debug.print("load(${d})\n", .{@enumToInt(p.source)}),
+            .clobber => |op| std.debug.print("clobber(${d})\n", .{@enumToInt(op)}),
             .logical_not => |op| std.debug.print("not(${d})\n", .{@enumToInt(op)}),
             inline
             .add, .sub, .multiply, .divide, .modulus,
@@ -2103,7 +2104,6 @@ pub fn dumpBlock(
                 }
                 std.debug.print(")\n", .{});
             },
-            .clobber => unreachable,
         }
     }
     std.debug.print("\n", .{});
