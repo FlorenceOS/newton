@@ -20,8 +20,8 @@ fn write_all(fd: u32, buf: *const u8, size: u64) void {
         if(written == size) {
             return;
         }
-        size = size - written;
-        buf = buf + written;
+        size -= written;
+        buf += written;
     }
 }
 
