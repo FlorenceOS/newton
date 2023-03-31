@@ -256,6 +256,7 @@ pub fn doRegAlloc(
         const blk = ir.blocks.get(blk_idx);
         var curr_instr = blk.first_decl;
         while(ir.decls.getOpt(curr_instr)) |instr| : (curr_instr = instr.next) {
+            if(instr.instr == .clobber) continue;
             var it = instr.instr.operands();
             while(it.next()) |op| {
                 const replacement = param_replacement.get(op.*) orelse continue;
