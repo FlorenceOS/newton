@@ -37,12 +37,14 @@ fn PinnedVector(comptime T: type, comptime capacity: u32) type {
             }
         }
 
-        fn append_assume_capacity(self: *@This(), value: T) void {
+        fn append_assume_capacity(self: *@This(), value: T) u32 {
             self.ptr[self.size] = value;
+            const retval = self.size;
             self.size += 1;
             if(self.size > self.committed_size) {
                 self.committed_size = self.size;
             }
+            return retval;
         }
 
         fn items_to_pages(items: u64) inline u64 {
