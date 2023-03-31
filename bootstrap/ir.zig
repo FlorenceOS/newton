@@ -67,8 +67,8 @@ fn typeForBits(bits: u32) InstrType {
 fn typeFor(type_idx: sema.TypeIndex.Index) InstrType {
     return switch(sema.types.get(type_idx).*) {
         .signed_int, .unsigned_int => |bits| typeForBits(bits),
-        .reference, .pointer, .void => backends.current_backend.pointer_type,
-        .bool => .u8,
+        .reference, .pointer, .void, .noreturn => backends.current_backend.pointer_type,
+        .bool, => .u8,
         else => |other| std.debug.panic("TODO: typeFor {s}", .{@tagName(other)}),
     };
 }
