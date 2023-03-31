@@ -1429,6 +1429,7 @@ pub fn eliminateTrivialLoads(decl_idx: DeclIndex.Index) !bool {
     }
 
     var op_it = decl.instr.operands();
+    var did_something = false;
     while(op_it.next()) |op_idx| {
         const operand = decls.get(op_idx.*);
         const mr = switch(operand.instr) {
@@ -1450,60 +1451,54 @@ pub fn eliminateTrivialLoads(decl_idx: DeclIndex.Index) !bool {
         };
         var current = decl.prev;
         while(decls.getOpt(current)) |it_decl| : (current = it_decl.prev) {
-            switch(it_decl.instr) {
-                .store => |store| {
-                    const store_dest_mr = decls.get(store.dest).instr.memoryReference() orelse return false;
-                    if(!arePointersDeeplyEqual(store_dest_mr, mr)) {
-                        if(try canPointersOverlap(store_dest_mr, mr)) return false;
-                        continue;
-                    }
-                    if(it_decl.instr.getOperationType() != mr.instrType()) {
-                        if(@enumToInt(mr.instrType()) < @enumToInt(it_decl.instr.getOperationType())) {
-                            op_idx.* = try insertBefore(op_idx.*, .{.truncate = .{
-                                .value = store.value,
-                                .type = mr.instrType(),
-                            }});
-                        } else {
-                            return false;
-                        }
-                    } else {
-                        op_idx.* = try insertBefore(op_idx.*, .{.copy = store.value});
-                    }
-                    return true;
-                },
-                .store_constant => |store| {
-                   const store_dest_mr = decls.get(store.dest).instr.memoryReference() orelse return false;
-                    if(!arePointersDeeplyEqual(store_dest_mr, mr)) {
-                        if(try canPointersOverlap(store_dest_mr, mr)) return false;
-                        continue;
-                    }
-                    if(it_decl.instr.getOperationType() != mr.instrType()) {
-                        if(@enumToInt(mr.instrType()) < @enumToInt(it_decl.instr.getOperationType())) {
-                            const value = switch(mr.instrType()) {
+            const store_dest_mr = switch(it_decl.instr) {
+                inline
+                .store, .store_constant
+                => |store| decls.get(store.dest).instr.memoryReference().?,
+                else => if(it_decl.instr.isVolatile()) break else continue,
+            };
+
+            if(!arePointersDeeplyEqual(store_dest_mr, mr)) {
+                if(try canPointersOverlap(store_dest_mr, mr)) break;
+                continue;
+            }
+
+            if(it_decl.instr.getOperationType() != mr.instrType()) {
+                if(@enumToInt(mr.instrType()) < @enumToInt(it_decl.instr.getOperationType())) {
+                    op_idx.* = try insertBefore(op_idx.*, switch(it_decl.instr) {
+                        .store => |store| .{.truncate = .{
+                            .value = store.value,
+                            .type = mr.instrType(),
+                        }},
+                        .store_constant => |store| .{.load_int_constant = .{
+                            .value = switch(mr.instrType()) {
                                 .u8 => @truncate(u8, store.value),
                                 .u16 => @truncate(u16, store.value),
                                 .u32 => @truncate(u32, store.value),
                                 else => unreachable,
-                            };
-                            op_idx.* = try insertBefore(op_idx.*, .{
-                                .load_int_constant = .{.value = value, .type = mr.instrType()},
-                            });
-                        } else {
-                            return false;
-                        }
-                    } else {
-                        op_idx.* = try insertBefore(op_idx.*, .{
-                            .load_int_constant = .{.value = store.value, .type = store.type},
-                        });
-                    }
-                    return true;
-                },
-                else => if(it_decl.instr.isVolatile()) return false,
+                            },
+                            .type = mr.instrType(),
+                        }},
+                        else => unreachable,
+                    });
+                }
+            } else {
+                op_idx.* = try insertBefore(op_idx.*, switch(it_decl.instr) {
+                    .store => |store| .{.copy = store.value},
+                    .store_constant => |store| .{.load_int_constant = .{
+                        .value = store.value,
+                        .type = store.type,
+                    }},
+                    else => unreachable,
+                });
             }
+
+            did_something = true;
+            break;
         }
     }
 
-    return false;
+    return did_something;
 }
 
 pub fn insertBefore(before: DeclIndex.Index, instr: DeclInstr) !DeclIndex.Index {
