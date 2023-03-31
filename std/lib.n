@@ -5,6 +5,7 @@ const containers = struct {
 const mem = @import("mem.n");
 
 const os = struct {
+    const MAX_PATH = 256;
     const syscalls = @import("os/syscalls.n");
 };
 

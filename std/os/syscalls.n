@@ -12,6 +12,7 @@ const SYS = struct {
     const MUNMAP = 11;
     const MADVISE = 28;
     const EXIT = 60;
+    const OPENAT = 257;
 };
 
 fn read(fd: u32, buf: *u8, size: u64) inline u64 {
@@ -116,4 +117,17 @@ fn madvise(
     advice: u32,
 ) inline u64 {
     return @syscall(SYS.MADVISE, base, size, advice);
+}
+
+const AT = struct {
+    const FDCWD = -100;
+};
+
+fn openat(
+    dirfd: u32,
+    path: *const u8,
+    flags: u32,
+    mode: u32,
+) inline u64 {
+    return @syscall(SYS.OPENAT, dirfd, path, flags, mode);
 }
