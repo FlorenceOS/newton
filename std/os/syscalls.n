@@ -44,11 +44,11 @@ fn write_all(fd: u32, buf: *const u8, size: u64) void {
     }
 }
 
-fn open(filename: *const u8, flags: u32, mode: u32) u64 {
+fn open(filename: *const u8, flags: u32, mode: u32) inline u64 {
     return @syscall(SYS.OPEN, filename, flags, mode);
 }
 
-fn close(fd: u32) void {
+fn close(fd: u32) inline void {
     @syscall(SYS.CLOSE, fd);
 }
 
@@ -58,7 +58,7 @@ const SEEK = struct {
     const END = 2;
 };
 
-fn lseek(fd: u32, offset: usize, whence: u32) u64 {
+fn lseek(fd: u32, offset: u64, whence: u32) inline u64 {
     return @syscall(SYS.LSEEK, fd, offset, whence);
 }
 
