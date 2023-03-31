@@ -3,12 +3,31 @@ const stdout = 1;
 const stderr = 2;
 
 const SYS = struct {
+    const READ = 0;
     const WRITE = 1;
+    const OPEN = 2;
+    const CLOSE = 3;
+    const LSEEK = 8;
     const MMAP = 9;
     const MUNMAP = 11;
     const MADVISE = 28;
     const EXIT = 60;
 };
+
+fn read(fd: u32, buf: *u8, size: u64) inline u64 {
+    return @syscall(SYS.READ, fd, buf, size);
+}
+
+fn read_all(fd: u32, buf: *u8, size: u64) u64 {
+    loop {
+        const bytes_read = read(fd, buf, size);
+        if(bytes_read == size) {
+            return;
+        }
+        size -= bytes_read;
+        buf += bytes_read;
+    }
+}
 
 fn write(fd: u32, buf: *const u8, size: u64) inline u64 {
     return @syscall(SYS.WRITE, fd, buf, size);
@@ -23,6 +42,24 @@ fn write_all(fd: u32, buf: *const u8, size: u64) void {
         size -= written;
         buf += written;
     }
+}
+
+fn open(filename: *const u8, flags: u32, mode: u32) u64 {
+    return @syscall(SYS.OPEN, filename, flags, mode);
+}
+
+fn close(fd: u32) void {
+    @syscall(SYS.CLOSE, fd);
+}
+
+const SEEK = struct {
+    const SET = 0;
+    const CUR = 1;
+    const END = 2;
+};
+
+fn lseek(fd: u32, offset: usize, whence: u32) u64 {
+    return @syscall(SYS.LSEEK, fd, offset, whence);
 }
 
 fn exit(exit_code: i64) inline noreturn {
