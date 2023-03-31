@@ -818,6 +818,18 @@ fn semaASTExpr(
             }});
         },
 
+        .unary_minus => |uop| blk: {
+            const value_idx = try semaASTExpr(scope_idx, uop.operand, force_comptime_eval, null, null);
+            const value = values.get(value_idx);
+            if(value.isComptime()) {
+                switch(value.*) {
+                    .comptime_int => |int| break :blk try values.insert(.{.comptime_int = -int & 0xFFFFFFFFFFFFFFFF}),
+                    else => unreachable,
+                }
+            }
+            break :blk try Value.fromExpression(try expressions.insert(.{.negate = value_idx}), try values.insert(.{.type_idx = try value.getType()}));
+        },
+
         .unary_bitnot => |uop| blk: {
             const value_idx = try semaASTExpr(scope_idx, uop.operand, force_comptime_eval, null, null);
             const value = values.get(value_idx);
@@ -1901,6 +1913,7 @@ pub const Expression = union(enum) {
 
     bit_not: ValueIndex.Index,
     logical_not: ValueIndex.Index,
+    negate: ValueIndex.Index,
 
     function_arg: FunctionArgument,
     function_call: FunctionCall,
