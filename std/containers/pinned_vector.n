@@ -39,6 +39,10 @@ fn PinnedVector(comptime T: type, comptime capacity: u32) type {
 
         fn append_assume_capacity(self: *@This(), value: T) u32 {
             self.ptr[self.size] = value;
+            return self.add();
+        }
+
+        fn add(self: *@This()) u32 {
             const retval = self.size;
             self.size += 1;
             if(self.size > self.committed_size) {
