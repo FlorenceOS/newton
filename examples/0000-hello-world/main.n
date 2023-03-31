@@ -1,0 +1,7 @@
+const std = @import("std");
+
+fn main() void {
+    std.print.str("Hello, world!\n".&);
+    std.print.flush();
+    std.os.syscalls.exit(0);
+}
