@@ -394,6 +394,7 @@ pub const DeclInstr = union(enum) {
                 const rt = sema.values.get(fcall.callee.function_value).function.instantiations.items[fcall.callee.instantiation].return_type;
                 return typeFor(sema.values.get(rt).type_idx);
             },
+            .tail_call => return .u64,
             .syscall, .undefined => return .u64,
             .store => |val| return decls.get(val.value).instr.getOperationType(),
             .add_constant, .sub_constant, .multiply_constant, .divide_constant, .modulus_constant,
