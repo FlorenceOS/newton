@@ -1639,8 +1639,6 @@ const IRWriter = struct {
         std.debug.assert(inst.return_type == .void or !inst.body.reaches_end);
         if(inst.body.reaches_end) {
             _ = try self.emit(.{.goto = try addEdge(self.basic_block, return_block)});
-        } else if(inst.return_type == .void) {
-            decls.get(return_phi).instr = .{.undefined = {}};
         }
         try blocks.get(return_block).seal();
         self.basic_block = return_block;
@@ -1976,8 +1974,6 @@ pub fn writeFunction(sema_func: sema.InstantiatedFunction) !BlockIndex.Index {
     std.debug.assert(func.return_type == .void or !func.body.reaches_end);
     if(func.body.reaches_end) {
         _ = try writer.emit(.{.goto = try addEdge(writer.basic_block, exit_block)});
-    } else if(func.return_type == .void) {
-        decls.get(phi).instr = .{.undefined = {}};
     }
     decls.get(enter_decl).instr.enter_function = writer.max_stack_usage;
     decls.get(exit_return).instr.leave_function.restore_stack = writer.max_stack_usage > 0;
