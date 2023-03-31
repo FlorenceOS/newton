@@ -1,7 +1,7 @@
 const std = @import("std");
 const test_lib = @import("../test_lib.n");
 
-fn main() void {
+fn main() noreturn {
     std.print.str("Hello, world!\n".& + 3);
     test_lib.expect_unflushed_output("lo, world!\n".&, 11);
     test_lib.pass_test();

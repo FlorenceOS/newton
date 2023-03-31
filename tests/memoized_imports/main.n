@@ -4,7 +4,7 @@ const test_lib = @import("../test_lib.n");
 const imp0 = @import("other.n");
 const imp1 = @import("other.n");
 
-fn main() void {
+fn main() noreturn {
     test_lib.expect_equal(*u32, imp0.i.&, imp1.i.&);
     test_lib.pass_test();
 }

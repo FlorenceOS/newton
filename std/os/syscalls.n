@@ -25,8 +25,9 @@ fn write_all(fd: u32, buf: *const u8, size: u64) void {
     }
 }
 
-fn exit(exit_code: i64) inline void {
+fn exit(exit_code: i64) inline noreturn {
     @syscall(SYS.EXIT, exit_code);
+    unreachable;
 }
 
 const PROT = struct {

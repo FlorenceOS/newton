@@ -1,7 +1,7 @@
 const std = @import("std");
 const test_lib = @import("../test_lib.n");
 
-fn main() void {
+fn main() noreturn {
     var value: u32 = undefined;
     _ = {
         value = 5;

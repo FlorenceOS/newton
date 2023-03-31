@@ -35,7 +35,7 @@ fn test_vec(comptime T: type, comptime capacity: u32) inline void {
     vec.deinit();
 }
 
-fn main() void {
+fn main() noreturn {
     test_vec(u32, 1024);
     test_vec(u64, 16*1024);
     test_lib.pass_test();

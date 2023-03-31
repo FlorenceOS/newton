@@ -1,12 +1,12 @@
 const std = @import("std");
 
-fn fail_test() void {
+fn fail_test() noreturn {
     std.os.print.str("\x1b[31;1mFAIL\x1b[0m\n".&);
     std.os.print.flush();
     std.os.syscalls.exit(1);
 }
 
-fn pass_test() inline void {
+fn pass_test() inline noreturn {
     std.os.print.str("\x1b[32;1mPASS\x1b[0m\n".&);
     std.os.print.flush();
     std.os.syscalls.exit(0);

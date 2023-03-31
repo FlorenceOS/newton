@@ -128,13 +128,14 @@ pub fn allocateRegsForInstr(
     param_replacement: *ParamReplacement,
 ) !void {
     const decl = ir.decls.get(decl_idx);
-    const next = ir.DeclIndex.unwrap(decl.next);
-    if(return_reg) |reg| {
-        decl.reg_alloc_value = reg;
-        const ret_copy = try ir.insertBefore(next.?, .{
-            .copy = decl_idx,
-        });
-        try param_replacement.put(decl_idx, ret_copy);
+    if(ir.DeclIndex.unwrap(decl.next)) |next_instr| {
+        if(return_reg) |reg| {
+            decl.reg_alloc_value = reg;
+            const ret_copy = try ir.insertBefore(next_instr, .{
+                .copy = decl_idx,
+            });
+            try param_replacement.put(decl_idx, ret_copy);
+        }
     }
     var memory_operands: usize = 0;
     var register_operands: usize = 0;
@@ -161,12 +162,14 @@ pub fn allocateRegsForInstr(
             register_operands += 1;
         }
     }
-    for(clobbers) |clob_reg| {
-        if(return_reg == clob_reg) continue;
-        const clob1 = try ir.insertBefore(next.?, .{ .clobber = decl_idx });
-        ir.decls.get(clob1).reg_alloc_value = clob_reg;
-        const clob2 = try ir.insertBefore(next.?, .{ .clobber = clob1 });
-        ir.decls.get(clob2).reg_alloc_value = clob_reg;
+    if(ir.DeclIndex.unwrap(decl.next)) |next_instr| {
+        for(clobbers) |clob_reg| {
+            if(return_reg == clob_reg) continue;
+            const clob1 = try ir.insertBefore(next_instr, .{ .clobber = decl_idx });
+            ir.decls.get(clob1).reg_alloc_value = clob_reg;
+            const clob2 = try ir.insertBefore(next_instr, .{ .clobber = clob1 });
+            ir.decls.get(clob2).reg_alloc_value = clob_reg;
+        }
     }
     for(illegal_input_regs) |clob_reg| {
         const clob1 = try ir.insertBefore(decl_idx, .{ .clobber = ir.DeclIndex.unwrap(decl.prev).? });

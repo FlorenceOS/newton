@@ -70,6 +70,7 @@ fn identToAstNode(self: *@This(), tok: anytype) !ast.ExprIndex.Index {
     if(std.mem.eql(u8, tok.body, "bool")) return .bool;
     if(std.mem.eql(u8, tok.body, "type")) return .type;
     if(std.mem.eql(u8, tok.body, "void")) return .void;
+    if(std.mem.eql(u8, tok.body, "noreturn")) return .noreturn;
     if(std.mem.eql(u8, tok.body, "anyopaque")) return .anyopaque;
 
     inline for(@typeInfo(ast.BuiltinFunction).Enum.fields) |ef| {
@@ -278,7 +279,7 @@ fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
         .end_of_file, .else_keyword, .enum_keyword, .fn_keyword,
         .struct_keyword, .bool_keyword, .type_keyword, .void_keyword,
         .anyopaque_keyword, .volatile_keyword, .true_keyword, .false_keyword, .undefined_keyword,
-        .inline_keyword,
+        .inline_keyword, .noreturn_keyword,
         => |_, tag| {
             std.debug.print("Unexpected statement token: {s}\n", .{@tagName(tag)});
             return error.UnexpectedToken;
@@ -339,6 +340,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
         .bool_keyword => .bool,
         .type_keyword => .type,
         .anyopaque_keyword => .anyopaque,
+        .noreturn_keyword => .noreturn,
         .undefined_keyword => .undefined,
 
         // Control flow expressions
@@ -628,7 +630,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
             .switch_keyword, .var_keyword, .volatile_keyword, .__keyword, .bool_keyword,
             .type_keyword, .void_keyword, .anyopaque_keyword,
             .end_of_file, .true_keyword, .false_keyword, .undefined_keyword, .comptime_keyword,
-            .inline_keyword, .unreachable_keyword,
+            .inline_keyword, .unreachable_keyword, .noreturn_keyword,
             => |_, tag| {
                 std.debug.panic("Unexpected post-primary expression token: {s}\n", .{@tagName(tag)});
             },

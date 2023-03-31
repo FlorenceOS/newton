@@ -1,7 +1,7 @@
 const std = @import("std");
 const test_lib = @import("../test_lib.n");
 
-fn main() void {
+fn main() noreturn {
     std.print.unsigned_hex_upper(0xABCDEF);
     test_lib.expect_unflushed_output("0000000000ABCDEF".&, 16);
     std.print.unsigned_hex_upper(0x42069);

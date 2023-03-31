@@ -110,6 +110,7 @@ pub const Token = union(enum) {
     if_keyword,
     inline_keyword,
     loop_keyword,
+    noreturn_keyword,
     return_keyword,
     struct_keyword,
     switch_keyword,

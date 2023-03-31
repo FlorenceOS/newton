@@ -8,6 +8,7 @@ const sources = @import("sources.zig");
 
 pub const TypeIndex = indexed_list.Indices(u32, opaque{}, .{
     .void = .{.void = {}},
+    .noreturn = .{.noreturn = {}},
     .bool = .{.bool = {}},
     .type = .{.type = {}},
     .undefined = .{.undefined = {}},
@@ -24,6 +25,7 @@ pub const TypeIndex = indexed_list.Indices(u32, opaque{}, .{
 });
 pub const ValueIndex = indexed_list.Indices(u32, opaque{}, .{
     .void = .{.type_idx = .void},
+    .noreturn = .{.type_idx = .noreturn},
     .bool = .{.type_idx = .bool},
     .type = .{.type_idx = .type},
     .discard_underscore = .{.discard_underscore = {}},
@@ -31,6 +33,8 @@ pub const ValueIndex = indexed_list.Indices(u32, opaque{}, .{
     .u16_type = .{.type_idx = .u16},
     .u32_type = .{.type_idx = .u32},
     .u64_type = .{.type_idx = .u64},
+    .true = .{.bool = true},
+    .false = .{.bool = false},
     .pointer_int_type = .{.type_idx = .pointer_int},
     .syscall_func = .{.function = undefined},
     .undefined = .{.undefined = null},
@@ -380,6 +384,12 @@ fn analyzeStatementChain(
             },
             .expression_statement => |ast_expr| {
                 const value = try semaASTExpr(block_scope_idx, ast_expr.expr, false, null, null);
+                switch(try values.get(value).getType()) {
+                    .noreturn => {
+                        reaches_end = false;
+                    },
+                    else => {},
+                }
                 const expr = try expressions.insert(.{.value = value});
                 _ = try stmt_builder.insert(.{.value = .{.expression = expr}});
             },
@@ -553,10 +563,11 @@ fn semaASTExpr(
             break :blk init_value;
         },
 
-        .bool_literal => |lit| try values.addDedupLinear(.{.bool = lit}),
-        .void => try values.addDedupLinear(.{.type_idx = .void}),
-        .bool => try values.addDedupLinear(.{.type_idx = .bool}),
-        .type => try values.addDedupLinear(.{.type_idx = .type}),
+        .bool_literal => |lit| if(lit) .true else .false,
+        .void => .void,
+        .bool => .bool,
+        .type => .type,
+        .noreturn => .noreturn,
         .unsigned_int => |bits| try values.addDedupLinear(.{.type_idx = try types.addDedupLinear(.{.unsigned_int = bits})}),
         .signed_int => |bits| try values.addDedupLinear(.{.type_idx = try types.addDedupLinear(.{.signed_int = bits})}),
 
@@ -1277,6 +1288,7 @@ pub const PointerType = struct {
 
 pub const Type = union(enum) {
     void,
+    noreturn,
     anyopaque,
     undefined,
     bool,
@@ -1295,7 +1307,7 @@ pub const Type = union(enum) {
 
     pub fn getSize(self: @This()) !u32 {
         return switch(self) {
-            .void, .undefined, .comptime_int, .type => 0,
+            .void, .undefined, .comptime_int, .type, .noreturn => 0,
             .anyopaque => error.AnyopaqueHasNoSize,
             .type_of_value => @panic("type_of_value size"),
             .bool => 1,
@@ -1313,7 +1325,7 @@ pub const Type = union(enum) {
 
     pub fn getAlignment(self: @This()) !u32 {
         return switch(self) {
-            .void, .undefined, .comptime_int, .type, .anyopaque => 1,
+            .void, .undefined, .comptime_int, .type, .anyopaque, .noreturn => 1,
             .type_of_value => @panic("type_of_value align"),
             .bool, .unsigned_int, .signed_int, .pointer, .reference => self.getSize(),
             .struct_idx => |struct_idx| structs.get(struct_idx).getAlignment(),
@@ -1325,7 +1337,7 @@ pub const Type = union(enum) {
         return switch(self) {
             .reference => |r| types.get(r.child).isContainer(),
             .void, .undefined, .comptime_int, .type, .anyopaque,
-            .bool, .unsigned_int, .signed_int, .pointer,
+            .bool, .unsigned_int, .signed_int, .pointer, .noreturn,
             => false,
             .struct_idx, .array, .type_of_value,
             => true,
@@ -1335,7 +1347,7 @@ pub const Type = union(enum) {
     pub fn writeTo(self: @This(), writer: anytype) !void {
         switch(self) {
             inline
-            .void, .anyopaque, .undefined, .bool, .type, .comptime_int,
+            .void, .anyopaque, .undefined, .bool, .type, .comptime_int, .noreturn,
             => |_, tag| try writer.writeAll(@tagName(tag)),
             .unsigned_int => |bits| try writer.print("u{d}", .{bits}),
             .signed_int => |bits| try writer.print("i{d}", .{bits}),

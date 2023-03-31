@@ -10,7 +10,7 @@ const T = struct {
     field: u32 = 5,
 };
 
-fn main() void {
+fn main() noreturn {
     const a: S = .{
         .a = 6,
     };

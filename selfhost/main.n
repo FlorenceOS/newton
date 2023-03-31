@@ -1,5 +1,8 @@
 const std = @import("std");
 
-fn main() void {
+fn main() noreturn {
+    const fd = std.os.syscalls.open("selfhost/main.n".&, 0, undefined);
+    std.print.log_hex_upper("Open fd".&, fd);
+    std.print.flush();
     std.os.syscalls.exit(0);
 }
