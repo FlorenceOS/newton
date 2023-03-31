@@ -11,7 +11,7 @@ fn PinnedVector(comptime T: type, comptime capacity: u32) type {
         size: u32,
         committed_size: u32,
 
-        fn init(self: *@This()) void {
+        fn init(self: *@This()) inline void {
             self.ptr = @int_to_ptr(*T, syscalls.mmap(
                 0,
                 @size_of(T) * capacity,
