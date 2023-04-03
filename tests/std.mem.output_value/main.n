@@ -1,0 +1,18 @@
+const std = @import("std");
+const test_lib = @import("../test_lib.n");
+
+const T = struct {
+    v1: u64,
+    v2: u32,
+};
+
+fn main() noreturn {
+    const value = T{
+        .v1 = 4,
+        .v2 = 5,
+    };
+    const copy = std.mem.output_value(T, value.&);
+    test_lib.expect_equal(u64, copy.v1, 4);
+    test_lib.expect_equal(u32, copy.v2, 5);
+    test_lib.pass_test();
+}
