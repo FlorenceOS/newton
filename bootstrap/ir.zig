@@ -740,6 +740,7 @@ pub fn optimizeFunction(head_block: BlockIndex.Index) !void {
                         }
                     }
                     if(DeclIndex.unwrap(leave_decl)) |leave_decl_idx| {
+                        blocks.get(decl.block).last_decl = current_decl;
                         decl.next = .none;
                         decl.instr = .{.tail_call = .{
                             .callee = fc.callee,
