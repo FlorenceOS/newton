@@ -1845,7 +1845,10 @@ const IRWriter = struct {
                         offset.* = self.allocStackSpace(try decl_type.getSize(), try decl_type.getAlignment());
                     }
 
-                    const value = try self.writeValue(decl.init_value);
+                    var value = try self.writeValue(decl.init_value);
+                    if(decls.get(value).instr.memoryReference()) |mr| {
+                        value = try self.emit(mr.load());
+                    }
                     decls.get(value).sema_decl = sema.DeclIndex.toOpt(decl_idx);
 
                     switch(decls.get(value).instr) {
