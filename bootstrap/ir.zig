@@ -725,30 +725,31 @@ pub fn optimizeFunction(head_block: BlockIndex.Index) !void {
                         decl.instr = @unionInit(DeclInstr, @tagName(tag)[0..@tagName(tag).len - 9], .{.lhs = dc.lhs, .rhs = constant});
                     }
                 },
-                .function_call => |fc| blk: {
-                    var next_decl = decl.next;
-                    var leave_decl = DeclIndex.OptIndex.none;
-                    while(decls.getOpt(next_decl)) |next| {
-                        switch(next.instr) {
-                            .leave_function => {
-                                leave_decl = next_decl;
-                                break;
-                            },
-                            .goto => |edge| next_decl = blocks.get(edges.get(edge).target_block).first_decl,
-                            .undefined, .copy, .clobber => next_decl = next.next,
-                            else => break :blk,
-                        }
-                    }
-                    if(DeclIndex.unwrap(leave_decl)) |leave_decl_idx| {
-                        blocks.get(decl.block).last_decl = current_decl;
-                        decl.next = .none;
-                        decl.instr = .{.tail_call = .{
-                            .callee = fc.callee,
-                            .first_argument = fc.first_argument,
-                            .tail = leave_decl_idx,
-                        }};
-                    }
-                },
+                // TODO: Reenable tail call optimizations when we can detect if any arguments can point onto the stack
+                // .function_call => |fc| blk: {
+                //     var next_decl = decl.next;
+                //     var leave_decl = DeclIndex.OptIndex.none;
+                //     while(decls.getOpt(next_decl)) |next| {
+                //         switch(next.instr) {
+                //             .leave_function => {
+                //                 leave_decl = next_decl;
+                //                 break;
+                //             },
+                //             .goto => |edge| next_decl = blocks.get(edges.get(edge).target_block).first_decl,
+                //             .undefined, .copy, .clobber => next_decl = next.next,
+                //             else => break :blk,
+                //         }
+                //     }
+                //     if(DeclIndex.unwrap(leave_decl)) |leave_decl_idx| {
+                //         blocks.get(decl.block).last_decl = current_decl;
+                //         decl.next = .none;
+                //         decl.instr = .{.tail_call = .{
+                //             .callee = fc.callee,
+                //             .first_argument = fc.first_argument,
+                //             .tail = leave_decl_idx,
+                //         }};
+                //     }
+                // },
                 else => {},
             }
         }
