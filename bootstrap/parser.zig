@@ -599,6 +599,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
                     .@"!=_ch" => .not_equal,
                     .@"&&_ch" => .logical_and,
                     .@"||_ch" => .logical_or,
+                    .@"++_ch" => .array_append,
                     .@"=_ch" => .assign,
                     .@".._ch" => .range,
                     else => unreachable,
