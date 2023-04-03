@@ -1659,12 +1659,10 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
         {
             var curr_param = scopes.get(func.generic_param_scope).first_decl;
             var curr_arg = first_arg;
-            while(decls.getOpt(curr_param)) |param| : ({
+            while(decls.getOpt(curr_param)) |param| : (blk: {
                 curr_param = param.next;
-                curr_arg = ast.expressions.getOpt(curr_arg).?.function_argument.next;
+                curr_arg = (ast.expressions.getOpt(curr_arg) orelse break :blk).function_argument.next;
             }) {
-                const arg = (ast.expressions.getOpt(curr_arg) orelse @panic("Not enough arguments!")).function_argument;
-
                 const param_type = try semaASTExpr(
                     new_scope_idx,
                     values.get(values.get(param.init_value).runtime.value_type).unresolved.expression,
@@ -1681,18 +1679,28 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
                     .function_param_idx = param.function_param_idx,
                     .name = param.name,
                     .init_value = if(param.comptime_param)
-                            try semaASTExpr(arg_scope.?, arg.value, true, values.get(param_type).type_idx, null)
-                        else
-                            try values.insert(.{.runtime = .{
-                                .expr = .none,
-                                .value_type = param_type,
-                            }}),
+                        try semaASTExpr(
+                            arg_scope.?,
+                            ast.expressions.getOpt(curr_arg).?.function_argument.value,
+                            true,
+                            values.get(param_type).type_idx,
+                            null,
+                        ) else try values.insert(.{.runtime = .{
+                            .expr = .none,
+                            .value_type = param_type,
+                        }}),
                 };
                 const new_param_idx = try scope_builder.insert(new_param);
 
                 if(!param.comptime_param) {
                     _ = try runtime_params_builder.insert(.{.function_arg = .{
-                        .value = try semaASTExpr(arg_scope.?, arg.value, false, values.get(param_type).type_idx, null),
+                        .value = if(ast.expressions.getOpt(curr_arg)) |arg| try semaASTExpr(
+                            arg_scope.?,
+                            arg.function_argument.value,
+                            false,
+                            values.get(param_type).type_idx,
+                            null
+                        ) else return_location.?,
                         .param_decl = new_param_idx,
                     }});
                 }

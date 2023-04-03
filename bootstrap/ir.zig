@@ -1636,7 +1636,7 @@ const IRWriter = struct {
 
         const inst = callee.function.instantiations.items[function.instantiation];
         _ = try self.writeBlockStatement(inst.body.first_stmt);
-        std.debug.assert(inst.return_type == .void or !inst.body.reaches_end);
+        std.debug.assert(inst.return_type == .void or callee.function.captures_return or !inst.body.reaches_end);
         if(inst.body.reaches_end) {
             _ = try self.emit(.{.goto = try addEdge(self.basic_block, return_block)});
         }
