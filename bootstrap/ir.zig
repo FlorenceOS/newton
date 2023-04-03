@@ -2004,6 +2004,11 @@ pub fn dumpBlock(
     std.debug.print("Block#{d}:\n", .{@enumToInt(bb)});
     var current_decl = blocks.get(bb).first_decl;
     while(decls.getOpt(current_decl)) |decl| : (current_decl = decl.next) {
+        if(decls.getOpt(decl.next)) |next| {
+            std.debug.assert(next.prev == current_decl);
+        } else {
+            std.debug.assert(blocks.get(bb).last_decl == current_decl);
+        }
         if(decl.instr == .clobber) continue;
         std.debug.print("  ", .{});
         std.debug.print("${d}", .{@enumToInt(current_decl)});
