@@ -1,0 +1,9 @@
+const std = @import("std");
+const test_lib = @import("../test_lib.n");
+
+fn main() noreturn {
+    const string = std.mem.output(u8, "Hello, world!\n".&, 15);
+    std.print.str(@int_to_ptr(*u8, @ptr_to_int(string.&)));
+    test_lib.expect_unflushed_output("Hello, world!\n".&, 14);
+    test_lib.pass_test();
+}
