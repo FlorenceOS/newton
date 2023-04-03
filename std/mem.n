@@ -1,3 +1,18 @@
+fn reverse(comptime T: type, beg_ptr: *T, len: u64) void {
+    var end_ptr = beg_ptr + len - 1;
+    loop {
+        if(beg_ptr >= end_ptr) {
+            return;
+        }
+        const temp = beg_ptr.*;
+        beg_ptr.* = end_ptr.*;
+        end_ptr.* = temp;
+
+        beg_ptr += 1;
+        end_ptr -= 1;
+    }
+}
+
 fn equals(comptime T: type, lhs: *const T, rhs: *const T, len: u64) bool {
     var i: u64 = 0;
     loop {

@@ -1,0 +1,19 @@
+const mem = @import("mem.n");
+
+fn write_u64_decimal(value: u64) |out_buf| [21]u8 {
+    var length: u32 = 0;
+    loop {
+        out_buf.*[length] = @truncate(u8, value % 10) + '0';
+        value = value / 10;
+        length += 1;
+        if(value == 0) {
+            out_buf.*[length] = 0;
+            mem.reverse(u8, @int_to_ptr(*u8, @ptr_to_int(out_buf)), length);
+            return;
+        }
+    }
+}
+
+fn write_u32_decimal(value: u32) inline |out_buf| [11]u8 {
+    @int_to_ptr(*[21]u8, @ptr_to_int(out_buf)).* = write_u64_decimal(value);
+}

@@ -1,4 +1,5 @@
 const syscalls = @import("os/syscalls.n");
+const string = @import("string.n");
 
 const MAX_BUF = 128;
 
@@ -17,15 +18,12 @@ fn char(ch: u8) void {
         flush();
     }
     buffer[used] = ch;
-    used = used + 1;
+    used += 1;
 }
 
 fn unsigned_decimal(value: u64) void {
-    const next = value / 10;
-    if(next != 0) {
-        unsigned_decimal(next);
-    }
-    char('0' + @truncate(u8, value % 10));
+    const buf = std.string.write_u64_decimal(value);
+    str(@int_to_ptr(*const u8, @ptr_to_int(buf.&)));
 }
 
 fn unsigned_hex_upper(value: u64) void {
@@ -50,7 +48,7 @@ fn str(s: *const u8) void {
     loop {
         if(s.* != 0) {
             char(s.*);
-            s = s + 1;
+            s += 1;
         } else {
             return;
         }
