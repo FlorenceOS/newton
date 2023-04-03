@@ -1172,12 +1172,25 @@ fn semaASTExpr(
             const child_ptr = switch(lhs_type.*) {
                 .pointer => |ptr| ptr,
                 .array => blk: {
-                    const decl = decls.get(lhs.decl_ref);
-                    break :blk PointerType{
-                        .is_const = !decl.mutable,
-                        .is_volatile = false,
-                        .child = child_type,
-                    };
+                    switch(lhs.*) {
+                        .runtime => |rt| {
+                            const ref = types.get(values.get(rt.value_type).type_idx).reference;
+                            break :blk PointerType{
+                                .is_const = ref.is_const,
+                                .is_volatile = ref.is_volatile,
+                                .child = child_type,
+                            };
+                        },
+                        .decl_ref => |dr| {
+                            const decl = decls.get(dr);
+                            break :blk PointerType{
+                                .is_const = !decl.mutable,
+                                .is_volatile = false,
+                                .child = child_type,
+                            };
+                        },
+                        else => |o| std.debug.panic("wtf {s}", .{@tagName(o)}),
+                    }
                 },
                 else => unreachable,
             };
