@@ -1,16 +1,30 @@
-fn reverse(comptime T: type, beg_ptr: *T, len: u64) void {
-    var end_ptr = beg_ptr + len - 1;
+fn swap_no_check_equal(comptime T: type, a: *T, b: *T) inline void {
+    var tmp1 = a.*;
+    var tmp2 = b.*;
+    b.* = tmp1;
+    a.* = tmp2;
+}
+
+fn swap(comptime T: type, a: *T, b: *T) inline void {
+    if(a == b) {
+        return;
+    }
+    swap_no_check_equal(T, a, b);
+}
+
+fn reverse_range(comptime T: type, beg: *T, end: *T) void {
     loop {
-        if(beg_ptr >= end_ptr) {
+        if(beg >= end) {
             return;
         }
-        const temp = beg_ptr.*;
-        beg_ptr.* = end_ptr.*;
-        end_ptr.* = temp;
-
-        beg_ptr += 1;
-        end_ptr -= 1;
+        swap_no_check_equal(T, beg, end);
+        beg += 1;
+        end -= 1;
     }
+}
+
+fn reverse(comptime T: type, ptr: *T, len: u64) inline void {
+    reverse_range(T, ptr, ptr + len - 1);
 }
 
 fn equals(comptime T: type, lhs: *const T, rhs: *const T, len: u64) bool {
