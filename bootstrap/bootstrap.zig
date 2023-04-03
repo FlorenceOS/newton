@@ -119,7 +119,7 @@ pub fn main() !void {
         const root_scope = sema.scopes.get(root_struct.scope);
         const main_decl = (try root_scope.lookupDecl("main")).?;
         try main_decl.analyze();
-        const main_call = try sema.callFunctionWithArgs(main_decl.init_value, null, .none);
+        const main_call = try sema.callFunctionWithArgs(main_decl.init_value, null, .none, null);
         std.debug.print("{any}\n", .{sema.values.get(main_decl.init_value)});
 
         try backends.writer.output_bytes.appendNTimes(backends.writer.allocator, 0xCC, 6);

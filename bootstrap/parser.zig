@@ -128,13 +128,13 @@ fn parseFunctionExpr(self: *@This()) anyerror!ast.FunctionIndex.Index {
     _ = try self.expect(.@")_ch");
 
     const is_inline = (try self.tryConsume(.inline_keyword)) != null;
-    const return_type = try self.parseExpression(0);
     const return_location = blk: {
         if((try self.tryConsume(.@"|_ch")) == null) break :blk null;
         const ident = try self.expect(.identifier);
         _ = try self.expect(.@"|_ch");
         break :blk self.toAstIdent(ident);
     };
+    const return_type = try self.parseExpression(0);
 
     return ast.functions.insert(.{
         .first_param = param_builder.first,

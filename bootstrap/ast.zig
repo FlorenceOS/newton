@@ -532,11 +532,11 @@ fn dumpNode(node: anytype, indent_level: usize) anyerror!void {
                 curr_param = param.next;
             }
             std.debug.print(") ", .{});
-            try dumpNode(expressions.get(node.return_type), indent_level);
-            std.debug.print(" ", .{});
             if(node.return_location) |ret_loc| {
                 std.debug.print("|{s}| ", .{try ret_loc.toSlice()});
             }
+            try dumpNode(expressions.get(node.return_type), indent_level);
+            std.debug.print(" ", .{});
             try dumpStatementChain(node.body, indent_level);
         },
         else => @compileError("Cannot dump type " ++ @typeName(@TypeOf(node))),

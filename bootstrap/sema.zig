@@ -675,8 +675,30 @@ fn semaASTExpr(
 
             param_scope.first_decl = param_builder.first;
 
+            if(func.return_location) |rloc| {
+                const return_location_type = try values.insert(.{.unresolved = .{
+                    .expression = try ast.expressions.insert(.{.pointer_type = .{
+                        .is_const = false,
+                        .is_volatile = false,
+                        .child = func.return_type,
+                    }}),
+                    .requested_type = .void,
+                    .scope = undefined,
+                }});
+                _ = try param_builder.insert(.{
+                    .mutable = false,
+                    .static = false,
+                    .offset = null,
+                    .comptime_param = false,
+                    .function_param_idx = function_param_idx,
+                    .name = rloc,
+                    .init_value = try values.insert(.{.runtime = .{.expr = .none, .value_type = return_location_type}}),
+                });
+            }
+
             break :blk try values.insert(.{.function = .{
                 .ast_function = func_idx,
+                .captures_return = func.return_location != null,
                 .generic_param_scope = param_scope_idx,
                 .generic_body = func.body,
                 .generic_return_type = func.return_type,
@@ -795,13 +817,13 @@ fn semaASTExpr(
                     // TODO: Runtime functions (function pointers)
                     switch(callee.*) {
                         .function => {
-                            const gen = try callFunctionWithArgs(callee_idx, scope_idx, call.first_arg);
+                            const gen = try callFunctionWithArgs(callee_idx, scope_idx, call.first_arg, return_location_ptr);
                             return_type = callee.function.instantiations.items[gen.callee.instantiation].return_type;
                             break :inner gen;
                         },
                         .bound_fn => |b| {
                             ast.expressions.get(b.first_arg).function_argument.next = call.first_arg;
-                            const gen = try callFunctionWithArgs(b.callee, scope_idx, ast.ExprIndex.toOpt(b.first_arg));
+                            const gen = try callFunctionWithArgs(b.callee, scope_idx, ast.ExprIndex.toOpt(b.first_arg), return_location_ptr);
                             return_type = values.get(b.callee).function.instantiations.items[gen.callee.instantiation].return_type;
                             break :inner gen;
                         },
@@ -812,10 +834,15 @@ fn semaASTExpr(
             if(force_comptime_eval) {
                 break :outer evaluateComptimeCall(sema_call);
             }
-            break :outer try values.insert(.{.runtime = .{
+            const value = try values.insert(.{.runtime = .{
                 .expr = ExpressionIndex.toOpt(try expressions.insert(.{.function_call = sema_call})),
                 .value_type = return_type,
             }});
+            if(return_location_ptr) |_| {
+                return value;
+            } else {
+                break :outer value;
+            }
         },
 
         .unary_minus => |uop| blk: {
@@ -864,14 +891,52 @@ fn semaASTExpr(
         .assign, .range,
         => |bop, tag| outer: {
             var lhs = try semaASTExpr(scope_idx, bop.lhs, force_comptime_eval, null, null);
-            // TODO: Assign RLS
-            var rhs = try semaASTExpr(scope_idx, bop.rhs, force_comptime_eval, null, null);
+            var rhs: ValueIndex.Index = undefined;
+            if(tag != .assign) {
+                rhs = try semaASTExpr(scope_idx, bop.rhs, force_comptime_eval, null, null);
+            }
 
-            const value_type = switch(tag) {
+            const value_type: ValueIndex.Index = switch(tag) {
+                .assign => blk: {
+                    if(lhs == .discard_underscore) {
+                        rhs = try semaASTExpr(scope_idx, bop.rhs, force_comptime_eval, null, null);
+                        break :blk .void;
+                    }
+                    const lhs_tidx = try values.get(lhs).getType();
+                    const lhs_type = types.get(lhs_tidx);
+                    if(lhs_type.* == .reference) {
+                        const target_ptr = try values.addDedupLinear(.{
+                            .type_idx = try types.addDedupLinear(.{.pointer = .{
+                                .is_const = false,
+                                .is_volatile = lhs_type.reference.is_volatile,
+                                .child = lhs_type.reference.child,
+                            }}),
+                        });
+                        const result_loc = try Value.fromExpression(try expressions.insert(.{.addr_of = lhs}), target_ptr);
+                        rhs = try semaASTExpr(scope_idx, bop.rhs, force_comptime_eval, lhs_type.reference.child, result_loc);
+                        switch(values.get(rhs).*) {
+                            .runtime => |rt| inner: {
+                                if((expressions.getOpt(rt.expr) orelse break :inner).* == .block) {
+                                    // We're done. No promotion needed.
+                                    return values.insert(.{.runtime = .{
+                                        .expr = ExpressionIndex.toOpt(try expressions.insert(.{.assign = .{.lhs = lhs, .rhs = rhs}})),
+                                        .value_type = .void,
+                                    }});
+                                }
+                            },
+                            else => { },
+                        }
+                        break :blk .void;
+                    } else {
+                        rhs = try semaASTExpr(scope_idx, bop.rhs, force_comptime_eval, null, null);
+                        try inplaceOp(lhs, &rhs, true);
+                        break :blk .void;
+                    }
+                },
                 .plus_eq, .minus_eq, .multiply_eq, .divide_eq, .modulus_eq,
-                .shift_left_eq, .shift_right_eq, .bitand_eq, .bitxor_eq, .bitor_eq, .assign
+                .shift_left_eq, .shift_right_eq, .bitand_eq, .bitxor_eq, .bitor_eq,
                 => blk: {
-                    try inplaceOp(lhs, &rhs, tag == .assign);
+                    try inplaceOp(lhs, &rhs, false);
                     break :blk .void;
                 },
                 .less, .less_equal, .greater, .greater_equal,
@@ -1569,7 +1634,7 @@ var func_instantiation_alloc = std.heap.GeneralPurposeAllocator(.{}){
     .backing_allocator = std.heap.page_allocator,
 };
 
-pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Index, first_arg: ast.ExprIndex.OptIndex) !FunctionCall {
+pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Index, first_arg: ast.ExprIndex.OptIndex, return_location: ?ValueIndex.Index) !FunctionCall {
     const func = &values.get(fn_idx).function;
 
     var runtime_params_builder = expressions.builderWithPath("function_arg.next");
@@ -1705,7 +1770,7 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
             func.instantiations.items[0].body = try analyzeStatementChain(
                 func.generic_param_scope,
                 func.generic_body,
-                values.get(return_type).type_idx,
+                if(func.captures_return) .void else values.get(return_type).type_idx,
                 .none,
             );
         }
@@ -1727,7 +1792,16 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
             curr_arg = func_arg.next;
             curr_param_decl = curr_param.next;
         }
-        if(curr_param_decl != .none) return error.NotEnoughArguments;
+        if(decls.getOpt(curr_param_decl)) |curr_param| {
+            if(return_location) |rloc| {
+                _ = try runtime_params_builder.insert(.{.function_arg = .{
+                    .value = rloc,
+                    .param_decl = decls.getIndex(curr_param),
+                }});
+            } else {
+                return error.NotEnoughArguments;
+            }
+        }
         std.debug.assert(func.instantiations.items.len == 1);
         return .{
             .callee = .{
@@ -1741,6 +1815,7 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
 
 pub const Function = struct {
     ast_function: ast.FunctionIndex.Index,
+    captures_return: bool,
     generic_return_type: ast.ExprIndex.Index,
     generic_body: ast.StmtIndex.OptIndex,
     generic_param_scope: ScopeIndex.Index,

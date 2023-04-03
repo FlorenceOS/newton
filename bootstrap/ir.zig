@@ -391,7 +391,9 @@ pub const DeclInstr = union(enum) {
                 return lhs_type;
             },
             .function_call => |fcall| {
-                const rt = sema.values.get(fcall.callee.function_value).function.instantiations.items[fcall.callee.instantiation].return_type;
+                const func = sema.values.get(fcall.callee.function_value).function;
+                if(func.captures_return) return .u64;
+                const rt = func.instantiations.items[fcall.callee.instantiation].return_type;
                 return typeFor(sema.values.get(rt).type_idx);
             },
             .tail_call => return .u64,
@@ -1649,6 +1651,15 @@ const IRWriter = struct {
                 const rhs = try self.writeValue(ass.rhs);
                 const rhs_decl = decls.get(rhs);
 
+                switch(rhs_decl.instr) {
+                    .function_call => |fc| {
+                        if(sema.values.get(fc.callee.function_value).function.captures_return) {
+                            return rhs;
+                        }
+                    },
+                    else => {},
+                }
+
                 const rhs_value = if(rhs_decl.instr.memoryReference()) |mr|
                     try self.emit(mr.load()) else rhs;
 
@@ -1837,6 +1848,15 @@ const IRWriter = struct {
                     const value = try self.writeValue(decl.init_value);
                     decls.get(value).sema_decl = sema.DeclIndex.toOpt(decl_idx);
 
+                    switch(decls.get(value).instr) {
+                        .function_call => |fc| {
+                            if(sema.values.get(fc.callee.function_value).function.captures_return) {
+                               continue;
+                            }
+                        },
+                        else => {},
+                    }
+
                     if(!decl.static) {
                         if(decl.offset) |offset| {
                             const stack_ref = try self.emit(.{.stack_ref = .{
@@ -1971,7 +1991,7 @@ pub fn writeFunction(sema_func: sema.InstantiatedFunction) !BlockIndex.Index {
     if(func.body.reaches_end) {
         _ = try writer.emit(.{.goto = try addEdge(writer.basic_block, exit_block)});
     }
-    decls.get(enter_decl).instr.enter_function = writer.max_stack_usage;
+    decls.get(enter_decl).instr.enter_function = (writer.max_stack_usage + 0xF) & ~@as(u32, 0xF);
     decls.get(exit_return).instr.leave_function.restore_stack = writer.max_stack_usage > 0;
     return first_basic_block;
 }
