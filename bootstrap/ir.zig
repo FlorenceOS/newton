@@ -1837,16 +1837,14 @@ const IRWriter = struct {
                 },
                 .declaration => |decl_idx| {
                     const decl = sema.decls.get(decl_idx);
+                    std.debug.assert(!decl.static);
                     const init_value = sema.values.get(decl.init_value);
 
-                    if(!decl.static) {
-                        if(decl.offset) |*offset| {
-                            const decl_type = sema.types.get(try init_value.getType());
-                            offset.* = self.allocStackSpace(try decl_type.getSize(), try decl_type.getAlignment());
-                        }
+                    if(decl.offset) |*offset| {
+                        const decl_type = sema.types.get(try init_value.getType());
+                        offset.* = self.allocStackSpace(try decl_type.getSize(), try decl_type.getAlignment());
                     }
 
-                    if(init_value.* == .function) continue;
                     const value = try self.writeValue(decl.init_value);
                     decls.get(value).sema_decl = sema.DeclIndex.toOpt(decl_idx);
 
@@ -1859,19 +1857,17 @@ const IRWriter = struct {
                         else => {},
                     }
 
-                    if(!decl.static) {
-                        if(decl.offset) |offset| {
-                            const stack_ref = try self.emit(.{.stack_ref = .{
-                                .orig_offset = offset,
-                                .offset = offset,
-                                .type = .{
-                                    .is_const = !decl.mutable,
-                                    .is_volatile = false,
-                                    .child = try init_value.getType(),
-                                },
-                            }});
-                            _ = try self.emit(.{.store = .{.dest = stack_ref, .value = value}});
-                        }
+                    if(decl.offset) |offset| {
+                        const stack_ref = try self.emit(.{.stack_ref = .{
+                            .orig_offset = offset,
+                            .offset = offset,
+                            .type = .{
+                                .is_const = !decl.mutable,
+                                .is_volatile = false,
+                                .child = try init_value.getType(),
+                            },
+                        }});
+                        _ = try self.emit(.{.store = .{.dest = stack_ref, .value = value}});
                     }
                 },
                 .expression => |expr_idx| {
