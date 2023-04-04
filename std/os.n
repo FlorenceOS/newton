@@ -3,12 +3,16 @@ const syscalls = @import("os/syscalls.n");
 const string = @import("string.n");
 
 fn proc_self_fd_path(fd: u32) |path_buf| [25]u8 {
-    path_buf.* = "/proc/self/fd/" ++ string.write_u32_decimal(fd);
+    path_buf.* = std.mem.output(u8, "/proc/self/fd/".&, 14) ++ string.write_u32_decimal(fd);
 }
 
 fn fd_path(fd: u32) |out_buf| [MAX_PATH]u8 {
     const fd_symlink_path = proc_self_fd_path(fd);
-    std.os.syscalls.readlink_all(fd_symlink_path, @int_to_ptr(*u8, @ptr_to_int(out_buf)), MAX_PATH);
+    std.os.syscalls.readlink(
+        @ptr_to_int(fd_symlink_path.&),
+        @ptr_to_int(out_buf),
+        MAX_PATH
+    );
 }
 
 fn self_path() |out_buf| [MAX_PATH]u8 {

@@ -1,8 +1,9 @@
 const std = @import("std");
 
+const source_files = @import("source_files.n");
+
 fn main() noreturn {
-    const fd = std.os.syscalls.open("selfhost/main.n".&, 0, undefined);
-    std.print.log_hex_upper("Open fd".&, fd);
-    std.print.flush();
+    source_files.init();
+    const root_file = source_files.open_file(std.os.syscalls.AT.FDCWD, "selfhost/main.n".&);
     std.os.syscalls.exit(0);
 }

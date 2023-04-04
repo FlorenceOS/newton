@@ -1,0 +1,38 @@
+const std = @import("std");
+
+const PinnedVector = std.containers.PinnedVector;
+
+const SourceFile = struct {
+    file_data: *const u8,
+    absolute_file_path: [std.os.MAX_PATH]u8,
+    file_fd: u32,
+    dir_fd: u32,
+};
+
+var source_files: PinnedVector(SourceFile, 0x1000) = undefined;
+
+fn init() inline void {
+    source_files.init();
+}
+
+fn open_file(dirfd: u32, filename: *const u8) u32 {
+    const retval = source_files.add();
+    const file_fd = @truncate(u32, std.os.syscalls.openat(dirfd, filename, 0, undefined));
+    const padded_file_size = (std.os.syscalls.lseek(file_fd, 0, std.os.syscalls.SEEK.END) + 0x1000) & ~0xFFF;
+    const data = std.os.syscalls.mmap(
+        0,
+        padded_file_size,
+        std.os.syscalls.PROT.READ,
+        std.os.syscalls.MAP.SHARED,
+        file_fd,
+        0,
+    );
+    std.os.syscalls.madvise(data, padded_file_size, std.os.syscalls.MADV.SEQUENTIAL);
+    source_files.ptr[retval] = .{
+        .file_data = @int_to_ptr(*const u8, data),
+        .absolute_file_path = std.os.fd_path(file_fd),
+        .file_fd = file_fd,
+        .dir_fd = undefined,
+    };
+    return retval;
+}
