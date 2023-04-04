@@ -17,3 +17,13 @@ fn write_u64_decimal(value: u64) |out_buf| [21]u8 {
 fn write_u32_decimal(value: u32) inline |out_buf| [11]u8 {
     @int_to_ptr(*[21]u8, @ptr_to_int(out_buf)).* = write_u64_decimal(value);
 }
+
+fn len(string: *const u8) u64 {
+    var result: u64 = 0;
+    loop {
+        if (string[result] == 0) {
+            return result;
+        }
+        result += 1;
+    }
+}
