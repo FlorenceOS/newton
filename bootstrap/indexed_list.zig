@@ -165,7 +165,7 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
 
         pub fn addDedupLinear(self: *@This(), val: T) !Index {
             // Skip .none
-            for(self.elements.items) |item, i| {
+            for(self.elements.items, 0..) |item, i| {
                 if(@intToEnum(OptIndex, i) == .none) continue;
                 if(@hasDecl(T, "equals")) {
                     if(item.equals(&val)) return @intToEnum(Index, i);

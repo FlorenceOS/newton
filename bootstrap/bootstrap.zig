@@ -140,7 +140,7 @@ pub fn main() !void {
                     try name_buf.appendSlice(token.identifier_value());
                     const base_name_len = name_buf.items.len;
 
-                    for(func.instantiations.items) |instantiation, i| {
+                    for(func.instantiations.items, 0..) |instantiation, i| {
                         const inst = sema.InstantiatedFunction{
                             .function_value = decl.init_value,
                             .instantiation = @intCast(u32, i),

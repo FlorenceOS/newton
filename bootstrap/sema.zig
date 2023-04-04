@@ -1767,7 +1767,7 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
             if(curr_arg != .none) @panic("Too many arguments!");
         }
 
-        for(func.instantiations.items) |inst, i| {
+        for(func.instantiations.items, 0..) |inst, i| {
             var curr_param = scopes.get(inst.param_scope).first_decl;
             var curr_scope_arg = scopes.get(new_scope_idx).first_decl;
 

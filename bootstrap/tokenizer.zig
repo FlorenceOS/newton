@@ -197,7 +197,7 @@ const character_tokens = blk: {
 };
 
 fn startsWith(haystack: [*:0]const u8, needle: []const u8) bool {
-    for(needle) |c, i| {
+    for(needle, 0..) |c, i| {
         std.debug.assert(haystack[i] != 0);
         if(c != haystack[i]) return false;
     }
