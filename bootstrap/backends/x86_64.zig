@@ -535,6 +535,17 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
                 try writeOperandReg(writer, uf, op_t, decl_idx, 5, &.{0x80 | boolToU8(op_t != .u8)}, opTypeImm(op_t, imm), false);
             }
         },
+        .multiply_constant => |op| {
+            const dest_reg = uf.findRegByPtr(decl).?;
+            const op_t = decl.instr.getOperationType();
+            if(std.math.cast(i8, op.rhs)) |value| {
+                try writeOperandReg(writer, uf, op_t, op.lhs, dest_reg, &.{0x6B}, std.mem.asBytes(&value), true);
+            } else if(std.math.cast(i32, op.rhs)) |value| {
+                try writeOperandReg(writer, uf, op_t, op.lhs, dest_reg, &.{0x69}, opTypeImm(op_t, std.mem.asBytes(&value)), true);
+            } else {
+                @panic("multiply_constant with immediate > I32_MAX");
+            }
+        },
         .shift_left_constant => |op| {
             const op_t = decl.instr.getOperationType();
             const imm = std.mem.asBytes(&op.rhs)[0..1];
