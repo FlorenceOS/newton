@@ -12,6 +12,7 @@ const SYS = struct {
     const MUNMAP = 11;
     const MADVISE = 28;
     const EXIT = 60;
+    const READLINK = 89;
     const OPENAT = 257;
 };
 
@@ -117,6 +118,14 @@ fn madvise(
 fn exit(exit_code: i64) inline noreturn {
     @syscall(SYS.EXIT, exit_code);
     unreachable;
+}
+
+fn readlink(
+    path: u64,
+    buf: u64,
+    bufsiz: u64,
+) inline u64 {
+    return @syscall(SYS.READLINK, path, buf, bufsiz);
 }
 
 const AT = struct {
