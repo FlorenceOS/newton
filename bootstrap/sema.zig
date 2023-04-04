@@ -845,6 +845,64 @@ fn semaASTExpr(
             }
         },
 
+        .array_concat => |bop| {
+            std.debug.assert(!force_comptime_eval);
+            const lhs = try semaASTExpr(scope_idx, bop.lhs, force_comptime_eval, null, return_location_ptr.?);
+            const lhs_type = try values.get(lhs).getType();
+            const arr = types.get(lhs_type).array;
+            const lhs_ptr_type = try types.addDedupLinear(.{.pointer = .{
+                .child = lhs_type,
+                .is_const = false,
+                .is_volatile = false,
+            }});
+            const lhs_ptr_type_value = try values.addDedupLinear(.{.type_idx = lhs_ptr_type});
+            const rhs_dest = try values.insert(.{.runtime = .{
+                .expr = ExpressionIndex.toOpt(try expressions.insert(.{.add = .{
+                    .lhs = return_location_ptr.?,
+                    .rhs = try values.addDedupLinear(.{.comptime_int = try types.get(arr.child).getSize() * arr.size}),
+                }})),
+                .value_type = lhs_ptr_type_value,
+            }});
+            const rhs = try semaASTExpr(scope_idx, bop.rhs, force_comptime_eval, lhs_ptr_type, rhs_dest);
+            const rhs_type = types.get(try values.get(rhs).getType()).array;
+            std.debug.assert(arr.child == rhs_type.child);
+            const combined_type = try values.addDedupLinear(.{.type_idx = try types.addDedupLinear(.{.array = .{
+                .child = arr.child,
+                .size = arr.size + rhs_type.size,
+            }})});
+
+            var builder = statements.builder();
+
+            _ = try builder.insert(.{.value = .{
+                .expression = try expressions.insert(.{.assign = .{
+                    .lhs = try values.insert(.{.runtime = .{
+                        .expr = ExpressionIndex.toOpt(try expressions.insert(.{.deref = return_location_ptr.?})),
+                        .value_type = lhs_ptr_type_value,
+                    }}),
+                    .rhs = lhs,
+                }}),
+            }});
+
+            _ = try builder.insert(.{.value = .{
+                .expression = try expressions.insert(.{.assign = .{
+                    .lhs = try values.insert(.{.runtime = .{
+                        .expr = ExpressionIndex.toOpt(try expressions.insert(.{.deref = rhs_dest})),
+                        .value_type = lhs_ptr_type_value,
+                    }}),
+                    .rhs = rhs,
+                }}),
+            }});
+
+            return values.insert(.{.runtime = .{
+                .expr = ExpressionIndex.toOpt(try expressions.insert(.{.block = .{
+                    .scope = scope_idx,
+                    .first_stmt = builder.first,
+                    .reaches_end = true,
+                }})),
+                .value_type = combined_type,
+            }});
+        },
+
         .unary_minus => |uop| blk: {
             const value_idx = try semaASTExpr(scope_idx, uop.operand, force_comptime_eval, null, null);
             const value = values.get(value_idx);

@@ -137,7 +137,7 @@ pub const ExpressionNode = union(enum) {
     },
 
     // Binary expressions, has lhs and rhs populated
-    array_append: Bop,
+    array_concat: Bop,
     array_subscript: Bop,
     array_type: Bop,
     member_access: Bop,
@@ -348,7 +348,7 @@ fn dumpNode(node: anytype, indent_level: usize) anyerror!void {
             .shift_left, .shift_left_eq, .shift_right, .shift_right_eq,
             .bitand, .bitand_eq, .bitor, .bitxor_eq, .bitxor, .bitor_eq,
             .less, .less_equal, .greater, .greater_equal, .equals, .not_equal,
-            .logical_and, .logical_or, .assign, .range, .array_append,
+            .logical_and, .logical_or, .assign, .range, .array_concat,
             => |bop| {
                 const op = switch(node.*) {
                     .multiply => "*",
@@ -387,7 +387,7 @@ fn dumpNode(node: anytype, indent_level: usize) anyerror!void {
                     .logical_or => "||",
                     .assign => "=",
                     .range => "..",
-                    .array_append => "++",
+                    .array_concat => "++",
                     else => unreachable,
                 };
 
