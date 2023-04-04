@@ -16,6 +16,6 @@ jobs:
       - name: Disassemble the built binary
         run: objdump -d -M intel a.out
       - name: Run the built binary
-        run: ./a.out
+        run: strace ./a.out
       - name: Run the test cases
         run: ./tests.sh
