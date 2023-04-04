@@ -1958,7 +1958,8 @@ const IRWriter = struct {
 };
 
 pub fn writeFunction(sema_func: sema.InstantiatedFunction) !BlockIndex.Index {
-    const func = &sema.values.get(sema_func.function_value).function.instantiations.items[sema_func.instantiation];
+    const callee = &sema.values.get(sema_func.function_value).function;
+    const func = &callee.instantiations.items[sema_func.instantiation];
     const first_basic_block = try blocks.insert(.{});
     const enter_decl = try appendToBlock(first_basic_block, .{.enter_function = undefined});
     try blocks.get(first_basic_block).seal();
@@ -1988,7 +1989,7 @@ pub fn writeFunction(sema_func: sema.InstantiatedFunction) !BlockIndex.Index {
     try writer.function_stack.append(function_stack_gpa.allocator(), sema_func);
     defer _ = writer.function_stack.pop();
     try writer.writeBlockStatement(func.body.first_stmt);
-    std.debug.assert(func.return_type == .void or !func.body.reaches_end);
+    std.debug.assert(func.return_type == .void or callee.captures_return or !func.body.reaches_end);
     if(func.body.reaches_end) {
         _ = try writer.emit(.{.goto = try addEdge(writer.basic_block, exit_block)});
     }
