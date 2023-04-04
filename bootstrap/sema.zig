@@ -1251,7 +1251,6 @@ fn semaASTExpr(
 
             if(target_type) |ttyp| {
                 if(return_location_ptr) |rloc| {
-                    const new_scope_idx = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx)});
                     const typed = try typeTil(til.first_value, ttyp);
                     var builder = statements.builder();
 
@@ -1313,7 +1312,7 @@ fn semaASTExpr(
 
                     break :blk try values.insert(.{.runtime = .{
                         .expr = ExpressionIndex.toOpt(try expressions.insert(.{.block = .{
-                            .scope = new_scope_idx,
+                            .scope = scope_idx,
                             .first_stmt = builder.first,
                             .reaches_end = true,
                         }})),
