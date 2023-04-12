@@ -153,7 +153,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
         .param_ref, .undefined, .clobber, .global_ref, .stack_ref, .reference_wrap,
         => {},
         .load_int_constant => |value| {
-            const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
+            const dest_reg = uf.findDeclByPtr(decl).?.regs()[0].?;
             const mov_ops: [4]std.meta.Tuple(&.{u16, u2, MovType}) = .{
                 .{@truncate(u16, value.value >> 0),  0b00, .movz},
                 .{@truncate(u16, value.value >> 16), 0b01, .movk},
@@ -235,8 +235,8 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             }
         },
         .copy => |target| {
-            const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
-            const src_reg = uf.findDecl(target).reg_alloc_value.?;
+            const dest_reg = uf.findDeclByPtr(decl).?.regs()[0].?;
+            const src_reg = uf.findDecl(target).?.regs()[0].?;
             try movReg(writer, dest_reg, src_reg);
         },
         .goto => |edge| {
@@ -246,9 +246,9 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             try writer.writeIntWithRelocation(u32, 0x14000000, edge, .imm26_div4);
         },
         .add, .sub, .divide, .shift_left, .shift_right => |bop| {
-            const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
-            const lhs_reg = uf.findDecl(bop.lhs).reg_alloc_value.?;
-            const rhs_reg = uf.findDecl(bop.rhs).reg_alloc_value.?;
+            const dest_reg = uf.findDeclByPtr(decl).?.regs()[0].?;
+            const lhs_reg = uf.findDecl(bop.lhs).?.regs()[0].?;
+            const rhs_reg = uf.findDecl(bop.rhs).?.regs()[0].?;
             const base_opcode = opSizeBit(decl) | @as(u32, switch(decl.instr) {
                 .add => 0x0B000000,
                 .sub => 0x4B000000,
@@ -264,19 +264,19 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             );
         },
         .add_constant => |bop| {
-            const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
-            const lhs_reg = uf.findDecl(bop.lhs).reg_alloc_value.?;
+            const dest_reg = uf.findDeclByPtr(decl).?.regs()[0].?;
+            const lhs_reg = uf.findDecl(bop.lhs).?.regs()[0].?;
             try addImm(writer, dest_reg, lhs_reg, @intCast(u12, bop.rhs));
         },
         .sub_constant => |bop| {
-            const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
-            const lhs_reg = uf.findDecl(bop.lhs).reg_alloc_value.?;
+            const dest_reg = uf.findDeclByPtr(decl).?.regs()[0].?;
+            const lhs_reg = uf.findDecl(bop.lhs).?.regs()[0].?;
             try subImm(writer, dest_reg, lhs_reg, @intCast(u12, bop.rhs));
         },
         .multiply => |bop| {
-            const dest_reg = uf.findDeclByPtr(decl).reg_alloc_value.?;
-            const lhs_reg = uf.findDecl(bop.lhs).reg_alloc_value.?;
-            const rhs_reg = uf.findDecl(bop.rhs).reg_alloc_value.?;
+            const dest_reg = uf.findDeclByPtr(decl).?.regs()[0].?;
+            const lhs_reg = uf.findDecl(bop.lhs).?.regs()[0].?;
+            const rhs_reg = uf.findDecl(bop.rhs).?.regs()[0].?;
             try writer.writeInt(u32, opSizeBit(decl) | 0x1B000000
                 | @as(u32, dest_reg)
                 | @as(u32, lhs_reg) << 5
@@ -285,8 +285,8 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             );
         },
         .less, .less_equal, .equals, .not_equal => |bop| {
-            const lhs_reg = uf.findDecl(bop.lhs).reg_alloc_value.?;
-            const rhs_reg = uf.findDecl(bop.rhs).reg_alloc_value.?;
+            const lhs_reg = uf.findDecl(bop.lhs).?.regs()[0].?;
+            const rhs_reg = uf.findDecl(bop.rhs).?.regs()[0].?;
             try writer.writeInt(u32, opSizeBit(decl) | 0x6B000000
                 | @as(u32, registers.zero)
                 | @as(u32, lhs_reg) << 5
@@ -294,7 +294,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             );
         },
         .less_constant, .less_equal_constant, .equals_constant, .not_equal_constant => |bop| {
-            const lhs_reg = uf.findDecl(bop.lhs).reg_alloc_value.?;
+            const lhs_reg = uf.findDecl(bop.lhs).?.regs()[0].?;
             try writer.writeInt(u32, opSizeBit(decl) | 0x71000000
                 | @as(u32, registers.zero)
                 | @as(u32, lhs_reg) << 5
@@ -333,7 +333,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
         .function_call => |fcall| try writer.writeIntWithFunctionRelocation(u32, 0x94000000, fcall.callee, .imm26_div4),
         .syscall => try writer.writeInt(u32, 0xD4000001),
         .leave_function => |leave| {
-            const op_reg = uf.findDecl(leave.value).reg_alloc_value.?;
+            const op_reg = uf.findDecl(leave.value).?.regs()[0].?;
             std.debug.assert(op_reg == backends.current_default_abi.return_reg);
             if(leave.restore_stack) {
                 try movReg(writer, registers.sp, registers.fp);

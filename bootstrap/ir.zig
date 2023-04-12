@@ -328,7 +328,7 @@ pub const DeclInstr = union(enum) {
         }
     }
 
-    pub fn isValue(self: *const @This()) bool {
+    pub fn getValueCount(self: *const @This()) u8 {
         switch(self.*) {
             .incomplete_phi => unreachable,
             .@"if", .leave_function, .goto, .stack_ref, .global_ref, .enter_function,
@@ -338,8 +338,8 @@ pub const DeclInstr = union(enum) {
             .inplace_add_constant, .inplace_sub_constant, .inplace_multiply_constant, .inplace_divide_constant, .inplace_modulus_constant,
             .inplace_shift_left_constant, .inplace_shift_right_constant, .inplace_bit_and_constant, .inplace_bit_or_constant, .inplace_bit_xor_constant,
             .tail_call, .@"unreachable",
-            => return false,
-            else => return true,
+            => return 0,
+            else => return 1,
         }
     }
 
@@ -441,13 +441,19 @@ pub const DeclInstr = union(enum) {
 };
 
 pub const Decl = struct {
+    const max_values = 2;
+
     next: DeclIndex.OptIndex = .none,
     prev: DeclIndex.OptIndex = .none,
     block: BlockIndex.Index,
 
-    sema_decl: sema.DeclIndex.OptIndex,
     instr: DeclInstr,
-    reg_alloc_value: ?u8 = null,
+    sema_decl: sema.DeclIndex.OptIndex,
+    allocated_regs: [max_values]?u8 = .{null} ** max_values,
+
+    pub fn regs(self: *@This()) []?u8 {
+        return self.allocated_regs[0..self.instr.getValueCount()];
+    }
 };
 
 const InstructionToBlockEdge = struct {
@@ -2013,18 +2019,27 @@ pub fn dumpBlock(
         if(decl.instr == .clobber) continue;
         std.debug.print("  ", .{});
         std.debug.print("${d}", .{@enumToInt(current_decl)});
-        const adecl = blk: { break :blk (uf orelse break :blk decl).findDeclByPtr(decl); };
+        const adecl = blk: { break :blk (uf orelse break :blk decl).findDeclByPtr(decl) orelse break :blk decl; };
         if(adecl != decl) {
             std.debug.print(" (-> ${d})", .{@enumToInt(decls.getIndex(adecl))});
         }
         if(adecl.sema_decl != .none) {
             std.debug.print(" (sema decl ${d})", .{@enumToInt(adecl.sema_decl)});
         }
-        if(adecl.reg_alloc_value) |reg| {
-            std.debug.print(" ({s})", .{backends.current_backend.register_name(reg)});
+        if(adecl.regs().len > 0) {
+            std.debug.print(" (", .{});
+            for(adecl.regs(), 0..) |reg, reg_i| {
+                if(reg_i > 0) std.debug.print(", ", .{});
+                if(reg) |reg_value| {
+                    std.debug.print("{s}", .{backends.current_backend.register_name(reg_value)});
+                } else {
+                    std.debug.print("null", .{});
+                }
+            }
+            std.debug.print(")", .{});
         }
         std.debug.print(" = ", .{});
-        if(decl.instr.isValue()) {
+        if(decl.instr.getValueCount() > 0) {
             std.debug.print("{s} ", .{@tagName(decl.instr.getOperationType())});
         }
         switch(decl.instr) {

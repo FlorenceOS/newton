@@ -13,7 +13,7 @@ fn copyInto(
 ) !void {
     var it = set.iterator();
     while(it.next()) |kv| {
-        try lhs.put(allocator, uf.find(kv.key_ptr.*), {});
+        try lhs.put(allocator, ir.DeclIndex.unwrap(uf.find(kv.key_ptr.*)).?, {});
     }
 }
 
@@ -38,30 +38,30 @@ const DeclSetMap = std.AutoArrayHashMapUnmanaged(ir.DeclIndex.Index, DeclSet);
 fn tryAllocReg(
     decl_idx: ir.DeclIndex.Index,
     reg: u8,
+    output_reg: *?u8,
     conflicts: *const DeclSetMap,
 ) bool {
-    const decl = ir.decls.get(decl_idx);
-    if(decl.reg_alloc_value != null) return false;
-
+    if(output_reg.* != null) return false;
     var it = conflicts.getPtr(decl_idx).?.iterator();
     while(it.next()) |conflict| {
         const cdecl = ir.decls.get(conflict.key_ptr.*);
-        if(cdecl.reg_alloc_value == reg) return false;
+        for(cdecl.regs()) |reg_value| {
+            if(reg_value == reg) return false;
+        }
     }
-    decl.reg_alloc_value = reg;
+    output_reg.* = reg;
     return true;
 }
 
 fn allocAnyReg(
     decl_idx: ir.DeclIndex.Index,
     gprs: []const u8,
+    output_reg: *?u8,
     conflicts: *const DeclSetMap,
 ) !void {
-    const decl = ir.decls.get(decl_idx);
-    if(decl.reg_alloc_value != null) return;
-
+    if(output_reg.* != null) return;
     for(gprs) |reg| {
-        if(tryAllocReg(decl_idx, reg, conflicts)) return;
+        if(tryAllocReg(decl_idx, reg, output_reg, conflicts)) return;
     }
     return error.OutOfRegisters;
 }
@@ -70,7 +70,7 @@ pub const UnionFind = struct {
     e: std.AutoArrayHashMapUnmanaged(i32, i32) = .{},
 
     fn findI(self: @This(), x: i32) i32 {
-        const ep = self.e.getPtr(x).?;
+        const ep = self.e.getPtr(x) orelse return 0;
         if(ep.* < 0) {
             return x;
         } else {
@@ -80,24 +80,28 @@ pub const UnionFind = struct {
         }
     }
 
-    pub fn find(self: @This(), decl: ir.DeclIndex.Index) ir.DeclIndex.Index {
-        return @intToEnum(ir.DeclIndex.Index, @intCast(u32, self.findI(@intCast(i32, @enumToInt(decl)))));
+    pub fn find(self: @This(), decl: ir.DeclIndex.Index) ir.DeclIndex.OptIndex {
+        return @intToEnum(ir.DeclIndex.OptIndex, @intCast(u32, self.findI(@intCast(i32, @enumToInt(decl)))));
     }
 
-    pub fn findDecl(self: @This(), decl: ir.DeclIndex.Index) *ir.Decl {
-        return ir.decls.get(self.find(decl));
+    pub fn findDecl(self: @This(), decl: ir.DeclIndex.Index) ?*ir.Decl {
+        return ir.decls.getOpt(self.find(decl));
     }
 
-    pub fn findDeclByPtr(self: @This(), decl_ptr: *ir.Decl) *ir.Decl {
+    pub fn findDeclByPtr(self: @This(), decl_ptr: *ir.Decl) ?*ir.Decl {
         return self.findDecl(ir.decls.getIndex(decl_ptr));
     }
 
-    pub fn findReg(self: @This(), decl: ir.DeclIndex.Index) ?u8 {
-        return self.findDecl(decl).reg_alloc_value;
+    pub fn findReg(self: @This(), decl_idx: ir.DeclIndex.Index) ?u8 {
+        const decl = self.findDecl(decl_idx) orelse return null;
+        if(decl.regs().len == 0) return null;
+        return decl.regs()[0];
     }
 
     pub fn findRegByPtr(self: @This(), decl_ptr: *ir.Decl) ?u8 {
-        return self.findDeclByPtr(decl_ptr).reg_alloc_value;
+        const decl = self.findDeclByPtr(decl_ptr) orelse return null;
+        if(decl.regs().len == 0) return null;
+        return decl.regs()[0];
     }
 
     fn join(self: @This(), a_c: ir.DeclIndex.Index, b_c: ir.DeclIndex.Index) bool {
@@ -112,11 +116,6 @@ pub const UnionFind = struct {
     }
 };
 
-fn isDeclInReg(decl_idx: ir.DeclIndex.Index) bool {
-    const decl = ir.decls.get(decl_idx);
-    return decl.instr.isValue() and !decl.instr.isFlagsValue();
-}
-
 pub fn allocateRegsForInstr(
     decl_idx: ir.DeclIndex.Index,
     max_memory_operands: usize,
@@ -130,10 +129,8 @@ pub fn allocateRegsForInstr(
     const decl = ir.decls.get(decl_idx);
     if(ir.DeclIndex.unwrap(decl.next)) |next_instr| {
         if(return_reg) |reg| {
-            decl.reg_alloc_value = reg;
-            const ret_copy = try ir.insertBefore(next_instr, .{
-                .copy = decl_idx,
-            });
+            decl.regs()[0] = reg;
+            const ret_copy = try ir.insertBefore(next_instr, .{.copy = decl_idx});
             try param_replacement.put(decl_idx, ret_copy);
         }
     }
@@ -158,7 +155,7 @@ pub fn allocateRegsForInstr(
                 continue;
             }
             op.* = try ir.insertBefore(decl_idx, .{.copy = op.*});
-            ir.decls.get(op.*).reg_alloc_value = param_regs[register_operands];
+            ir.decls.get(op.*).regs()[0] = param_regs[register_operands];
             register_operands += 1;
         }
     }
@@ -166,16 +163,16 @@ pub fn allocateRegsForInstr(
         for(clobbers) |clob_reg| {
             if(return_reg == clob_reg) continue;
             const clob1 = try ir.insertBefore(next_instr, .{ .clobber = decl_idx });
-            ir.decls.get(clob1).reg_alloc_value = clob_reg;
+            ir.decls.get(clob1).regs()[0] = clob_reg;
             const clob2 = try ir.insertBefore(next_instr, .{ .clobber = clob1 });
-            ir.decls.get(clob2).reg_alloc_value = clob_reg;
+            ir.decls.get(clob2).regs()[0] = clob_reg;
         }
     }
     for(illegal_input_regs) |clob_reg| {
         const clob1 = try ir.insertBefore(decl_idx, .{ .clobber = ir.DeclIndex.unwrap(decl.prev).? });
-        ir.decls.get(clob1).reg_alloc_value = clob_reg;
+        ir.decls.get(clob1).regs()[0] = clob_reg;
         const clob2 = try ir.insertBefore(decl_idx, .{ .clobber = clob1 });
-        ir.decls.get(clob2).reg_alloc_value = clob_reg;
+        ir.decls.get(clob2).regs()[0] = clob_reg;
     }
 }
 
@@ -294,7 +291,7 @@ pub fn doRegAlloc(
         var fuck = uf.e.iterator();
         while(fuck.next()) |fit| {
             const iidx = @intToEnum(ir.DeclIndex.Index, @intCast(u32, fit.key_ptr.*));
-            const replacement = uf.find(iidx);
+            const replacement = ir.DeclIndex.unwrap(uf.find(iidx)).?;
             std.debug.print("Union: ${d} => ${d}\n", .{@enumToInt(iidx), @enumToInt(replacement)});
             const decl = ir.decls.get(iidx);
             if(decl.instr == .phi) {
@@ -303,7 +300,7 @@ pub fn doRegAlloc(
             } else {
                 var ops_it = decl.instr.operands();
                 while(ops_it.next()) |op| {
-                    op.* = uf.find(op.*); // Replace all operands that were phi nodes before
+                    op.* = ir.DeclIndex.unwrap(uf.find(op.*)).?; // Replace all operands that were phi nodes before
                 }
             }
         }
@@ -338,7 +335,7 @@ pub fn doRegAlloc(
             var curr_instr = blk.first_decl;
             while(ir.decls.getOpt(curr_instr)) |instr| : (curr_instr = instr.next) {
                 const iidx = ir.decls.getIndex(instr);
-                try conflicts.put(arena.allocator(), uf.find(iidx), .{});
+                try conflicts.put(arena.allocator(), ir.DeclIndex.unwrap(uf.find(iidx)).?, .{});
                 const curr_in = ins.getPtr(iidx);
                 const curr_out = out.getPtr(iidx);
 
@@ -346,10 +343,10 @@ pub fn doRegAlloc(
                 blk: {
                     try copyInto(arena.allocator(), &new_in, &uf, curr_out orelse break :blk);
                 }
-                _ = new_in.swapRemove(uf.find(iidx));
+                _ = new_in.swapRemove(ir.DeclIndex.unwrap(uf.find(iidx)).?);
                 var ops_it = instr.instr.operands();
                 while(ops_it.next()) |op| {
-                    try new_in.put(arena.allocator(), uf.find(op.*), {});
+                    try new_in.put(arena.allocator(), ir.DeclIndex.unwrap(uf.find(op.*)).?, {});
                 }
 
                 var new_out = DeclSet{};
@@ -424,7 +421,7 @@ pub fn doRegAlloc(
                     if(outer_decl.instr == .copy and outer_decl.instr.copy == inner.key_ptr.*) continue;
                     if(inner_decl.instr == .copy and inner_decl.instr.copy == outer.key_ptr.*) continue;
 
-                    try conflicts.getPtr(uf.find(outer.key_ptr.*)).?.put(arena.allocator(), uf.find(inner.key_ptr.*), {});
+                    try conflicts.getPtr(ir.DeclIndex.unwrap(uf.find(outer.key_ptr.*)).?).?.put(arena.allocator(), ir.DeclIndex.unwrap(uf.find(inner.key_ptr.*)).?, {});
                 }
             }
         }
@@ -443,7 +440,7 @@ pub fn doRegAlloc(
                     if(outer_decl.instr == .copy and outer_decl.instr.copy == inner.key_ptr.*) continue;
                     if(inner_decl.instr == .copy and inner_decl.instr.copy == outer.key_ptr.*) continue;
 
-                    try conflicts.getPtr(uf.find(outer.key_ptr.*)).?.put(arena.allocator(), uf.find(inner.key_ptr.*), {});
+                    try conflicts.getPtr(ir.DeclIndex.unwrap(uf.find(outer.key_ptr.*)).?).?.put(arena.allocator(), ir.DeclIndex.unwrap(uf.find(inner.key_ptr.*)).?, {});
                 }
             }
         }
@@ -453,14 +450,15 @@ pub fn doRegAlloc(
         var i: usize = 0;
         while(i < conflicts.keys().len) {
             const k = conflicts.keys()[i];
-            if(isDeclInReg(k)) {
+            if(ir.decls.get(k).regs().len > 0) {
                 std.debug.print("${d} has the following conflicts:", .{@enumToInt(k)});
                 const decl_set = &conflicts.values()[i];
                 var j: usize = 0;
                 while(j < decl_set.keys().len) {
-                    const conflict_decl = ir.decls.get(decl_set.keys()[j]);
-                    if(isDeclInReg(ir.decls.getIndex(conflict_decl))) {
-                        std.debug.print(" ${d}", .{@enumToInt(ir.decls.getIndex(conflict_decl))});
+                    const conflict_decl_idx = decl_set.keys()[j];
+                    const conflict_decl = ir.decls.get(conflict_decl_idx);
+                    if(conflict_decl.regs().len > 0) {
+                        std.debug.print(" ${d}", .{@enumToInt(conflict_decl_idx)});
                         j += 1;
                     } else {
                         decl_set.swapRemoveAt(j);
@@ -479,8 +477,8 @@ pub fn doRegAlloc(
         while(fuck.next()) |decl_node| {
             const iidx = decl_node.key_ptr.*;
             const decl = ir.decls.get(iidx);
-            if(decl.reg_alloc_value == null) {
-                break :blk true;
+            for(decl.regs()) |reg_value| {
+                if(reg_value == null) break :blk true;
             }
         }
         break :blk false;
@@ -493,22 +491,24 @@ pub fn doRegAlloc(
                 const blk = ir.blocks.get(blk_idx);
                 var curr_instr = blk.first_decl;
                 while(ir.decls.getOpt(curr_instr)) |decl| : (curr_instr = decl.next) {
-                    if(!isDeclInReg(ir.decls.getIndex(decl))) continue;
-                    const adecl = uf.findDecl(ir.decls.getIndex(decl));
+                    if(decl.regs().len != 1) continue;
+                    const adecl = uf.findDecl(ir.decls.getIndex(decl)).?;
                     var ops_it = decl.instr.operands();
-                    if(adecl.reg_alloc_value) |reg| {
+                    if(adecl.regs()[0]) |reg| {
                         while(ops_it.next()) |op| {
-                            if(!isDeclInReg(op.*)) continue;
-                            if(tryAllocReg(uf.find(op.*), reg, &conflicts)) {
-                                allocated_same_anywhere = true;
+                            const opdecl = uf.findDecl(op.*).?;
+                            for(opdecl.regs()) |*op_reg| {
+                                if(tryAllocReg(ir.DeclIndex.unwrap(uf.find(ir.decls.getIndex(opdecl))).?, reg, op_reg, &conflicts)) {
+                                    allocated_same_anywhere = true;
+                                }
                             }
                         }
                     } else {
                         while(ops_it.next()) |op| {
-                            if(!isDeclInReg(op.*)) continue;
-                            const oadecl = uf.findDecl(op.*);
-                            if(oadecl.reg_alloc_value) |reg| {
-                                if(tryAllocReg(uf.find(ir.decls.getIndex(decl)), reg, &conflicts)) {
+                            const opdecl = uf.findDecl(op.*).?;
+                            if(opdecl.regs().len != 1) continue;
+                            if(opdecl.regs()[0]) |op_reg| {
+                                if(tryAllocReg(ir.DeclIndex.unwrap(uf.find(ir.decls.getIndex(decl))).?, op_reg, &adecl.regs()[0], &conflicts)) {
                                     allocated_same_anywhere = true;
                                     break;
                                 }
@@ -521,18 +521,20 @@ pub fn doRegAlloc(
 
         // Okay, just allocate something...
         var fuck = conflicts.iterator();
-        while(fuck.next()) |decl_node| {
+        outer: while(fuck.next()) |decl_node| {
             const iidx = decl_node.key_ptr.*;
             const decl = ir.decls.get(iidx);
-            if(decl.reg_alloc_value == null) {
-                allocAnyReg(iidx, backends.current_backend.gprs, &conflicts) catch {
-                    for(block_list.items) |blk| {
-                        try ir.dumpBlock(blk, uf);
-                    }
-                    std.debug.print("Failed to allocate a register for instr: ${d}\n", .{@enumToInt(iidx)});
-                    @panic("Couldn't find a free reg!");
-                };
-                break;
+            for(decl.regs()) |*reg_value| {
+                if(reg_value.* == null) {
+                    allocAnyReg(iidx, backends.current_backend.gprs, reg_value, &conflicts) catch {
+                        for(block_list.items) |blk| {
+                            try ir.dumpBlock(blk, uf);
+                        }
+                        std.debug.print("Failed to allocate a register for instr: ${d}\n", .{@enumToInt(iidx)});
+                        @panic("Couldn't find a free reg!");
+                    };
+                    break :outer;
+                }
             }
         }
     }

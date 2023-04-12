@@ -286,9 +286,9 @@ pub const Writer = struct {
             const blk = ir.blocks.get(blk_idx);
             var curr_decl = blk.first_decl;
             while(ir.decls.getOpt(curr_decl)) |decl| : (curr_decl = decl.next) {
-                if(decl.reg_alloc_value) |reg| {
-                    if(std.mem.indexOfScalar(u8, used_registers.slice(), reg) == null) {
-                        used_registers.appendAssumeCapacity(reg);
+                for(decl.regs()) |reg| {
+                    if(reg != null and std.mem.indexOfScalar(u8, used_registers.slice(), reg.?) == null) {
+                        used_registers.appendAssumeCapacity(reg.?);
                     }
                 }
             }
