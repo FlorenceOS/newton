@@ -498,6 +498,12 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             const rhs_reg = uf.findReg(op.rhs).?;
             try writeOperandReg(writer, uf, op_t, op.lhs, rhs_reg, &.{0x00 | boolToU8(op_t != .u8)}, &.{}, true);
         },
+        .bit_and => |op| {
+            const op_t = decl.instr.getOperationType();
+            const rhs_reg = uf.findReg(op.rhs).?;
+            try mov(writer, uf, op_t, decl_idx, op.lhs, true);
+            try writeOperandReg(writer, uf, op_t, decl_idx, rhs_reg, &.{0x22 | boolToU8(op_t != .u8)}, &.{}, true);
+        },
         .add_constant => |op| {
             const dest_reg = uf.findRegByPtr(decl).?;
             const lhs_reg = uf.findReg(op.lhs);
