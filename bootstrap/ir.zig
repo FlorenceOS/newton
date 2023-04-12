@@ -148,6 +148,7 @@ pub const DeclInstr = union(enum) {
     equals: Bop,
     not_equal: Bop,
 
+    negate: DeclIndex.Index,
     logical_not: DeclIndex.Index,
 
     store: struct {
@@ -260,7 +261,7 @@ pub const DeclInstr = union(enum) {
             },
 
             .zero_extend, .sign_extend, .truncate => |*cast| bounded_result.value.bounded_iterator.appendAssumeCapacity(&cast.value),
-            .clobber, .addr_of, .logical_not => |*op| bounded_result.value.bounded_iterator.appendAssumeCapacity(op),
+            .clobber, .addr_of, .logical_not, .negate => |*op| bounded_result.value.bounded_iterator.appendAssumeCapacity(op),
 
             .add_constant, .sub_constant, .multiply_constant, .divide_constant, .modulus_constant,
             .shift_left_constant, .shift_right_constant, .bit_and_constant, .bit_or_constant, .bit_xor_constant,
@@ -405,7 +406,7 @@ pub const DeclInstr = union(enum) {
             .inplace_shift_left_constant, .inplace_shift_right_constant, .inplace_bit_and_constant, .inplace_bit_or_constant, .inplace_bit_xor_constant,
             .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant, .equals_constant, .not_equal_constant,
             => |bop| return decls.get(bop.lhs).instr.getOperationType(),
-            .copy => |decl| return decls.get(decl).instr.getOperationType(),
+            .negate, .copy => |op| return decls.get(op).instr.getOperationType(),
             .load_bool_constant, .logical_not => return .u8,
             .phi => |phi_operand| {
                 // TODO:
@@ -1711,6 +1712,9 @@ const IRWriter = struct {
             .addr_of => |operand| {
                 return self.emit(.{.addr_of = try self.writeValue(operand)});
             },
+            .negate => |operand| {
+                return self.emit(.{.negate = try self.writeValue(operand)});
+            },
             .zero_extend => |cast| return self.emit(.{.zero_extend = .{
                 .value = try self.writeValue(cast.value),
                 .type = typeFor(cast.type),
@@ -2042,6 +2046,7 @@ pub fn dumpBlock(
             .@"unreachable" => std.debug.print("unreachable\n", .{}),
             .load => |p| std.debug.print("load(${d})\n", .{@enumToInt(p.source)}),
             .clobber => |op| std.debug.print("clobber(${d})\n", .{@enumToInt(op)}),
+            .negate => |op| std.debug.print("-(${d})\n", .{@enumToInt(op)}),
             .logical_not => |op| std.debug.print("not(${d})\n", .{@enumToInt(op)}),
             inline
             .add, .sub, .multiply, .divide, .modulus,

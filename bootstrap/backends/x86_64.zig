@@ -535,6 +535,11 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
                 try writeOperandReg(writer, uf, op_t, decl_idx, 5, &.{0x80 | boolToU8(op_t != .u8)}, opTypeImm(op_t, imm), false);
             }
         },
+        .negate => |op| {
+            const op_t = decl.instr.getOperationType();
+            try mov(writer, uf, op_t, decl_idx, op, true);
+            try writeOperandReg(writer, uf, op_t, decl_idx, 3, &.{0xF6 | boolToU8(op_t != .u8)}, &.{}, false);
+        },
         .multiply_constant => |op| {
             const dest_reg = uf.findRegByPtr(decl).?;
             const op_t = decl.instr.getOperationType();
