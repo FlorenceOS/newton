@@ -119,7 +119,7 @@ pub const UnionFind = struct {
 pub fn allocateRegsForInstr(
     decl_idx: ir.DeclIndex.Index,
     max_memory_operands: usize,
-    return_reg: ?u8,
+    return_regs: []const u8,
     param_regs: []const u8,
     clobbers: []const u8,
     illegal_input_regs: []const u8,
@@ -128,9 +128,9 @@ pub fn allocateRegsForInstr(
 ) !void {
     const decl = ir.decls.get(decl_idx);
     if(ir.DeclIndex.unwrap(decl.next)) |next_instr| {
-        if(return_reg) |reg| {
-            decl.regs()[0] = reg;
-            const ret_copy = try ir.insertBefore(next_instr, .{.copy = decl_idx});
+        for(return_regs, 0..) |reg, i| {
+            decl.regs()[i] = reg;
+            const ret_copy = try ir.insertBefore(next_instr, .{.copy = ir.Operand.encode(decl_idx, @intCast(ir.RegIndex, i))});
             try param_replacement.put(decl_idx, ret_copy);
         }
     }
@@ -138,7 +138,7 @@ pub fn allocateRegsForInstr(
     var register_operands: usize = 0;
     var iter = decl.instr.operands();
     while(iter.next()) |op| {
-        if(ir.decls.get(op.*).instr.memoryReference()) |mr| {
+        if(ir.decls.get(op.*.declIndex()).instr.memoryReference()) |mr| {
             if(memory_operands == max_memory_operands) {
                 op.* = try ir.insertBefore(decl_idx, mr.load());
             } else {
@@ -161,7 +161,6 @@ pub fn allocateRegsForInstr(
     }
     if(ir.DeclIndex.unwrap(decl.next)) |next_instr| {
         for(clobbers) |clob_reg| {
-            if(return_reg == clob_reg) continue;
             const clob1 = try ir.insertBefore(next_instr, .{ .clobber = decl_idx });
             ir.decls.get(clob1).regs()[0] = clob_reg;
             const clob2 = try ir.insertBefore(next_instr, .{ .clobber = clob1 });
@@ -198,7 +197,7 @@ pub fn doRegAlloc(
                         const edge = ir.edges.get(op.edge);
                         const source_instr = ir.blocks.get(edge.source_block).last_decl;
                         const new_op = try ir.insertBefore(ir.DeclIndex.unwrap(source_instr).?, .{
-                            .copy = op.decl,
+                            .copy = ir.Operand.encode(op.decl, 0),
                         });
                         op.decl = new_op;
                     }
@@ -206,7 +205,7 @@ pub fn doRegAlloc(
                 .param_ref => |pr| try allocateRegsForInstr(
                     decl_idx,
                     0,
-                    backends.current_default_abi.param_regs[pr.param_idx],
+                    &.{backends.current_default_abi.param_regs[pr.param_idx]},
                     &.{},
                     &.{},
                     &.{},
@@ -216,7 +215,7 @@ pub fn doRegAlloc(
                 .function_call => try allocateRegsForInstr(
                     decl_idx,
                     0,
-                    backends.current_default_abi.return_reg,
+                    backends.current_default_abi.return_regs,
                     backends.current_default_abi.param_regs,
                     backends.current_default_abi.caller_saved_regs,
                     &.{},
@@ -227,7 +226,7 @@ pub fn doRegAlloc(
                 .syscall => try allocateRegsForInstr(
                     decl_idx,
                     0,
-                    backends.current_os.syscall_return_reg,
+                    &.{backends.current_os.syscall_return_reg},
                     backends.current_os.syscall_param_regs,
                     backends.current_os.syscall_clobbers,
                     &.{},
@@ -237,7 +236,7 @@ pub fn doRegAlloc(
                 .leave_function => try allocateRegsForInstr(
                     decl_idx,
                     0,
-                    null,
+                    &.{},
                     &.{backends.current_default_abi.return_reg},
                     &.{},
                     &.{},

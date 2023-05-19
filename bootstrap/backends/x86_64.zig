@@ -41,7 +41,7 @@ pub const backend = backends.Backend{
 
 pub const abis = struct {
     pub const sysv = backends.Abi{
-        .return_reg = registers.rax,
+        .return_regs = &.{registers.rax, registers.rdx},
         .param_regs = &.{registers.rdi, registers.rsi, registers.rdx, registers.rcx, 8, 9},
         .caller_saved_regs = &.{registers.rax, registers.rdi, registers.rsi, registers.rdx, registers.rcx, 8, 9, 10, 11},
     };

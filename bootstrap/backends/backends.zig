@@ -36,7 +36,7 @@ pub const Os = struct {
 };
 
 pub const Abi = struct {
-    return_reg: u8,
+    return_regs: []const u8,
     param_regs: []const u8,
     caller_saved_regs: []const u8,
 };

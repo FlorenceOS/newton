@@ -6,6 +6,29 @@ const indexed_list = @import("indexed_list.zig");
 const sema = @import("sema.zig");
 const rega = @import("rega.zig");
 
+pub const RegIndex = @Type(.{.Int = .{
+    .signedness = .unsigned,
+    .bits = std.math.log2_int_ceil(u8, Decl.max_values),
+}});
+
+pub const Operand = enum(u32) {
+    _,
+
+    const REG_SHIFT = 32 - @bitSizeOf(RegIndex);
+
+    pub fn encode(decl_index: DeclIndex.Index, reg_index: RegIndex) @This() {
+        return @intToEnum(@This(), (@intCast(u32, reg_index) << REG_SHIFT) | @enumToInt(decl_index));
+    }
+
+    pub fn declIndex(self: @This()) DeclIndex.Index {
+        return @intToEnum(DeclIndex.Index, @enumToInt(self) & ~((1 << REG_SHIFT) - 1));
+    }
+
+    pub fn regIndex(self: @This()) RegIndex {
+        return @truncate(RegIndex, @enumToInt(self) >> REG_SHIFT);
+    }
+};
+
 pub const DeclIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const BlockIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const BlockEdgeIndex = indexed_list.Indices(u32, opaque{}, .{});
@@ -19,12 +42,12 @@ pub const FunctionArgumentIndex = indexed_list.Indices(u32, opaque{}, .{});
 // Matthias Braun, Sebastian Buchwald, Sebastian Hack, Roland Leißa, Christoph Mallon and Andreas Zwinkau
 
 pub const Bop = struct {
-    lhs: DeclIndex.Index,
-    rhs: DeclIndex.Index,
+    lhs: Operand,
+    rhs: Operand,
 };
 
 pub const VariableConstantBop = struct {
-    lhs: DeclIndex.Index,
+    lhs: Operand,
     rhs: u64,
 };
 
@@ -36,7 +59,7 @@ pub const InstrType = enum {
 };
 
 const MemoryReference = struct {
-    pointer_value: DeclIndex.Index,
+    pointer_value: Operand,
     pointer_value_offset: i32,
     sema_pointer_type: sema.PointerType,
 
@@ -49,7 +72,7 @@ const MemoryReference = struct {
         return .{.load = .{.source = self.pointer_value, .type = self.instrType()}};
     }
 
-    pub fn store(self: @This(), value: DeclIndex.Index) DeclInstr {
+    pub fn store(self: @This(), value: Operand) DeclInstr {
         std.debug.assert(!self.sema_pointer_type.is_volatile); // Not yet implemented
         std.debug.assert(!self.sema_pointer_type.is_const);
         return .{.store = .{.dest = self.pointer_value, .value = value}};
@@ -74,12 +97,12 @@ fn typeFor(type_idx: sema.TypeIndex.Index) InstrType {
 }
 
 const Cast = struct {
-    value: DeclIndex.Index,
+    value: Operand,
     type: InstrType,
 };
 
 const FunctionArgument = struct {
-    value: DeclIndex.Index,
+    value: Operand,
     next: FunctionArgumentIndex.OptIndex = .none,
 };
 
@@ -94,8 +117,8 @@ pub const DeclInstr = union(enum) {
         value: u64,
         type: InstrType,
     },
-    clobber: DeclIndex.Index,
-    addr_of: DeclIndex.Index,
+    clobber: Operand,
+    addr_of: Operand,
     zero_extend: Cast,
     sign_extend: Cast,
     truncate: Cast,
@@ -148,19 +171,19 @@ pub const DeclInstr = union(enum) {
     equals: Bop,
     not_equal: Bop,
 
-    logical_not: DeclIndex.Index,
+    logical_not: Operand,
 
     store: struct {
-        dest: DeclIndex.Index,
-        value: DeclIndex.Index,
+        dest: Operand,
+        value: Operand,
     },
     store_constant: struct {
-        dest: DeclIndex.Index,
+        dest: Operand,
         type: InstrType,
         value: u64,
     },
     load: struct {
-        source: DeclIndex.Index,
+        source: Operand,
         type: InstrType,
     },
     reference_wrap: MemoryReference,
@@ -195,9 +218,9 @@ pub const DeclInstr = union(enum) {
     not_equal_constant: VariableConstantBop,
 
     incomplete_phi: DeclIndex.OptIndex, // Holds the next incomplete phi node in the same block
-    copy: DeclIndex.Index, // Should be eliminated during optimization
+    copy: Operand, // Should be eliminated during optimization
     @"if": struct {
-        condition: DeclIndex.Index,
+        condition: Operand,
         taken: BlockEdgeIndex.Index,
         not_taken: BlockEdgeIndex.Index,
     },
@@ -206,12 +229,12 @@ pub const DeclInstr = union(enum) {
 
     const OperandIterator = struct {
         value: union(enum) {
-            bounded_iterator: std.BoundedArray(*DeclIndex.Index, 2),
+            bounded_iterator: std.BoundedArray(*Operand, 2),
             arg_iterator: ?*FunctionArgument,
             phi_iterator: ?*PhiOperand,
         },
 
-        pub fn next(self: *@This()) ?*DeclIndex.Index {
+        pub fn next(self: *@This()) ?*Operand {
             switch(self.value) {
                 .bounded_iterator => |*list| return if(list.len == 0) null else list.swapRemove(0),
                 .phi_iterator => |*curr_opt| {
@@ -725,9 +748,7 @@ pub fn optimizeFunction(head_block: BlockIndex.Index) !void {
             switch(decl.instr) {
                 inline .divide_constant, .modulus_constant => |dc, tag| {
                     if(!@field(backends.current_backend.optimizations, "has_" ++ @tagName(tag))) {
-                        const constant = try insertBefore(decl_idx, .{
-                            .load_int_constant = .{.type = decl.instr.getOperationType(), .value = dc.rhs},
-                        });
+                        const constant = Operand.encode(try insertBefore(decl_idx, .{.load_int_constant = .{.type = decl.instr.getOperationType(), .value = dc.rhs}}), 0);
                         decl.instr = @unionInit(DeclInstr, @tagName(tag)[0..@tagName(tag).len - 9], .{.lhs = dc.lhs, .rhs = constant});
                     }
                 },
@@ -763,25 +784,25 @@ pub fn optimizeFunction(head_block: BlockIndex.Index) !void {
 }
 
 fn eliminateCopyChain(
-    decl_idx: DeclIndex.Index,
-    copy_dict: *std.AutoHashMap(DeclIndex.Index, DeclIndex.Index)
-) !DeclIndex.Index {
-    if(copy_dict.get(decl_idx)) |retval| { // Copy decl has already been removed
+    operand: Operand,
+    copy_dict: *std.AutoHashMap(Operand, Operand)
+) !Operand {
+    if(copy_dict.get(operand)) |retval| { // Copy decl has already been removed
         return retval;
     }
-    const decl = decls.get(decl_idx);
+    const decl = decls.get(operand.declIndex());
     if(decl.instr == .copy) {
         const retval = try eliminateCopyChain(decl.instr.copy, copy_dict);
-        try copy_dict.put(decl_idx, retval);
+        try copy_dict.put(operand, retval);
         decl.instr = .{.undefined = {}};
         return retval;
     }
-    return decl_idx;
+    return operand;
 }
 
 fn eliminateCopyOperands(
-    operand: *DeclIndex.Index,
-    copy_dict: *std.AutoHashMap(DeclIndex.Index, DeclIndex.Index)
+    operand: *Operand,
+    copy_dict: *std.AutoHashMap(Operand, Operand)
 ) !void {
     operand.* = try eliminateCopyChain(operand.*, copy_dict);
 }
@@ -814,7 +835,7 @@ fn deduplicateDecls(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
                 => {
                     const value = try decl_dict.getOrPut(decl.instr);
                     if(value.found_existing) {
-                        decl.instr = .{.copy = value.value_ptr.*};
+                        decl.instr = .{.copy = Operand.encode(value.value_ptr.*, 0)};
                         did_something = true;
                     } else {
                         value.value_ptr.* = decls.getIndex(decl);
@@ -837,7 +858,7 @@ fn eliminateDeadStackStores(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bo
             switch(decl.instr) {
                 .stack_ref => |sr| _ = try stores_to_kill.getOrPutValue(sr.orig_offset, .{}),
                 inline .store, .store_constant => |store| {
-                    const dest = decls.get(store.dest);
+                    const dest = decls.get(store.dest.declIndex());
                     if(dest.instr == .stack_ref) {
                         if(stores_to_kill.getPtr(dest.instr.stack_ref.orig_offset).?.*) |*stores| try stores.append(alloc, decls.getIndex(decl));
                     }
@@ -845,7 +866,7 @@ fn eliminateDeadStackStores(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bo
                 else => {
                     var op_it = decl.instr.operands();
                     while(op_it.next()) |op_idx| {
-                        const operand = decls.get(op_idx.*);
+                        const operand = decls.get(op_idx.*.declIndex());
                         if(operand.instr == .stack_ref) {
                             if((try stores_to_kill.fetchPut(operand.instr.stack_ref.orig_offset, null)).?.value) |value| {
                                 var stores_array = value;
@@ -872,8 +893,8 @@ fn eliminateDeadStackStores(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bo
 }
 
 fn eliminateCopies(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
-    var copy_dict = std.AutoHashMap(DeclIndex.Index, DeclIndex.Index).init(alloc);
-    var did_something = false;
+    var copy_dict = std.AutoHashMap(Operand, Operand).init(alloc);
+    // var did_something = false;
 
     for(fn_blocks.items) |block| {
         var current_decl = blocks.get(block).first_decl;
@@ -882,13 +903,11 @@ fn eliminateCopies(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
             while(ops.next()) |op| {
                 try eliminateCopyOperands(op, &copy_dict);
             }
-            if(decls.getIndex(decl) != try eliminateCopyChain(decls.getIndex(decl), &copy_dict)) {
-                did_something = true;
-            }
         }
     }
 
-    return did_something;
+    // return did_something;
+    return copy_dict.count() > 0;
 }
 
 fn eliminateUnreferenced(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
@@ -906,8 +925,8 @@ fn eliminateUnreferenced(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool 
 
             var ops = decl.instr.operands();
             while(ops.next()) |op| {
-                if(!unreferenced.remove(op.*)) {
-                    try referenced_undiscovered.put(op.*, {});
+                if(!unreferenced.remove(op.*.declIndex())) {
+                    try referenced_undiscovered.put(op.*.declIndex(), {});
                 }
             }
         }
@@ -956,7 +975,7 @@ fn eliminateIfNots(decl_idx: DeclIndex.Index) !bool {
     if(decl.instr != .@"if") return false;
     const instr = &decl.instr.@"if";
 
-    switch(decls.get(instr.condition).instr) {
+    switch(decls.get(instr.condition.declIndex()).instr) {
         .logical_not => |not_operand| {
             instr.condition = not_operand;
             std.mem.swap(BlockEdgeIndex.Index, &instr.taken, &instr.not_taken);
@@ -970,7 +989,7 @@ fn eliminateConstantIfs(decl_idx: DeclIndex.Index) !bool {
     const decl = decls.get(decl_idx);
     if(decl.instr == .@"if") {
         const if_instr = decl.instr.@"if";
-        const cond_decl = decls.get(if_instr.condition);
+        const cond_decl = decls.get(if_instr.condition.declIndex());
 
         switch(cond_decl.instr) {
             .load_bool_constant => |value| {
@@ -1030,7 +1049,7 @@ fn inlineConstants(decl_idx: DeclIndex.Index) !bool {
         .inplace_bit_and, .inplace_bit_or, .inplace_bit_xor,
         .equals, .not_equal,
         => |bop, tag| {
-            const lhs = decls.get(bop.lhs).instr;
+            const lhs = decls.get(bop.lhs.declIndex()).instr;
             if(lhs == .load_int_constant) {
                 decl.instr = @unionInit(DeclInstr, @tagName(tag) ++ "_constant", .{
                     .lhs = bop.rhs,
@@ -1038,7 +1057,7 @@ fn inlineConstants(decl_idx: DeclIndex.Index) !bool {
                 });
                 return true;
             }
-            const rhs = decls.get(bop.rhs).instr;
+            const rhs = decls.get(bop.rhs.declIndex()).instr;
             if(rhs == .load_int_constant) {
                 decl.instr = @unionInit(DeclInstr, @tagName(tag) ++ "_constant", .{
                     .lhs = bop.lhs,
@@ -1064,7 +1083,7 @@ fn inlineConstants(decl_idx: DeclIndex.Index) !bool {
                 else => null,
             };
 
-            const lhs = decls.get(bop.lhs).instr;
+            const lhs = decls.get(bop.lhs.declIndex()).instr;
             if(swapped_tag != null and lhs == .load_int_constant) {
                 decl.instr = @unionInit(DeclInstr, swapped_tag.? ++ "_constant", .{
                     .lhs = bop.rhs,
@@ -1073,7 +1092,7 @@ fn inlineConstants(decl_idx: DeclIndex.Index) !bool {
                 return true;
             }
 
-            const rhs = decls.get(bop.rhs).instr;
+            const rhs = decls.get(bop.rhs.declIndex()).instr;
             if(rhs == .load_int_constant) {
                 decl.instr = @unionInit(DeclInstr, @tagName(tag) ++ "_constant", .{
                     .lhs = bop.lhs,
@@ -1084,7 +1103,7 @@ fn inlineConstants(decl_idx: DeclIndex.Index) !bool {
         },
 
         .store => |store| {
-            const value = decls.get(store.value).instr;
+            const value = decls.get(store.value.declIndex()).instr;
             if(value == .load_int_constant) {
                 if(value.load_int_constant.value == 0 or backends.current_backend.optimizations.has_nonzero_constant_store) {
                     decl.instr = .{.store_constant = .{
@@ -1127,7 +1146,7 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
             }
         },
         .logical_not => |op| {
-            switch(decls.get(op).instr) {
+            switch(decls.get(op.declIndex()).instr) {
                 .equals => |bop| decl.instr = .{.not_equal = .{.lhs = bop.lhs, .rhs = bop.rhs}},
                 .not_equal => |bop| decl.instr = .{.equals = .{.lhs = bop.lhs, .rhs = bop.rhs}},
                 .less => |bop| decl.instr = .{.greater_equal = .{.lhs = bop.lhs, .rhs = bop.rhs}},
@@ -1155,7 +1174,7 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
                 decl.instr = .{.copy = bop.lhs};
                 return true;
             }
-            const lhs_decl = decls.get(bop.lhs);
+            const lhs_decl = decls.get(bop.lhs.declIndex());
             if(std.meta.activeTag(lhs_decl.instr) == std.meta.activeTag(decl.instr)) {
                 const lhs_instr = @field(lhs_decl.instr, @tagName(tag));
                 bop.lhs = lhs_instr.lhs;
@@ -1184,7 +1203,7 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
                     decl.instr = .{.shift_left_constant = .{.lhs = bop.lhs, .rhs = l2}};
                     return true;
                 }
-                const lhs_decl = decls.get(bop.lhs);
+                const lhs_decl = decls.get(bop.lhs.declIndex());
                 switch(lhs_decl.instr) {
                     .multiply_constant => |op_bop| {
                         decl.instr.multiply_constant.lhs = op_bop.lhs;
@@ -1232,7 +1251,7 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
         },
 
         .reference_wrap => |*mr| {
-            const pointer_value = decls.get(mr.pointer_value);
+            const pointer_value = decls.get(mr.pointer_value.declIndex());
             switch(pointer_value.instr) {
                 .add_constant => |bop| {
                     mr.pointer_value = bop.lhs;
@@ -1258,7 +1277,7 @@ fn eliminateConstantExpressions(decl_idx: DeclIndex.Index) !bool {
     const decl = decls.get(decl_idx);
     switch(decl.instr) {
         .store => |store| {
-            const value = decls.get(store.value);
+            const value = decls.get(store.value.declIndex());
             if(value.instr == .undefined) {
                 decl.instr = .{.undefined = {}};
             }
@@ -1267,7 +1286,7 @@ fn eliminateConstantExpressions(decl_idx: DeclIndex.Index) !bool {
         .add_constant, .sub_constant, .multiply_constant, .divide_constant, .modulus_constant,
         .shift_left_constant, .shift_right_constant, .bit_and_constant, .bit_or_constant, .bit_xor_constant,
         => |bop, tag| {
-            const lhs = decls.get(bop.lhs);
+            const lhs = decls.get(bop.lhs.declIndex());
             if(lhs.instr == .load_int_constant) {
                 decl.instr = .{.load_int_constant = .{
                     .type = decl.instr.getOperationType(),
@@ -1292,7 +1311,7 @@ fn eliminateConstantExpressions(decl_idx: DeclIndex.Index) !bool {
         .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant,
         .equals_constant, .not_equal_constant,
         => |bop, tag| {
-            const lhs = decls.get(bop.lhs);
+            const lhs = decls.get(bop.lhs.declIndex());
             if(lhs.instr == .load_int_constant) {
                 decl.instr = .{.load_bool_constant = switch(tag) {
                     .less_constant => lhs.instr.load_int_constant.value < bop.rhs,
@@ -1315,7 +1334,7 @@ fn eliminateOffsetPointers(decl_idx: DeclIndex.Index) !bool {
     const decl = decls.get(decl_idx);
 
     var offset: i32 = undefined;
-    var operand: DeclIndex.Index = undefined;
+    var operand: Operand = undefined;
 
     switch(decl.instr) {
         .add_constant => |op| {
@@ -1329,23 +1348,23 @@ fn eliminateOffsetPointers(decl_idx: DeclIndex.Index) !bool {
         else => return false,
     }
 
-    decl.instr = switch(decls.get(operand).instr) {
-        .addr_of => |ao| switch(decls.get(ao).instr) {
-            .stack_ref => |o| .{.addr_of = try insertBefore(decl_idx, .{.stack_ref = .{
+    decl.instr = switch(decls.get(operand.declIndex()).instr) {
+        .addr_of => |ao| switch(decls.get(ao.declIndex()).instr) {
+            .stack_ref => |o| .{.addr_of = Operand.encode(try insertBefore(decl_idx, .{.stack_ref = .{
                 .orig_offset = o.orig_offset,
                 .offset = o.offset -% @bitCast(u32, offset),
                 .type = o.type,
-            }})},
-            .global_ref => |o| .{.addr_of = try insertBefore(decl_idx, .{.global_ref = .{
+            }}), 0)},
+            .global_ref => |o| .{.addr_of = Operand.encode(try insertBefore(decl_idx, .{.global_ref = .{
                 .orig_offset = o.orig_offset,
                 .offset = o.offset +% @bitCast(u32, offset),
                 .type = o.type,
-            }})},
-            .reference_wrap => |o| .{.addr_of = try insertBefore(decl_idx, .{.reference_wrap = .{
+            }}), 0)},
+            .reference_wrap => |o| .{.addr_of = Operand.encode(try insertBefore(decl_idx, .{.reference_wrap = .{
                 .pointer_value = o.pointer_value,
                 .pointer_value_offset = o.pointer_value_offset +% offset,
                 .sema_pointer_type = o.sema_pointer_type,
-            }})},
+            }}), 0)},
             else => return false,
         },
         else => return false,
@@ -1357,9 +1376,9 @@ pub fn eliminateDerefOfAddrOf(decl_idx: DeclIndex.Index) !bool {
     const decl = decls.get(decl_idx);
     if(decl.instr != .reference_wrap) return false;
     const ref_wrap = decl.instr.reference_wrap;
-    const operand = decls.get(ref_wrap.pointer_value);
+    const operand = decls.get(ref_wrap.pointer_value.declIndex());
     if(operand.instr != .addr_of) return false;
-    const new_instr: DeclInstr = switch(decls.get(operand.instr.addr_of).instr) {
+    const new_instr: DeclInstr = switch(decls.get(operand.instr.addr_of.declIndex()).instr) {
         .stack_ref => |sr| .{.stack_ref = .{
             .offset = @intCast(u32, @intCast(i32, sr.offset) - ref_wrap.pointer_value_offset),
             .orig_offset = sr.orig_offset,
@@ -1405,11 +1424,11 @@ fn arePointersDeeplyEqual(lhs_mr: MemoryReference, rhs_mr: MemoryReference) bool
 }
 
 fn canPointersOverlap(lhs_mr: MemoryReference, rhs_mr: MemoryReference) !bool {
-    const lhs = decls.get(lhs_mr.pointer_value);
-    const rhs = decls.get(rhs_mr.pointer_value);
+    const lhs = decls.get(lhs_mr.pointer_value.declIndex());
+    const rhs = decls.get(rhs_mr.pointer_value.declIndex());
 
     if(std.meta.activeTag(lhs.instr) != std.meta.activeTag(rhs.instr)) return false;
-    if(lhs_mr.pointer_value == rhs_mr.pointer_value and lhs_mr.pointer_value_offset == rhs_mr.pointer_value_offset) return true;
+    if(lhs_mr.pointer_value.declIndex() == rhs_mr.pointer_value.declIndex() and lhs_mr.pointer_value_offset == rhs_mr.pointer_value_offset) return true;
 
     switch(lhs.instr) {
         .stack_ref => |sr| {
@@ -1442,7 +1461,7 @@ pub fn eliminateTrivialLoads(decl_idx: DeclIndex.Index) !bool {
     var op_it = decl.instr.operands();
     var did_something = false;
     while(op_it.next()) |op_idx| {
-        const operand = decls.get(op_idx.*);
+        const operand = decls.get(op_idx.*.declIndex());
         const mr = switch(operand.instr) {
             .load => |l| MemoryReference{
                 .pointer_value = l.source,
@@ -1465,7 +1484,7 @@ pub fn eliminateTrivialLoads(decl_idx: DeclIndex.Index) !bool {
             const store_dest_mr = switch(it_decl.instr) {
                 inline
                 .store, .store_constant
-                => |store| decls.get(store.dest).instr.memoryReference().?,
+                => |store| decls.get(store.dest.declIndex()).instr.memoryReference().?,
                 else => if(it_decl.instr.isVolatile()) break else continue,
             };
 
@@ -1476,7 +1495,7 @@ pub fn eliminateTrivialLoads(decl_idx: DeclIndex.Index) !bool {
 
             if(it_decl.instr.getOperationType() != mr.instrType()) {
                 if(@enumToInt(mr.instrType()) < @enumToInt(it_decl.instr.getOperationType())) {
-                    op_idx.* = try insertBefore(op_idx.*, switch(it_decl.instr) {
+                    op_idx.* = Operand.encode(try insertBefore(op_idx.*.declIndex(), switch(it_decl.instr) {
                         .store => |store| .{.truncate = .{
                             .value = store.value,
                             .type = mr.instrType(),
@@ -1491,17 +1510,17 @@ pub fn eliminateTrivialLoads(decl_idx: DeclIndex.Index) !bool {
                             .type = mr.instrType(),
                         }},
                         else => unreachable,
-                    });
+                    }), 0);
                 }
             } else {
-                op_idx.* = try insertBefore(op_idx.*, switch(it_decl.instr) {
+                op_idx.* = Operand.encode(try insertBefore(op_idx.*.declIndex(), switch(it_decl.instr) {
                     .store => |store| .{.copy = store.value},
                     .store_constant => |store| .{.load_int_constant = .{
                         .value = store.value,
                         .type = store.type,
                     }},
                     else => unreachable,
-                });
+                }), 0);
             }
 
             did_something = true;
@@ -1603,8 +1622,8 @@ const IRWriter = struct {
         self.function_stack.deinit(function_stack_gpa.allocator());
     }
 
-    fn emit(self: *@This(), instr: DeclInstr) !DeclIndex.Index {
-        return appendToBlock(self.basic_block, instr);
+    fn emit(self: *@This(), instr: DeclInstr, reg_index: RegIndex) !Operand {
+        return Operand.encode(try appendToBlock(self.basic_block, instr), reg_index);
     }
 
     fn allocStackSpace(self: *@This(), space: u32, alignment: u32) u32 {
@@ -1644,20 +1663,20 @@ const IRWriter = struct {
         _ = try self.writeBlockStatement(inst.body.first_stmt);
         std.debug.assert(inst.return_type == .void or callee.function.captures_return or !inst.body.reaches_end);
         if(inst.body.reaches_end) {
-            _ = try self.emit(.{.goto = try addEdge(self.basic_block, return_block)});
+            _ = try self.emit(.{.goto = try addEdge(self.basic_block, return_block)}, undefined);
         }
         try blocks.get(return_block).seal();
         self.basic_block = return_block;
         return return_phi;
     }
 
-    fn writeExpression(self: *@This(), expr_idx: sema.ExpressionIndex.Index) !DeclIndex.Index {
+    fn writeExpression(self: *@This(), expr_idx: sema.ExpressionIndex.Index) !Operand {
         switch(sema.expressions.get(expr_idx).*) {
             .value => |val_idx| return self.writeValue(val_idx),
             .assign => |ass| {
                 // Evaluate rhs first because it makes more lifetime sense for assignment ops
                 const rhs = try self.writeValue(ass.rhs);
-                const rhs_decl = decls.get(rhs);
+                const rhs_decl = decls.get(rhs.declIndex());
 
                 switch(rhs_decl.instr) {
                     .function_call => |fc| {
@@ -1669,20 +1688,20 @@ const IRWriter = struct {
                 }
 
                 const rhs_value = if(rhs_decl.instr.memoryReference()) |mr|
-                    try self.emit(mr.load()) else rhs;
+                    try self.emit(mr.load(), 0) else rhs;
 
                 if(ass.lhs != .discard_underscore) {
                     const lhs_sema = sema.values.get(ass.lhs);
                     if(lhs_sema.* == .decl_ref) {
                         if(sema.decls.get(lhs_sema.decl_ref).offset == null) {
-                            const new_rhs = try self.emit(.{.copy = rhs_value});
-                            decls.get(new_rhs).sema_decl = sema.DeclIndex.toOpt(lhs_sema.decl_ref);
+                            const new_rhs = try self.emit(.{.copy = rhs_value}, undefined);
+                            decls.get(new_rhs.declIndex()).sema_decl = sema.DeclIndex.toOpt(lhs_sema.decl_ref);
                             return undefined;
                         }
                     }
                     const lhs = try self.writeValue(ass.lhs);
-                    const lhs_mr = decls.get(lhs).instr.memoryReference().?;
-                    _ = try self.emit(lhs_mr.store(rhs_value));
+                    const lhs_mr = decls.get(lhs.declIndex()).instr.memoryReference().?;
+                    _ = try self.emit(lhs_mr.store(rhs_value), undefined);
                 }
                 return undefined;
             },
@@ -1694,9 +1713,9 @@ const IRWriter = struct {
                 return self.emit(@unionInit(DeclInstr, @tagName(tag), .{
                     .lhs = try self.writeValue(bop.lhs),
                     .rhs = try self.writeValue(bop.rhs),
-                }));
+                }), 0);
             },
-            .logical_not => |op| return self.emit(.{.logical_not = try self.writeValue(op)}),
+            .logical_not => |op| return self.emit(.{.logical_not = try self.writeValue(op)}, undefined),
             inline
             .add_eq, .sub_eq, .multiply_eq, .divide_eq, .modulus_eq,
             .shift_left_eq, .shift_right_eq, .bit_and_eq, .bit_or_eq, .bit_xor_eq,
@@ -1704,31 +1723,32 @@ const IRWriter = struct {
                 const lhs = try self.writeValue(bop.lhs);
                 const rhs = try self.writeValue(bop.rhs);
                 const op_name = @tagName(tag)[0..@tagName(tag).len - 3];
-                if((tag != .divide_eq and tag != .modulus_eq and decls.get(lhs).instr.memoryReference() == null) or !backends.current_backend.optimizations.has_inplace_ops) {
-                    const retval = try self.emit(@unionInit(DeclInstr, op_name, .{.lhs = lhs, .rhs = rhs}));
+                if((tag != .divide_eq and tag != .modulus_eq and decls.get(lhs.declIndex()).instr.memoryReference() == null) or !backends.current_backend.optimizations.has_inplace_ops) {
+                    const retval = try self.emit(@unionInit(DeclInstr, op_name, .{.lhs = lhs, .rhs = rhs}), 0);
                     if(sema.values.get(bop.lhs).* == .decl_ref) {
-                        decls.get(retval).sema_decl = sema.DeclIndex.toOpt(sema.values.get(bop.lhs).decl_ref);
+                        decls.get(retval.declIndex()).sema_decl = sema.DeclIndex.toOpt(sema.values.get(bop.lhs).decl_ref);
                     }
                     return retval;
                 } else {
-                    return self.emit(@unionInit(DeclInstr, "inplace_" ++ op_name, .{.lhs = lhs, .rhs = rhs}));
+                    return self.emit(@unionInit(DeclInstr, "inplace_" ++ op_name, .{.lhs = lhs, .rhs = rhs}), 0);
                 }
             },
             .addr_of => |operand| {
-                return self.emit(.{.addr_of = try self.writeValue(operand)});
+                const op = try self.writeValue(operand);
+                return self.emit(.{.addr_of = op}, 0);
             },
             .zero_extend => |cast| return self.emit(.{.zero_extend = .{
                 .value = try self.writeValue(cast.value),
                 .type = typeFor(cast.type),
-            }}),
+            }}, 0),
             .sign_extend => |cast| return self.emit(.{.sign_extend = .{
                 .value = try self.writeValue(cast.value),
                 .type = typeFor(cast.type),
-            }}),
+            }}, 0),
             .truncate => |cast| return self.emit(.{.truncate = .{
                 .value = try self.writeValue(cast.value),
                 .type = typeFor(cast.type),
-            }}),
+            }}, 0),
             .function_call => |fcall| {
                 var builder = function_arguments.builder();
                 var curr_arg = fcall.first_arg;
@@ -1737,39 +1757,37 @@ const IRWriter = struct {
                 while(sema.expressions.getOpt(curr_arg)) |arg| : (curr_arg = arg.function_arg.next) {
                     const farg = arg.function_arg;
                     var value = try self.writeValue(farg.value);
-                    if(decls.get(value).instr.memoryReference()) |mr| {
-                        value = try self.emit(mr.load());
+                    if(decls.get(value.declIndex()).instr.memoryReference()) |mr| {
+                        value = try self.emit(mr.load(), 0);
                     }
-                    const copy = try self.emit(.{.copy = value});
+                    const copy = try self.emit(.{.copy = value}, 0);
                     if(will_inline) {
-                        decls.get(copy).sema_decl = sema.DeclIndex.toOpt(arg.function_arg.param_decl);
+                        decls.get(copy.declIndex()).sema_decl = sema.DeclIndex.toOpt(arg.function_arg.param_decl);
                     }
-                    _ = try builder.insert(.{.value = copy });
+                    _ = try builder.insert(.{.value = copy});
                 }
-                if(fcall.callee.function_value == .syscall_func) return self.emit(.{.syscall = builder.first});
+                if(fcall.callee.function_value == .syscall_func) return self.emit(.{.syscall = builder.first}, 0);
                 if(will_inline) {
-                    return self.attemptInlineFunctionCommit(fcall.callee);
+                    return Operand.encode(try self.attemptInlineFunctionCommit(fcall.callee), 0);
                 }
                 return self.emit(.{.function_call = .{
                     .callee = fcall.callee,
                     .first_argument = builder.first,
-                }});
+                }}, 0);
             },
             .global => |offref| return self.emit(.{.global_ref = .{
                 .orig_offset = offref.offset,
                 .offset = offref.offset,
                 .type = offref.type,
-            }}),
-            .deref => |sidx| {
-                return self.emit(.{.reference_wrap = .{
-                    .pointer_value = try self.writeValue(sidx),
-                    .pointer_value_offset = 0,
-                    .sema_pointer_type = sema.types.get(try sema.values.get(sidx).getType()).pointer,
-                }});
-            },
+            }}, 0),
+            .deref => |sidx| return self.emit(.{.reference_wrap = .{
+                .pointer_value = try self.writeValue(sidx),
+                .pointer_value_offset = 0,
+                .sema_pointer_type = sema.types.get(try sema.values.get(sidx).getType()).pointer,
+            }}, 0),
             .block => |blk| {
                 // This will be a phi node with the break value in the future
-                const undef = self.emit(.{.@"undefined" = {}});
+                const undef = self.emit(.{.@"undefined" = {}}, undefined);
                 try self.writeBlockStatement(blk.first_stmt);
                 return undef;
             },
@@ -1777,7 +1795,7 @@ const IRWriter = struct {
         }
     }
 
-    fn writeValue(self: *@This(), value_idx: sema.ValueIndex.Index) !DeclIndex.Index {
+    fn writeValue(self: *@This(), value_idx: sema.ValueIndex.Index) !Operand {
         switch(sema.values.get(value_idx).*) {
             .runtime => |rt| return self.writeExpression(sema.ExpressionIndex.unwrap(rt.expr).?),
             .decl_ref => |decl_idx| {
@@ -1792,32 +1810,27 @@ const IRWriter = struct {
                         .orig_offset = rdecl.offset.?,
                         .offset = rdecl.offset.?,
                         .type = ref_t,
-                    }});
+                    }}, 0);
                 } else if(rdecl.offset) |offset| {
                     return self.emit(.{.stack_ref = .{
                         .orig_offset = offset,
                         .offset = offset,
                         .type = ref_t,
-                    }});
+                    }}, 0);
                 } else {
-                    return readVariable(self.basic_block, decl_idx);
+                    return Operand.encode(try readVariable(self.basic_block, decl_idx), 0);
                 }
             },
-            .comptime_int => |c| {
-                return self.emit(.{.load_int_constant = .{
-                    .value = @truncate(u64, @bitCast(u65, c)),
-                    .type = .u64, // TODO
-                }});
-            },
-            .bool => |b| return self.emit(.{.load_bool_constant = b}),
-            .unsigned_int, .signed_int => |int| {
-                // TODO: Pass value bit width along too
-                return self.emit(.{.load_int_constant = .{
-                    .value = @truncate(u64, @bitCast(u65, int.value)),
-                    .type = typeForBits(int.bits),
-                }});
-            },
-            .undefined => return self.emit(.{.undefined = {}}),
+            .comptime_int => |c| return self.emit(.{.load_int_constant = .{
+                .value = @truncate(u64, @bitCast(u65, c)),
+                .type = .u64, // TODO
+            }}, 0),
+            .bool => |b| return self.emit(.{.load_bool_constant = b}, 0),
+            .unsigned_int, .signed_int => |int| return self.emit(.{.load_int_constant = .{
+                .value = @truncate(u64, @bitCast(u65, int.value)),
+                .type = typeForBits(int.bits),
+            }}, 0),
+            .undefined => return self.emit(.{.undefined = {}}, 0),
             else => |val| std.debug.panic("Unhandled ssaing of value {s}", .{@tagName(val)}),
         }
     }
@@ -1852,12 +1865,12 @@ const IRWriter = struct {
                     }
 
                     var value = try self.writeValue(decl.init_value);
-                    if(decls.get(value).instr.memoryReference()) |mr| {
-                        value = try self.emit(mr.load());
+                    if(decls.get(value.declIndex()).instr.memoryReference()) |mr| {
+                        value = try self.emit(mr.load(), 0);
                     }
-                    decls.get(value).sema_decl = sema.DeclIndex.toOpt(decl_idx);
+                    decls.get(value.declIndex()).sema_decl = sema.DeclIndex.toOpt(decl_idx);
 
-                    switch(decls.get(value).instr) {
+                    switch(decls.get(value.declIndex()).instr) {
                         .function_call => |fc| {
                             if(sema.values.get(fc.callee.function_value).function.captures_return) {
                                continue;
@@ -1875,8 +1888,8 @@ const IRWriter = struct {
                                 .is_volatile = false,
                                 .child = try init_value.getType(),
                             },
-                        }});
-                        _ = try self.emit(.{.store = .{.dest = stack_ref, .value = value}});
+                        }}, 0);
+                        _ = try self.emit(.{.store = .{.dest = stack_ref, .value = value}}, undefined);
                     }
                 },
                 .expression => |expr_idx| {
@@ -1884,33 +1897,32 @@ const IRWriter = struct {
                 },
                 .if_statement => |if_stmt| {
                     const condition_value = try self.writeValue(if_stmt.condition);
-
                     const if_branch = try self.emit(.{.@"if" = .{
                         .condition = condition_value,
                         .taken = undefined,
                         .not_taken = undefined,
-                    }});
+                    }}, undefined);
                     try blocks.get(self.basic_block).filled();
 
                     const taken_entry = try blocks.insert(.{});
                     const not_taken_entry = try blocks.insert(.{});
-                    decls.get(if_branch).instr.@"if".taken = try addEdge(self.basic_block, taken_entry);
+                    decls.get(if_branch.declIndex()).instr.@"if".taken = try addEdge(self.basic_block, taken_entry);
                     try blocks.get(taken_entry).seal();
-                    decls.get(if_branch).instr.@"if".not_taken = try addEdge(self.basic_block, not_taken_entry);
+                    decls.get(if_branch.declIndex()).instr.@"if".not_taken = try addEdge(self.basic_block, not_taken_entry);
                     try blocks.get(not_taken_entry).seal();
 
                     const if_exit = try blocks.insert(.{});
                     const taken_exit = try self.writeBlockStatementIntoBlock(if_stmt.taken.first_stmt, taken_entry);
                     if(if_stmt.taken.reaches_end) {
-                        const taken_exit_branch = try self.emit(.{.goto = undefined});
-                        decls.get(taken_exit_branch).instr.goto = try addEdge(taken_exit, if_exit);
+                        const taken_exit_branch = try self.emit(.{.goto = undefined}, undefined);
+                        decls.get(taken_exit_branch.declIndex()).instr.goto = try addEdge(taken_exit, if_exit);
                     }
                     try blocks.get(taken_exit).filled();
 
                     const not_taken_exit = try self.writeBlockStatementIntoBlock(if_stmt.not_taken.first_stmt, not_taken_entry);
                     if (if_stmt.not_taken.reaches_end) {
-                        const not_taken_exit_branch = try self.emit(.{.goto = undefined});
-                        decls.get(not_taken_exit_branch).instr.goto = try addEdge(not_taken_exit, if_exit);
+                        const not_taken_exit_branch = try self.emit(.{.goto = undefined}, undefined);
+                        decls.get(not_taken_exit_branch.declIndex()).instr.goto = try addEdge(not_taken_exit, if_exit);
                     }
                     try blocks.get(not_taken_exit).filled();
                     try blocks.get(if_exit).seal();
@@ -1918,9 +1930,9 @@ const IRWriter = struct {
                     self.basic_block = if_exit;
                 },
                 .loop_statement => |loop| {
-                    const loop_enter_branch = try self.emit(.{.goto = undefined});
+                    const loop_enter_branch = try self.emit(.{.goto = undefined}, undefined);
                     const loop_body_entry = try blocks.insert(.{});
-                    decls.get(loop_enter_branch).instr.goto = try addEdge(self.basic_block, loop_body_entry);
+                    decls.get(loop_enter_branch.declIndex()).instr.goto = try addEdge(self.basic_block, loop_body_entry);
                     try blocks.get(self.basic_block).filled();
 
                     const exit_block = try blocks.insert(.{});
@@ -1928,8 +1940,8 @@ const IRWriter = struct {
                     const loop_body_end = try self.writeBlockStatementIntoBlock(loop.body.first_stmt, loop_body_entry);
                     try blocks.get(exit_block).seal();
                     if(loop.body.reaches_end) {
-                        const loop_instr = try self.emit(.{.goto = undefined});
-                        decls.get(loop_instr).instr.goto = try addEdge(loop_body_end, loop_body_entry);
+                        const loop_instr = try self.emit(.{.goto = undefined}, undefined);
+                        decls.get(loop_instr.declIndex()).instr.goto = try addEdge(loop_body_end, loop_body_entry);
                     }
                     try blocks.get(loop_body_end).filled();
                     try blocks.get(loop_body_entry).seal();
@@ -1938,26 +1950,26 @@ const IRWriter = struct {
                 },
                 .break_statement => |break_block| {
                     const goto_block = BlockIndex.unwrap(sema.statements.get(break_block).ir_block).?;
-                    _ = try self.emit(.{.goto = try addEdge(self.basic_block, goto_block)});
+                    _ = try self.emit(.{.goto = try addEdge(self.basic_block, goto_block)}, undefined);
                 },
                 .return_statement => |return_stmt| {
                     var value = if(sema.ValueIndex.unwrap(return_stmt)) |sema_value| blk: {
                         break :blk try self.writeValue(sema_value);
                     } else blk: {
-                        break :blk try self.emit(.{.undefined = {}});
+                        break :blk try self.emit(.{.undefined = {}}, 0);
                     };
 
                     const phi_decl = decls.get(self.return_phi_node);
                     const exit_edge = try addEdge(self.basic_block, phi_decl.block);
                     phi_decl.instr.phi = PhiOperandIndex.toOpt(try phi_operands.insert(.{
                         .edge = exit_edge,
-                        .decl = value,
+                        .decl = value.declIndex(),
                         .next = phi_decl.instr.phi,
                     }));
 
-                    _ = try self.emit(.{.@"goto" = exit_edge});
+                    _ = try self.emit(.{.@"goto" = exit_edge}, undefined);
                 },
-                .unreachable_statement => _ = try self.emit(.{.@"unreachable" = {}}),
+                .unreachable_statement => _ = try self.emit(.{.@"unreachable" = {}}, undefined),
             }
         }
     }
@@ -1997,7 +2009,7 @@ pub fn writeFunction(sema_func: sema.InstantiatedFunction) !BlockIndex.Index {
     try writer.writeBlockStatement(func.body.first_stmt);
     std.debug.assert(func.return_type == .void or callee.captures_return or !func.body.reaches_end);
     if(func.body.reaches_end) {
-        _ = try writer.emit(.{.goto = try addEdge(writer.basic_block, exit_block)});
+        _ = try writer.emit(.{.goto = try addEdge(writer.basic_block, exit_block)}, undefined);
     }
     decls.get(enter_decl).instr.enter_function = (writer.max_stack_usage + 0xF) & ~@as(u32, 0xF);
     decls.get(exit_return).instr.leave_function.restore_stack = writer.max_stack_usage > 0;
