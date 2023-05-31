@@ -36,7 +36,7 @@ pub const Os = struct {
 };
 
 pub const Abi = struct {
-    return_reg: u8,
+    return_regs: []const u8,
     param_regs: []const u8,
     caller_saved_regs: []const u8,
 };
@@ -286,9 +286,11 @@ pub const Writer = struct {
             const blk = ir.blocks.get(blk_idx);
             var curr_decl = blk.first_decl;
             while(ir.decls.getOpt(curr_decl)) |decl| : (curr_decl = decl.next) {
-                if(decl.reg_alloc_value) |reg| {
-                    if(std.mem.indexOfScalar(u8, used_registers.slice(), reg) == null) {
-                        used_registers.appendAssumeCapacity(reg);
+                for(decl.reg_alloc_value) |oreg| {
+                    if(oreg) |reg| {
+                        if(std.mem.indexOfScalar(u8, used_registers.slice(), reg) == null) {
+                            used_registers.appendAssumeCapacity(reg);
+                        }
                     }
                 }
             }

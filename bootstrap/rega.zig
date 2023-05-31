@@ -3,62 +3,82 @@ const std = @import("std");
 const backends = @import("backends/backends.zig");
 const ir = @import("ir.zig");
 
-const DeclSet = std.AutoArrayHashMapUnmanaged(ir.DeclIndex.Index, void);
+const DeclReg = enum(u32) {
+    _,
+
+    const reg_shift = 32 - @bitSizeOf(ir.RegIndex);
+
+    pub fn encode(d: ir.DeclIndex.Index, r: ir.RegIndex) @This() {
+        return @intToEnum(@This(), (@as(u32, r) << reg_shift) | @enumToInt(d));
+    }
+
+    pub fn decl(self: @This()) ir.DeclIndex.Index {
+        return @intToEnum(ir.DeclIndex.Index, @enumToInt(self) & (1 << reg_shift) - 1);
+    }
+
+    pub fn reg(self: @This()) ir.RegIndex {
+        return @truncate(ir.RegIndex, @enumToInt(self) >> reg_shift);
+    }
+
+    pub fn alloced_reg(self: @This()) ?u8 {
+        return ir.decls.get(self.decl()).reg_alloc_value[self.reg()];
+    }
+
+    pub fn dump(self: @This()) void {
+        if(ir.decls.get(self.decl()).instr.numValues() < 2) {
+            std.debug.print(" ${d}", .{@enumToInt(self.decl())});
+        } else {
+            std.debug.print(" (${d}, #{r})", .{@enumToInt(self.decl()), self.reg()});
+        }
+    }
+};
+
+const RegSet = std.AutoArrayHashMapUnmanaged(DeclReg, void);
+
+fn re_uf(value: DeclReg, uf: *const UnionFind) DeclReg {
+    return DeclReg.encode(uf.find(value.decl()), value.reg());
+}
 
 fn copyInto(
     allocator: std.mem.Allocator,
-    lhs: *DeclSet,
+    lhs: *RegSet,
     uf: *const UnionFind,
-    set: *const DeclSet,
+    set: *const RegSet,
 ) !void {
     var it = set.iterator();
     while(it.next()) |kv| {
-        try lhs.put(allocator, uf.find(kv.key_ptr.*), {});
+        try lhs.put(allocator, re_uf(kv.key_ptr.*, uf), {});
     }
 }
 
-fn setEq(
-    lhs: *const DeclSet,
-    rhs_opt: ?*const DeclSet,
-) bool {
-    if(rhs_opt) |rhs| {
-        if(rhs.keys().len != lhs.keys().len) return false;
-        var it = lhs.iterator();
-        while(it.next()) |kv| {
-            if(!rhs.contains(kv.key_ptr.*)) return false;
-        }
-        return true;
-    } else {
-        return lhs.keys().len == 0;
-    }
-}
-
-const DeclSetMap = std.AutoArrayHashMapUnmanaged(ir.DeclIndex.Index, DeclSet);
+const Conflicts = std.AutoArrayHashMapUnmanaged(DeclReg, RegSet);
+const Alives = std.AutoArrayHashMapUnmanaged(ir.DeclIndex.Index, RegSet);
 
 fn tryAllocReg(
     decl_idx: ir.DeclIndex.Index,
     reg: u8,
-    conflicts: *const DeclSetMap,
+    conflicts: *const RegSet,
 ) bool {
     const decl = ir.decls.get(decl_idx);
-    if(decl.reg_alloc_value != null) return false;
+    if(decl.reg_alloc_value[0] != null) return false;
 
-    var it = conflicts.getPtr(decl_idx).?.iterator();
+    var it = conflicts.iterator();
     while(it.next()) |conflict| {
-        const cdecl = ir.decls.get(conflict.key_ptr.*);
-        if(cdecl.reg_alloc_value == reg) return false;
+        if(conflict.key_ptr.*.alloced_reg() == reg) {
+            return false;
+        }
     }
-    decl.reg_alloc_value = reg;
+    decl.reg_alloc_value[0] = reg;
     return true;
 }
 
 fn allocAnyReg(
     decl_idx: ir.DeclIndex.Index,
     gprs: []const u8,
-    conflicts: *const DeclSetMap,
+    conflicts: *const RegSet,
 ) !void {
     const decl = ir.decls.get(decl_idx);
-    if(decl.reg_alloc_value != null) return;
+    if(decl.reg_alloc_value[0] != null) return;
 
     for(gprs) |reg| {
         if(tryAllocReg(decl_idx, reg, conflicts)) return;
@@ -70,7 +90,7 @@ pub const UnionFind = struct {
     e: std.AutoArrayHashMapUnmanaged(i32, i32) = .{},
 
     fn findI(self: @This(), x: i32) i32 {
-        const ep = self.e.getPtr(x).?;
+        const ep = self.e.getPtr(x) orelse return x;
         if(ep.* < 0) {
             return x;
         } else {
@@ -93,11 +113,12 @@ pub const UnionFind = struct {
     }
 
     pub fn findReg(self: @This(), decl: ir.DeclIndex.Index) ?u8 {
-        return self.findDecl(decl).reg_alloc_value;
+        const d = self.findDecl(decl);
+        return d.reg_alloc_value[0];
     }
 
     pub fn findRegByPtr(self: @This(), decl_ptr: *ir.Decl) ?u8 {
-        return self.findDeclByPtr(decl_ptr).reg_alloc_value;
+        return self.findReg(ir.decls.getIndex(decl_ptr));
     }
 
     fn join(self: @This(), a_c: ir.DeclIndex.Index, b_c: ir.DeclIndex.Index) bool {
@@ -114,13 +135,13 @@ pub const UnionFind = struct {
 
 fn isDeclInReg(decl_idx: ir.DeclIndex.Index) bool {
     const decl = ir.decls.get(decl_idx);
-    return decl.instr.isValue() and !decl.instr.isFlagsValue();
+    return decl.instr.numValues() >= 1 and !decl.instr.isFlagsValue();
 }
 
 pub fn allocateRegsForInstr(
     decl_idx: ir.DeclIndex.Index,
     max_memory_operands: usize,
-    return_reg: ?u8,
+    return_regs: []const u8,
     param_regs: []const u8,
     clobbers: []const u8,
     illegal_input_regs: []const u8,
@@ -129,12 +150,24 @@ pub fn allocateRegsForInstr(
 ) !void {
     const decl = ir.decls.get(decl_idx);
     if(ir.DeclIndex.unwrap(decl.next)) |next_instr| {
-        if(return_reg) |reg| {
-            decl.reg_alloc_value = reg;
-            const ret_copy = try ir.insertBefore(next_instr, .{
-                .copy = decl_idx,
-            });
-            try param_replacement.put(decl_idx, ret_copy);
+        if(decl.instr.numValues() == 1) {
+            if(return_regs.len > 0 and return_regs[0] != backends.any_register) {
+                decl.reg_alloc_value[0] = return_regs[0];
+                const copy = try ir.insertBefore(next_instr, .{.copy = decl_idx});
+                try param_replacement.put(.{decl_idx, 0}, copy);
+            }
+        } else {
+            for(return_regs[0..decl.instr.numValues()], 0..) |reg, i| {
+                if(reg != backends.any_register) {
+                    const ri = @intCast(ir.RegIndex, i);
+                    decl.reg_alloc_value[i] = reg;
+                    const pick = try ir.insertBefore(next_instr, .{.pick = .{
+                        .src = decl_idx,
+                        .idx = ri,
+                    }});
+                    try param_replacement.put(.{decl_idx, ri}, pick);
+                }
+            }
         }
     }
     var memory_operands: usize = 0;
@@ -158,28 +191,27 @@ pub fn allocateRegsForInstr(
                 continue;
             }
             op.* = try ir.insertBefore(decl_idx, .{.copy = op.*});
-            ir.decls.get(op.*).reg_alloc_value = param_regs[register_operands];
+            ir.decls.get(op.*).reg_alloc_value[0] = param_regs[register_operands];
             register_operands += 1;
         }
     }
     if(ir.DeclIndex.unwrap(decl.next)) |next_instr| {
         for(clobbers) |clob_reg| {
-            if(return_reg == clob_reg) continue;
             const clob1 = try ir.insertBefore(next_instr, .{ .clobber = decl_idx });
-            ir.decls.get(clob1).reg_alloc_value = clob_reg;
+            ir.decls.get(clob1).reg_alloc_value[0] = clob_reg;
             const clob2 = try ir.insertBefore(next_instr, .{ .clobber = clob1 });
-            ir.decls.get(clob2).reg_alloc_value = clob_reg;
+            ir.decls.get(clob2).reg_alloc_value[0] = clob_reg;
         }
     }
     for(illegal_input_regs) |clob_reg| {
         const clob1 = try ir.insertBefore(decl_idx, .{ .clobber = ir.DeclIndex.unwrap(decl.prev).? });
-        ir.decls.get(clob1).reg_alloc_value = clob_reg;
+        ir.decls.get(clob1).reg_alloc_value[0] = clob_reg;
         const clob2 = try ir.insertBefore(decl_idx, .{ .clobber = clob1 });
-        ir.decls.get(clob2).reg_alloc_value = clob_reg;
+        ir.decls.get(clob2).reg_alloc_value[0] = clob_reg;
     }
 }
 
-pub const ParamReplacement = std.AutoArrayHashMap(ir.DeclIndex.Index, ir.DeclIndex.Index);
+pub const ParamReplacement = std.AutoArrayHashMap(std.meta.Tuple(&.{ir.DeclIndex.Index, ir.RegIndex}), ir.DeclIndex.Index);
 
 pub fn doRegAlloc(
     allocator: std.mem.Allocator,
@@ -209,7 +241,7 @@ pub fn doRegAlloc(
                 .param_ref => |pr| try allocateRegsForInstr(
                     decl_idx,
                     0,
-                    backends.current_default_abi.param_regs[pr.param_idx],
+                    &.{backends.current_default_abi.param_regs[pr.param_idx]},
                     &.{},
                     &.{},
                     &.{},
@@ -219,18 +251,18 @@ pub fn doRegAlloc(
                 .function_call => try allocateRegsForInstr(
                     decl_idx,
                     0,
-                    backends.current_default_abi.return_reg,
+                    backends.current_default_abi.return_regs,
                     backends.current_default_abi.param_regs,
                     backends.current_default_abi.caller_saved_regs,
                     &.{},
                     false,
                     &param_replacement,
                 ),
-                .tail_call => try allocateRegsForInstr(decl_idx, 0, null, backends.current_default_abi.param_regs, &.{}, &.{}, false, &param_replacement),
+                .tail_call => try allocateRegsForInstr(decl_idx, 0, &.{}, backends.current_default_abi.param_regs, &.{}, &.{}, false, &param_replacement),
                 .syscall => try allocateRegsForInstr(
                     decl_idx,
                     0,
-                    backends.current_os.syscall_return_reg,
+                    &.{backends.current_os.syscall_return_reg},
                     backends.current_os.syscall_param_regs,
                     backends.current_os.syscall_clobbers,
                     &.{},
@@ -240,8 +272,8 @@ pub fn doRegAlloc(
                 .leave_function => try allocateRegsForInstr(
                     decl_idx,
                     0,
-                    null,
-                    &.{backends.current_default_abi.return_reg},
+                    &.{},
+                    backends.current_default_abi.return_regs,
                     &.{},
                     &.{},
                     false,
@@ -256,12 +288,21 @@ pub fn doRegAlloc(
         const blk = ir.blocks.get(blk_idx);
         var curr_instr = blk.first_decl;
         while(ir.decls.getOpt(curr_instr)) |instr| : (curr_instr = instr.next) {
-            if(instr.instr == .clobber) continue;
-            var it = instr.instr.operands();
-            while(it.next()) |op| {
-                const replacement = param_replacement.get(op.*) orelse continue;
-                if(replacement != ir.decls.getIndex(instr))
-                    op.* = replacement;
+            switch(instr.instr) {
+                .clobber => continue,
+                .pick => |*p| {
+                    const replacement = param_replacement.get(.{p.src, p.idx}) orelse continue;
+                    instr.instr = .{.copy = replacement};
+                },
+                else => {
+                    var it = instr.instr.operands();
+                    while(it.next()) |op| {
+                        const replacement = param_replacement.get(.{op.*, 0}) orelse continue;
+                        if(replacement != ir.decls.getIndex(instr)) {
+                            op.* = replacement;
+                        }
+                    }
+                },
             }
         }
     }
@@ -323,218 +364,253 @@ pub fn doRegAlloc(
         }
     }
 
-    var ins = DeclSetMap{};
-    var out = DeclSetMap{};
+    const BlockData = struct {
+        defs: RegSet,
+        uses: RegSet,
+        ins: RegSet,
+        outs: RegSet,
+    };
+    var blocks = std.AutoArrayHashMapUnmanaged(ir.BlockIndex.Index, BlockData){};
+    var block_work_list = std.AutoArrayHashMapUnmanaged(ir.BlockIndex.Index, void){};
+    var reg_work_list = RegSet{};
 
-    var conflicts = DeclSetMap{};
+    // First it's time to do lifetime analysis.
+    for(block_list.items) |blk_idx| {
+        var defs = RegSet{};
+        var uses = RegSet{};
 
-    var any_changed = true;
-    while(any_changed) {
-        any_changed = false;
+        var curr_instr = ir.blocks.get(blk_idx).first_decl;
+        while(ir.decls.getOpt(curr_instr)) |instr| : (curr_instr = instr.next) {
+            const iidx = ir.decls.getIndex(instr);
 
-        for(block_list.items) |blk_idx| {
-            const blk = ir.blocks.get(blk_idx);
-
-            var curr_instr = blk.first_decl;
-            while(ir.decls.getOpt(curr_instr)) |instr| : (curr_instr = instr.next) {
-                const iidx = ir.decls.getIndex(instr);
-                try conflicts.put(arena.allocator(), uf.find(iidx), .{});
-                const curr_in = ins.getPtr(iidx);
-                const curr_out = out.getPtr(iidx);
-
-                var new_in = DeclSet{};
-                blk: {
-                    try copyInto(arena.allocator(), &new_in, &uf, curr_out orelse break :blk);
-                }
-                _ = new_in.swapRemove(uf.find(iidx));
-                var ops_it = instr.instr.operands();
-                while(ops_it.next()) |op| {
-                    try new_in.put(arena.allocator(), uf.find(op.*), {});
-                }
-
-                var new_out = DeclSet{};
-                if(ir.decls.getOpt(instr.next)) |succi| blk: {
-                    try copyInto(arena.allocator(), &new_out, &uf, ins.getPtr(ir.decls.getIndex(succi)) orelse break :blk);
-                } else {
-                    const out_edges = instr.instr.outEdges();
-                    for(out_edges.slice()) |edge_idx| {
-                        const edge = ir.edges.get(edge_idx.*);
-                        const target_block = ir.blocks.get(edge.target_block);
-                        if(ir.decls.getOpt(target_block.first_decl)) |succi| {
-                            try copyInto(arena.allocator(), &new_out, &uf, ins.getPtr(ir.decls.getIndex(succi)) orelse continue);
+            // Anything used before it's defined is a use
+            switch(instr.instr) {
+                .pick => |p| {
+                    const opr = DeclReg.encode(p.src, p.idx);
+                    if(!defs.contains(opr)) {
+                        try uses.put(arena.allocator(), opr, {});
+                    }
+                },
+                else => {
+                    var ops_it = instr.instr.operands();
+                    while(ops_it.next()) |op| {
+                        const opr = DeclReg.encode(uf.find(op.*), 0);
+                        if(!defs.contains(opr)) {
+                            try uses.put(arena.allocator(), opr, {});
                         }
                     }
-                }
+                },
+            }
 
-                if(!any_changed and (!setEq(&new_in, curr_in) or !setEq(&new_out, curr_out))) {
-                    any_changed = true;
+            // Find everything that's defined
+            for(0..instr.instr.numValues()) |v| {
+                const reg = DeclReg.encode(uf.find(iidx), @truncate(ir.RegIndex, v));
+                try defs.put(arena.allocator(), reg, {});
+                if(instr.instr.isFlagsValue()) break;
+                if(instr.reg_alloc_value[v] == null) {
+                    try reg_work_list.put(arena.allocator(), reg, {});
                 }
+            }
+        }
 
-                if(curr_in) |ci| {
-                    //ci.deinit(arena.allocator());
-                    ci.* = new_in;
-                } else {
-                    try ins.put(arena.allocator(), iidx, new_in);
-                }
+        try block_work_list.put(arena.allocator(), blk_idx, {});
+        try blocks.put(arena.allocator(), blk_idx, .{
+            .defs = defs,
+            .uses = uses,
+            .ins = .{},
+            .outs = .{},
+        });
+    }
 
-                if(curr_out) |co| {
-                    //co.deinit(arena.allocator());
-                    co.* = new_out;
-                } else {
-                    try out.put(arena.allocator(), iidx, new_out);
+    // Block level ins/outs
+    {
+        var new_in = RegSet{};
+        while(block_work_list.popOrNull()) |work| {
+            new_in.clearRetainingCapacity();
+            const blk_idx = work.key;
+            const bd = blocks.getPtr(blk_idx).?;
+
+            try copyInto(arena.allocator(), &new_in, &uf, &bd.outs);
+
+            var it = bd.defs.iterator();
+            while(it.next()) |value| {
+                _ = new_in.swapRemove(re_uf(value.key_ptr.*, &uf));
+            }
+
+            try copyInto(arena.allocator(), &new_in, &uf, &bd.uses);
+
+            if(new_in.count() > bd.ins.count()) {
+                try copyInto(arena.allocator(), &bd.ins, &uf, &new_in);
+                var pred_edge = ir.blocks.get(blk_idx).first_predecessor;
+                while(ir.edges.getOpt(pred_edge)) |pe| : (pred_edge = pe.next) {
+                    const pred = pe.source_block;
+                    try copyInto(arena.allocator(), &blocks.getPtr(pred).?.outs, &uf, &new_in);
+                    try block_work_list.put(arena.allocator(), pred, {});
                 }
             }
         }
     }
 
+    // Decl level ins/outs
+    const DeclData = struct {
+        ins: RegSet,
+        outs: RegSet,
+        conflicts: [ir.InstrMaxRegs]RegSet,
+    };
+    var decls = std.AutoArrayHashMapUnmanaged(ir.DeclIndex.Index, DeclData){};
+    for(block_list.items) |blk_idx| {
+        const blk = ir.blocks.get(blk_idx);
+        var curr_instr = blk.last_decl;
+        var alive = try blocks.get(blk_idx).?.outs.clone(arena.allocator());
+        while(ir.decls.getOpt(curr_instr)) |instr| : (curr_instr = instr.prev) {
+            const iidx = ir.decls.getIndex(instr);
+            
+            const outs = try alive.clone(arena.allocator());
+
+            for(0..instr.instr.numValues()) |v| {
+                if(instr.instr.isFlagsValue()) break;
+                const reg = DeclReg.encode(uf.find(iidx), @truncate(ir.RegIndex, v));
+                if(instr.reg_alloc_value[v] == null) {
+                    _ = alive.swapRemove(reg);
+                }
+            }
+
+            switch(instr.instr) {
+                .pick => |p| {
+                    try alive.put(arena.allocator(), DeclReg.encode(p.src, p.idx), {});
+                },
+                else => {
+                    var ops_it = instr.instr.operands();
+                    while(ops_it.next()) |op| {
+                        const opr = DeclReg.encode(uf.find(op.*), 0);
+                        try alive.put(arena.allocator(), opr, {});
+                    }
+                },
+            }
+
+            try decls.put(arena.allocator(), iidx, .{
+                .ins = try alive.clone(arena.allocator()),
+                .outs = outs,
+                .conflicts = [1]RegSet{.{}} ** ir.InstrMaxRegs,
+            });
+        }
+    }
+
     {
-        var fuck = ins.iterator();
-        while(fuck.next()) |decl_ins| {
-            std.debug.print("${d} has the following ins:", .{@enumToInt(decl_ins.key_ptr.*)});
-            var in_it = decl_ins.value_ptr.iterator();
+        var fuck = decls.iterator();
+        while(fuck.next()) |point| {
+            {
+                var outer_it = point.value_ptr.ins.iterator();
+                while(outer_it.next()) |outer| {
+                    var inner_it = point.value_ptr.ins.iterator();
+                    while(inner_it.next()) |inner| {
+                        const oruf = re_uf(outer.key_ptr.*, &uf);
+                        if(oruf == re_uf(inner.key_ptr.*, &uf)) continue;
+                        const outer_decl = ir.decls.get(outer.key_ptr.*.decl());
+                        const inner_decl = ir.decls.get(inner.key_ptr.*.decl());
+                        if(outer_decl.instr == .copy and outer_decl.instr.copy == inner.key_ptr.*.decl()) continue;
+                        if(inner_decl.instr == .copy and inner_decl.instr.copy == outer.key_ptr.*.decl()) continue;
+
+                        try decls.getPtr(oruf.decl()).?.conflicts[oruf.reg()].put(arena.allocator(), re_uf(inner.key_ptr.*, &uf), {});
+                    }
+                }
+            }
+
+            {
+                var outer_it = point.value_ptr.outs.iterator();
+                while(outer_it.next()) |outer| {
+                    var inner_it = point.value_ptr.outs.iterator();
+                    while(inner_it.next()) |inner| {
+                        const oruf = re_uf(outer.key_ptr.*, &uf);
+                        if(oruf == re_uf(inner.key_ptr.*, &uf)) continue;
+                        const outer_decl = ir.decls.get(outer.key_ptr.*.decl());
+                        const inner_decl = ir.decls.get(inner.key_ptr.*.decl());
+                        if(outer_decl.instr == .copy and outer_decl.instr.copy == inner.key_ptr.*.decl()) continue;
+                        if(inner_decl.instr == .copy and inner_decl.instr.copy == outer.key_ptr.*.decl()) continue;
+
+                        try decls.getPtr(oruf.decl()).?.conflicts[oruf.reg()].put(arena.allocator(), re_uf(inner.key_ptr.*, &uf), {});
+                    }
+                }
+            }
+        }
+    }
+
+
+    {
+        var fuck = decls.iterator();
+        while(fuck.next()) |di| {
+            std.debug.print("${d}\tins:", .{@enumToInt(di.key_ptr.*)});
+            var in_it = di.value_ptr.ins.iterator();
             while(in_it.next()) |in_value| {
-                std.debug.print(" ${d}", .{@enumToInt(in_value.key_ptr.*)});
+                in_value.key_ptr.dump();
             }
-            std.debug.print("\n", .{});
-        }
-    }
-
-    {
-        var fuck = out.iterator();
-        while(fuck.next()) |decl_out| {
-            std.debug.print("${d} has the following out:", .{@enumToInt(decl_out.key_ptr.*)});
-            var out_it = decl_out.value_ptr.iterator();
+            
+            std.debug.print("\n\touts:", .{});
+            var out_it = di.value_ptr.outs.iterator();
             while(out_it.next()) |out_value| {
-                std.debug.print(" ${d}", .{@enumToInt(out_value.key_ptr.*)});
+                out_value.key_ptr.dump();
+            }
+            for(di.value_ptr.conflicts[0..ir.decls.get(di.key_ptr.*).instr.numValues()], 0..) |set, reg| {
+                std.debug.print("\n\tvalue #{d} conflicts:", .{reg});
+                var cit_it = set.iterator();
+                while(cit_it.next()) |c_value| {
+                    c_value.key_ptr.dump();
+                }    
             }
             std.debug.print("\n", .{});
         }
     }
 
-    {
-        var fuck = ins.iterator();
-        while(fuck.next()) |decl_set| {
-            var outer_it = decl_set.value_ptr.iterator();
-            while(outer_it.next()) |outer| {
-                var inner_it = decl_set.value_ptr.iterator();
-                while(inner_it.next()) |inner| {
-                    if(uf.find(outer.key_ptr.*) == uf.find(inner.key_ptr.*)) continue;
-                    const outer_decl = ir.decls.get(outer.key_ptr.*);
-                    const inner_decl = ir.decls.get(inner.key_ptr.*);
-                    if(outer_decl.instr == .copy and outer_decl.instr.copy == inner.key_ptr.*) continue;
-                    if(inner_decl.instr == .copy and inner_decl.instr.copy == outer.key_ptr.*) continue;
-
-                    try conflicts.getPtr(uf.find(outer.key_ptr.*)).?.put(arena.allocator(), uf.find(inner.key_ptr.*), {});
-                }
-            }
-        }
-    }
-
-    {
-        var fuck = out.iterator();
-        while(fuck.next()) |decl_set| {
-            var outer_it = decl_set.value_ptr.iterator();
-            while(outer_it.next()) |outer| {
-                var inner_it = decl_set.value_ptr.iterator();
-                while(inner_it.next()) |inner| {
-                    if(uf.find(outer.key_ptr.*) == uf.find(inner.key_ptr.*)) continue;
-                    const outer_decl = ir.decls.get(outer.key_ptr.*);
-                    const inner_decl = ir.decls.get(inner.key_ptr.*);
-                    if(outer_decl.instr == .copy and outer_decl.instr.copy == inner.key_ptr.*) continue;
-                    if(inner_decl.instr == .copy and inner_decl.instr.copy == outer.key_ptr.*) continue;
-
-                    try conflicts.getPtr(uf.find(outer.key_ptr.*)).?.put(arena.allocator(), uf.find(inner.key_ptr.*), {});
-                }
-            }
-        }
-    }
-
-    {
-        var i: usize = 0;
-        while(i < conflicts.keys().len) {
-            const k = conflicts.keys()[i];
-            if(isDeclInReg(k)) {
-                std.debug.print("${d} has the following conflicts:", .{@enumToInt(k)});
-                const decl_set = &conflicts.values()[i];
-                var j: usize = 0;
-                while(j < decl_set.keys().len) {
-                    const conflict_decl = ir.decls.get(decl_set.keys()[j]);
-                    if(isDeclInReg(ir.decls.getIndex(conflict_decl))) {
-                        std.debug.print(" ${d}", .{@enumToInt(ir.decls.getIndex(conflict_decl))});
-                        j += 1;
-                    } else {
-                        decl_set.swapRemoveAt(j);
-                    }
-                }
-                std.debug.print("\n", .{});
-                i += 1;
-            } else {
-                conflicts.swapRemoveAt(i);
-            }
-        }
-    }
-
-    while(blk: {
-        var fuck = conflicts.iterator();
-        while(fuck.next()) |decl_node| {
-            const iidx = decl_node.key_ptr.*;
-            const decl = ir.decls.get(iidx);
-            if(decl.reg_alloc_value == null) {
-                break :blk true;
-            }
-        }
-        break :blk false;
-    }) {
-        var allocated_same_anywhere = true;
-        while(allocated_same_anywhere) {
-            allocated_same_anywhere = false;
-
+    errdefer |err| {
+        if(err == error.OutOfRegisters) {
             for(block_list.items) |blk_idx| {
-                const blk = ir.blocks.get(blk_idx);
-                var curr_instr = blk.first_decl;
-                while(ir.decls.getOpt(curr_instr)) |decl| : (curr_instr = decl.next) {
-                    if(!isDeclInReg(ir.decls.getIndex(decl))) continue;
-                    const adecl = uf.findDecl(ir.decls.getIndex(decl));
-                    var ops_it = decl.instr.operands();
-                    if(adecl.reg_alloc_value) |reg| {
-                        while(ops_it.next()) |op| {
-                            if(!isDeclInReg(op.*)) continue;
-                            if(tryAllocReg(uf.find(op.*), reg, &conflicts)) {
-                                allocated_same_anywhere = true;
-                            }
-                        }
-                    } else {
-                        while(ops_it.next()) |op| {
-                            if(!isDeclInReg(op.*)) continue;
-                            const oadecl = uf.findDecl(op.*);
-                            if(oadecl.reg_alloc_value) |reg| {
-                                if(tryAllocReg(uf.find(ir.decls.getIndex(decl)), reg, &conflicts)) {
-                                    allocated_same_anywhere = true;
-                                    break;
-                                }
-                            }
+                ir.dumpBlock(blk_idx, uf) catch { };
+            }
+        }
+    }
+
+    var reg_retries = RegSet{};
+    while(reg_work_list.count() > 0 or reg_retries.count() > 0) {
+        // See if we can reuse any registers
+        while(reg_work_list.popOrNull()) |rw| {
+            var output = rw.key;
+            std.debug.assert(output.reg() == 0);
+            const instr = ir.decls.get(output.decl());
+            std.debug.assert(instr.instr.numValues() == 1);
+            std.debug.assert(instr.reg_alloc_value[0] == null);
+            const conflicts = &decls.getPtr(output.decl()).?.conflicts[output.reg()];
+            if(switch(instr.instr) {
+                .pick => |p| blk: {
+                    break :blk tryAllocReg(output.decl(), instr.reg_alloc_value[p.idx] orelse break :blk false, conflicts);
+                },
+                else => blk: {
+                    var it = instr.instr.operands();
+                    while(it.next()) |op| {
+                        const opr = DeclReg.encode(uf.find(op.*), 0);
+                        if(tryAllocReg(output.decl(), opr.alloced_reg() orelse continue, conflicts)) {
+                            break :blk true;
                         }
                     }
-                }
+                    break :blk false;
+                },
+            }) {
+                // Retry all registers with reuse again
+                try copyInto(arena.allocator(), &reg_work_list, &uf, &reg_retries);
+                reg_retries.clearRetainingCapacity();
+            } else {
+                // This one failed.
+                try reg_retries.put(arena.allocator(), rw.key, {});
             }
         }
 
-        // Okay, just allocate something...
-        var fuck = conflicts.iterator();
-        while(fuck.next()) |decl_node| {
-            const iidx = decl_node.key_ptr.*;
-            const decl = ir.decls.get(iidx);
-            if(decl.reg_alloc_value == null) {
-                allocAnyReg(iidx, backends.current_backend.gprs, &conflicts) catch {
-                    for(block_list.items) |blk| {
-                        try ir.dumpBlock(blk, uf);
-                    }
-                    std.debug.print("Failed to allocate a register for instr: ${d}\n", .{@enumToInt(iidx)});
-                    @panic("Couldn't find a free reg!");
-                };
-                break;
-            }
-        }
+        // Allocate one register arbitrarily when we can't reuse registers
+        const rr = (reg_retries.popOrNull() orelse break).key;
+        std.debug.assert(rr.reg() == 0);
+        try allocAnyReg(rr.decl(), backends.current_backend.gprs, &decls.getPtr(rr.decl()).?.conflicts[rr.reg()]);
+
+        // Retry all registers with reuse again
+        try copyInto(arena.allocator(), &reg_work_list, &uf, &reg_retries);
+        reg_retries.clearRetainingCapacity();
     }
 
     return uf;

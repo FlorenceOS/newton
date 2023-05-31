@@ -41,7 +41,7 @@ pub const backend = backends.Backend{
 
 pub const abis = struct {
     pub const sysv = backends.Abi{
-        .return_reg = registers.rax,
+        .return_regs = &.{registers.rax, registers.rdx},
         .param_regs = &.{registers.rdi, registers.rsi, registers.rdx, registers.rcx, 8, 9},
         .caller_saved_regs = &.{registers.rax, registers.rdi, registers.rsi, registers.rdx, registers.rcx, 8, 9, 10, 11},
     };
@@ -344,26 +344,26 @@ fn regAlloc(decl_idx: ir.DeclIndex.Index, param_replacement: *rega.ParamReplacem
     switch(decl.instr) {
         .multiply,
         => try rega.allocateRegsForInstr(
-            decl_idx, 1, registers.rax, &.{registers.rax}, &.{registers.rdx}, &.{}, true, param_replacement
+            decl_idx, 1, &.{registers.rax}, &.{registers.rax}, &.{registers.rdx}, &.{}, true, param_replacement
         ),
         .divide,
         => try rega.allocateRegsForInstr(
-            decl_idx, 1, registers.rax, &.{registers.rax}, &.{registers.rax}, &.{registers.rdx}, true, param_replacement
+            decl_idx, 1, &.{registers.rax}, &.{registers.rax}, &.{registers.rax}, &.{registers.rdx}, true, param_replacement
         ),
         .modulus,
         => try rega.allocateRegsForInstr(
-            decl_idx, 1, registers.rdx, &.{registers.rax}, &.{registers.rax}, &.{registers.rdx}, true, param_replacement
+            decl_idx, 1, &.{registers.rdx}, &.{registers.rax}, &.{registers.rax}, &.{registers.rdx}, true, param_replacement
         ),
         .shift_left, .shift_right,
         => try rega.allocateRegsForInstr(
-            decl_idx, 0, null, &.{backends.any_register, registers.rcx}, &.{registers.rcx}, &.{}, true, param_replacement
+            decl_idx, 0, &.{}, &.{backends.any_register, registers.rcx}, &.{registers.rcx}, &.{}, true, param_replacement
         ),
         .add_constant, .sub_constant, .multiply_constant, .divide_constant, .modulus_constant,
         .shift_left_constant, .shift_right_constant,
         .bit_and_constant, .bit_or_constant, .bit_xor_constant,
-        => try rega.allocateRegsForInstr(decl_idx, 0, null, &.{}, &.{}, &.{}, true, param_replacement),
-        .reference_wrap => try rega.allocateRegsForInstr(decl_idx, 0, null, &.{}, &.{}, &.{}, true, param_replacement),
-        else => try rega.allocateRegsForInstr(decl_idx, 1, null, &.{}, &.{}, &.{}, true, param_replacement),
+        => try rega.allocateRegsForInstr(decl_idx, 0, &.{}, &.{}, &.{}, &.{}, true, param_replacement),
+        .reference_wrap => try rega.allocateRegsForInstr(decl_idx, 0, &.{}, &.{}, &.{}, &.{}, true, param_replacement),
+        else => try rega.allocateRegsForInstr(decl_idx, 1, &.{}, &.{}, &.{}, &.{}, true, param_replacement),
     }
 }
 
@@ -399,8 +399,6 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             }
         },
         .leave_function => |leave| {
-            const op_reg = uf.findReg(leave.value).?;
-            std.debug.assert(op_reg == backends.current_default_abi.return_reg);
             try writeLeaveFunction(writer, used_registers, leave);
             try writer.writeInt(u8, 0xC3);
         },
@@ -462,17 +460,15 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
         .sub => |op| {
             const op_t = decl.instr.getOperationType();
             const dest_reg = uf.findRegByPtr(decl).?;
-            const lhs_reg = uf.findReg(op.lhs);
             const rhs_reg = uf.findReg(op.rhs);
 
-            if(dest_reg == lhs_reg) {
-                try writeOperandReg(writer, uf, op_t, op.rhs, dest_reg, &.{0x2A | boolToU8(op_t != .u8)}, &.{}, true);
-            } else if(dest_reg == rhs_reg) {
+            if(dest_reg == rhs_reg) {
                 try writeOperandReg(writer, uf, op_t, op.lhs, dest_reg, &.{0x2A | boolToU8(op_t != .u8)}, &.{}, true);
                 // neg dest_reg
                 try writeDirect(writer, op_t, &.{0xF6 | boolToU8(op_t != .u8)}, dest_reg, 3, &.{}, false);
             } else {
-                @panic("TODO: Sub no common regs");
+                try mov(writer, uf, op_t, decl_idx, op.lhs, true);
+                try writeOperandReg(writer, uf, op_t, op.rhs, dest_reg, &.{0x2A | boolToU8(op_t != .u8)}, &.{}, true);
             }
         },
         .divide, .modulus => |op| {

@@ -83,6 +83,9 @@ const FunctionArgument = struct {
     next: FunctionArgumentIndex.OptIndex = .none,
 };
 
+pub const InstrMaxRegs = 2;
+pub const RegIndex = std.math.IntFittingRange(0, InstrMaxRegs - 1);
+
 pub const DeclInstr = union(enum) {
     param_ref: struct {
         param_idx: u8,
@@ -197,6 +200,10 @@ pub const DeclInstr = union(enum) {
 
     incomplete_phi: DeclIndex.OptIndex, // Holds the next incomplete phi node in the same block
     copy: DeclIndex.Index, // Should be eliminated during optimization
+    pick: struct {
+        src: DeclIndex.Index,
+        idx: RegIndex,
+    },
     @"if": struct {
         condition: DeclIndex.Index,
         taken: BlockEdgeIndex.Index,
@@ -279,6 +286,7 @@ pub const DeclInstr = union(enum) {
             .store_constant => |*p| bounded_result.value.bounded_iterator.appendAssumeCapacity(&p.dest),
 
             .copy => |*c| bounded_result.value.bounded_iterator.appendAssumeCapacity(c),
+            .pick => |*p| bounded_result.value.bounded_iterator.appendAssumeCapacity(&p.src),
             .load => |*p| bounded_result.value.bounded_iterator.appendAssumeCapacity(&p.source),
             .@"if" => |*instr| bounded_result.value.bounded_iterator.appendAssumeCapacity(&instr.condition),
             .leave_function => |*value| bounded_result.value.bounded_iterator.appendAssumeCapacity(&value.value),
@@ -329,7 +337,7 @@ pub const DeclInstr = union(enum) {
         }
     }
 
-    pub fn isValue(self: *const @This()) bool {
+    pub fn numValues(self: *const @This()) RegIndex {
         switch(self.*) {
             .incomplete_phi => unreachable,
             .@"if", .leave_function, .goto, .stack_ref, .global_ref, .enter_function,
@@ -339,8 +347,8 @@ pub const DeclInstr = union(enum) {
             .inplace_add_constant, .inplace_sub_constant, .inplace_multiply_constant, .inplace_divide_constant, .inplace_modulus_constant,
             .inplace_shift_left_constant, .inplace_shift_right_constant, .inplace_bit_and_constant, .inplace_bit_or_constant, .inplace_bit_xor_constant,
             .tail_call, .@"unreachable",
-            => return false,
-            else => return true,
+            => return 0,
+            else => return 1,
         }
     }
 
@@ -448,13 +456,13 @@ pub const Decl = struct {
 
     sema_decl: sema.DeclIndex.OptIndex,
     instr: DeclInstr,
-    reg_alloc_value: ?u8 = null,
+    reg_alloc_value: [InstrMaxRegs]?u8 = std.mem.zeroes([InstrMaxRegs]?u8),
 };
 
 const InstructionToBlockEdge = struct {
     source_block: BlockIndex.Index,
     target_block: BlockIndex.Index,
-    next: BlockEdgeIndex.OptIndex,
+    next: BlockEdgeIndex.OptIndex, // next incoming edge for the target block
 };
 
 const PhiOperand = struct {
@@ -661,7 +669,6 @@ pub fn allBlocksReachableFrom(allocator: std.mem.Allocator, head_block: BlockInd
 }
 
 const function_optimizations = .{
-    eliminateCopies,
     eliminateUnreferenced,
     eliminateDeadBlocks,
     deduplicateDecls,
@@ -681,6 +688,7 @@ const peephole_optimizations = .{
     eliminateOffsetPointers,
     eliminateDerefOfAddrOf,
     eliminateTrivialLoads,
+    stopUsingCopies,
 };
 
 var optimization_allocator = std.heap.GeneralPurposeAllocator(.{}){.backing_allocator = std.heap.page_allocator};
@@ -755,30 +763,6 @@ pub fn optimizeFunction(head_block: BlockIndex.Index) !void {
             }
         }
     }
-}
-
-fn eliminateCopyChain(
-    decl_idx: DeclIndex.Index,
-    copy_dict: *std.AutoHashMap(DeclIndex.Index, DeclIndex.Index)
-) !DeclIndex.Index {
-    if(copy_dict.get(decl_idx)) |retval| { // Copy decl has already been removed
-        return retval;
-    }
-    const decl = decls.get(decl_idx);
-    if(decl.instr == .copy) {
-        const retval = try eliminateCopyChain(decl.instr.copy, copy_dict);
-        try copy_dict.put(decl_idx, retval);
-        decl.instr = .{.undefined = {}};
-        return retval;
-    }
-    return decl_idx;
-}
-
-fn eliminateCopyOperands(
-    operand: *DeclIndex.Index,
-    copy_dict: *std.AutoHashMap(DeclIndex.Index, DeclIndex.Index)
-) !void {
-    operand.* = try eliminateCopyChain(operand.*, copy_dict);
 }
 
 fn eliminateDeadBlocks(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
@@ -861,26 +845,6 @@ fn eliminateDeadStackStores(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bo
             did_something = true;
         }
         stores_array.deinit(alloc);
-    }
-
-    return did_something;
-}
-
-fn eliminateCopies(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
-    var copy_dict = std.AutoHashMap(DeclIndex.Index, DeclIndex.Index).init(alloc);
-    var did_something = false;
-
-    for(fn_blocks.items) |block| {
-        var current_decl = blocks.get(block).first_decl;
-        while(decls.getOpt(current_decl)) |decl| : (current_decl = decl.next) {
-            var ops = decl.instr.operands();
-            while(ops.next()) |op| {
-                try eliminateCopyOperands(op, &copy_dict);
-            }
-            if(decls.getIndex(decl) != try eliminateCopyChain(decls.getIndex(decl), &copy_dict)) {
-                did_something = true;
-            }
-        }
     }
 
     return did_something;
@@ -1507,6 +1471,21 @@ pub fn eliminateTrivialLoads(decl_idx: DeclIndex.Index) !bool {
     return did_something;
 }
 
+fn stopUsingCopies(decl_idx: DeclIndex.Index) !bool {
+    const decl = decls.get(decl_idx);
+    if(decl.instr == .copy) return false;
+
+    var did_something = false;
+    var ops = decl.instr.operands();
+    while(ops.next()) |op| {
+        switch(decls.get(op.*).instr) {
+            .copy => |c| op.* = c,
+            else => {},
+        }
+    }
+    return did_something;
+}
+
 pub fn insertBefore(before: DeclIndex.Index, instr: DeclInstr) !DeclIndex.Index {
     const retval = blk: {
         const bdecl = decls.get(before);
@@ -2024,11 +2003,11 @@ pub fn dumpBlock(
         if(adecl.sema_decl != .none) {
             std.debug.print(" (sema decl ${d})", .{@enumToInt(adecl.sema_decl)});
         }
-        if(adecl.reg_alloc_value) |reg| {
+        if(adecl.reg_alloc_value[0]) |reg| {
             std.debug.print(" ({s})", .{backends.current_backend.register_name(reg)});
         }
         std.debug.print(" = ", .{});
-        if(decl.instr.isValue()) {
+        if(decl.instr.numValues() == 1) {
             std.debug.print("{s} ", .{@tagName(decl.instr.getOperationType())});
         }
         switch(decl.instr) {
@@ -2109,6 +2088,7 @@ pub fn dumpBlock(
             .store_constant => |store| std.debug.print("store(${d}, #{d})\n", .{@enumToInt(store.dest), store.value}),
             .incomplete_phi => std.debug.print("<incomplete phi node>\n", .{}),
             .copy => |c| std.debug.print("copy(${d})\n", .{@enumToInt(c)}),
+            .pick => |p| std.debug.print("pick(${d}#{d})\n", .{@enumToInt(p.src), p.idx}),
             .@"if" => |if_instr| {
                 std.debug.print("if(${d}, Block#{d}, Block#{d})\n", .{
                     @enumToInt(if_instr.condition),
