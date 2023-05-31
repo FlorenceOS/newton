@@ -11,7 +11,7 @@ fn fd_path(fd: u32) |out_buf| [MAX_PATH]u8 {
     std.os.syscalls.readlink(
         @ptr_to_int(fd_symlink_path.&),
         @ptr_to_int(out_buf),
-        MAX_PATH
+        MAX_PATH,
     );
 }
 
@@ -56,5 +56,10 @@ fn dir_name(path: *const u8) |out_buf| [MAX_PATH]u8 {
 }
 
 fn self_path() |out_buf| [MAX_PATH]u8 {
-    std.os.syscalls.readlink_all("/proc/self/exe".&, @int_to_ptr(*u8, @ptr_to_int(out_buf)), MAX_PATH);
+    std.os.syscalls.readlink(@ptr_to_int("/proc/self/exe".&), @ptr_to_int(out_buf), MAX_PATH);
+}
+
+fn self_dir() |out_buf| [MAX_PATH]u8 {
+    const self = self_path();
+    out_buf.* = dir_name(@int_to_ptr(@ptr_to_int(self.&)));
 }
