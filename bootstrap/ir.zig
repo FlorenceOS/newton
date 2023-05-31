@@ -607,6 +607,10 @@ fn checkTrivialPhi(phi_decl: DeclIndex.Index) ??DeclIndex.Index {
 
     while(phi_operands.getOpt(current_operand)) |op| : (current_operand = op.next) {
         if(op.decl == phi_decl) continue;
+        switch(decls.get(op.decl).instr) {
+            .undefined => continue,
+            else => { },
+        }
         if(only_decl) |only| {
             if(only != op.decl) return null;
         } else {
