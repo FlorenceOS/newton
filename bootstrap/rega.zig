@@ -475,6 +475,12 @@ pub fn doRegAlloc(
                 }
             }
 
+            try decls.put(arena.allocator(), iidx, .{
+                .ins = try alive.clone(arena.allocator()),
+                .outs = outs,
+                .conflicts = [1]RegSet{.{}} ** ir.InstrMaxRegs,
+            });
+
             switch(instr.instr) {
                 .pick => |p| {
                     try alive.put(arena.allocator(), DeclReg.encode(p.src, p.idx), {});
@@ -487,12 +493,6 @@ pub fn doRegAlloc(
                     }
                 },
             }
-
-            try decls.put(arena.allocator(), iidx, .{
-                .ins = try alive.clone(arena.allocator()),
-                .outs = outs,
-                .conflicts = [1]RegSet{.{}} ** ir.InstrMaxRegs,
-            });
         }
     }
 
