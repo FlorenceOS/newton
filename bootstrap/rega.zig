@@ -470,9 +470,7 @@ pub fn doRegAlloc(
             for(0..instr.instr.numValues()) |v| {
                 if(instr.instr.isFlagsValue()) break;
                 const reg = DeclReg.encode(uf.find(iidx), @truncate(ir.RegIndex, v));
-                if(instr.reg_alloc_value[v] == null) {
-                    _ = alive.swapRemove(reg);
-                }
+                _ = alive.swapRemove(reg);
             }
 
             try decls.put(arena.allocator(), iidx, .{
