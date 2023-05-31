@@ -568,7 +568,35 @@ pub fn doRegAlloc(
     }
 
     var reg_retries = RegSet{};
-    while(reg_work_list.count() > 0 or reg_retries.count() > 0) {
+    while(reg_work_list.count() > 0) {
+        var operand_reused = false;
+        // See if we can tell copied parameters to use our output register
+        for(block_list.items) |blk_idx| {
+            const blk = ir.blocks.get(blk_idx);
+            var curr_instr = blk.first_decl;
+            while(ir.decls.getOpt(curr_instr)) |instr| : (curr_instr = instr.next) {
+                switch(instr.instr) {
+                    .pick, .phi => continue,
+                    else => {
+                        const reg = instr.reg_alloc_value[0] orelse continue;
+                        var it = instr.instr.operands();
+                        while(it.next()) |op| {
+                            if(!isDeclInReg(op.*)) continue;
+                            const opr = DeclReg.encode(uf.find(op.*), 0);
+                            if(opr.alloced_reg() == reg) break;
+                            if(tryAllocReg(opr.decl(), reg, &decls.get(opr.decl()).?.conflicts[0])) {
+                                operand_reused = true;
+                                _ = reg_work_list.swapRemove(opr);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if(operand_reused) continue;
+
         // See if we can reuse any registers
         while(reg_work_list.popOrNull()) |rw| {
             var output = rw.key;
