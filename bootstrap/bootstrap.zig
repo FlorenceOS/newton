@@ -119,7 +119,7 @@ pub fn main() !void {
         const root_scope = sema.scopes.get(root_struct.scope);
         const main_decl = (try root_scope.lookupDecl("main")).?;
         try main_decl.analyze();
-        const main_call = try sema.callFunctionWithArgs(main_decl.init_value, null, .none, null);
+        const main_fn = try sema.generateExternRef(main_decl.init_value);
         std.debug.print("{any}\n", .{sema.values.get(main_decl.init_value)});
 
         try backends.writer.output_bytes.appendNTimes(backends.writer.allocator, 0xCC, 6);
@@ -127,7 +127,7 @@ pub fn main() !void {
             try backends.writer.output_bytes.append(backends.writer.allocator, 0xCC);
         }
 
-        try backends.writer.writeFunction(main_call.callee);
+        try backends.writer.writeFunction(main_fn);
         var elf_writer = try elf.Writer.init(std.heap.page_allocator);
         var name_buf = try std.ArrayList(u8).initCapacity(std.heap.page_allocator, 4096);
         for(sema.decls.elements.items[1..]) |decl| {
@@ -170,7 +170,7 @@ pub fn main() !void {
                 },
             }
         }
-        const main_offset = backends.writer.placed_functions.get(main_call.callee).?;
+        const main_offset = backends.writer.placed_functions.get(main_fn).?;
         var file = try std.fs.cwd().createFile("a.out", .{.mode = 0o777});
         defer file.close();
         try elf_writer.finalize(&file, backends.writer.output_bytes.items, main_offset);

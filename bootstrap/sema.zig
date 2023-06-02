@@ -1895,6 +1895,42 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
     }
 }
 
+var undefined_arg_list: ast.ExprIndex.OptIndex = .none;
+var num_undefineds: usize = 0;
+
+// Call a function with no comptime parameters with a bunch of undefined values.
+// Used to analyze a function without a call site.
+// Can be used for exporting extern function decls, entry points or function pointers.
+pub fn generateExternRef(fn_idx: ValueIndex.Index) !InstantiatedFunction {
+    const func = values.get(fn_idx).function;
+
+    var argument_count: usize = 0;
+
+    var curr_param = scopes.get(func.generic_param_scope).first_decl;
+    while(decls.getOpt(curr_param)) |param| : (curr_param = param.next) {
+        std.debug.assert(!param.comptime_param);
+        argument_count += 1;
+    }
+
+    while(num_undefineds < argument_count) {
+        undefined_arg_list = ast.ExprIndex.toOpt(try ast.expressions.insert(.{.function_argument = .{
+            .value = .undefined,
+            .next = undefined_arg_list,
+        }}));
+        num_undefineds += 1;
+    }
+
+    var arg_list = undefined_arg_list;
+    var arg_list_count = num_undefineds;
+    while(argument_count < arg_list_count) {
+        arg_list = ast.expressions.getOpt(arg_list).?.function_argument.next;
+        arg_list_count -= 1;
+    }
+
+    const result = try callFunctionWithArgs(fn_idx, @as(ScopeIndex.Index, undefined), arg_list, null);
+    return result.callee;
+}
+
 pub const Function = struct {
     ast_function: ast.FunctionIndex.Index,
     captures_return: bool,
