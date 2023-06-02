@@ -577,6 +577,14 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
                 0x80 | boolToU8(op_t != .u8),
             }, opTypeImm(op_t, imm), false);
         },
+        .bit_or_constant => |op| {
+            const op_t = decl.instr.getOperationType();
+            const imm = std.mem.asBytes(&op.rhs);
+            try mov(writer, uf, op_t, decl_idx, op.lhs, true);
+            try writeOperandReg(writer, uf, op_t, decl_idx, 1, &.{
+                0x80 | boolToU8(op_t != .u8),
+            }, opTypeImm(op_t, imm), false);
+        },
         .inplace_add_constant => |op| {
             const op_t = decl.instr.getOperationType();
             if(op.rhs == 1) {
