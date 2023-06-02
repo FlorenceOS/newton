@@ -230,6 +230,11 @@ fn promote(vidx: *ValueIndex.Index, target_tidx: TypeIndex.Index, is_assign: boo
     const value_ty = types.get(try decayValueType(vidx.*));
     const ty = types.get(target_tidx);
 
+    if(value.* == .undefined) {
+        vidx.* = try values.addDedupLinear(.{.undefined = target_tidx});
+        return;
+    }
+
     if(ty.* == .pointer) {
         const child_type = types.get(ty.pointer.child);
         switch(value_ty.*) {
@@ -299,7 +304,6 @@ fn promote(vidx: *ValueIndex.Index, target_tidx: TypeIndex.Index, is_assign: boo
             );
         },
         .bool, .type, .void => if(value_ty != ty) return error.IncompatibleTypes,
-        .undefined => vidx.* = try values.addDedupLinear(.{.undefined = target_tidx}),
         else => |other| {
             if(std.meta.eql(ty.*, value_ty.*)) return;
             std.debug.panic("TODO {any} -> {any}", .{other, ty.*});
