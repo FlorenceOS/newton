@@ -1692,7 +1692,7 @@ pub const Value = union(enum) {
             .undefined => {}, // TODO: .bss
             .unsigned_int, .signed_int => |*i| { // TODO: This assumes little endian
                 const num_bytes = @divTrunc(i.bits + 7, 8);
-                @memcpy(backends.writer.output_bytes.items[offset..][0..num_bytes], std.mem.asBytes(&i.value)[0..num_bytes]);
+                std.mem.copy(u8, backends.writer.output_bytes.items[offset..][0..num_bytes], std.mem.asBytes(&i.value)[0..num_bytes]);
             },
             .type_init => |ti| {
                 const ttyp = TypeIndex.unwrap(ti.init_type).?;
