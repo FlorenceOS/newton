@@ -1449,7 +1449,10 @@ fn semaASTExpr(
                     }});
                 }
             }
-            break :blk try values.insert(.{.type_init = til.first_value});
+            break :blk try values.insert(.{.type_init = .{
+                .init_type = TypeIndex.toOpt(target_type),
+                .first_value = til.first_value,
+            }});
         },
         .block_expression => |ast_blk| blk: {
             const new_scope_idx = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx)});
@@ -1616,7 +1619,10 @@ pub const Value = union(enum) {
     function: Function,
     discard_underscore,
     empty_tuple,
-    type_init: ast.TypeInitValueIndex.OptIndex,
+    type_init: struct {
+        init_type: TypeIndex.OptIndex,
+        first_value: ast.TypeInitValueIndex.OptIndex,
+    },
 
     bound_fn: struct {
         callee: ValueIndex.Index,
@@ -1661,7 +1667,7 @@ pub const Value = union(enum) {
             .signed_int => |int| try types.addDedupLinear(.{.signed_int = int.bits}),
             .runtime => |rt| values.get(rt.value_type).type_idx,
             .decl_ref => |dr| return values.get(decls.get(dr).init_value).getType(),
-            .type_init => return types.addDedupLinear(.{.type_of_value = values.getIndex(self)}),
+            .type_init => |ti| return TypeIndex.unwrap(ti.init_type) orelse try types.addDedupLinear(.{.type_of_value = values.getIndex(self)}),
             .function => |func| {
                 std.debug.assert(!func.hasComptimeParams());
                 var param_builder = type_init_values.builder();
@@ -1681,25 +1687,33 @@ pub const Value = union(enum) {
         };
     }
 
-    pub fn toBytes(self: *@This()) !usize {
-        try self.analyze();
-        const retval = backends.writer.currentOffset();
+    fn writeBytesAtOffset(self: *@This(), offset: usize) !void {
         switch(self.*) {
-            .unsigned_int, .signed_int => |*i| {
+            .undefined => {}, // TODO: .bss
+            .unsigned_int, .signed_int => |*i| { // TODO: This assumes little endian
                 const num_bytes = @divTrunc(i.bits + 7, 8);
-                // TODO: This assumes little endian
-                try backends.writer.write(std.mem.asBytes(&i.value)[0..num_bytes]);
+                @memcpy(backends.writer.output_bytes.items[offset..][0..num_bytes], std.mem.asBytes(&i.value)[0..num_bytes]);
             },
-            .undefined => { // TODO: .bss
-                const num_bytes = try types.get(try self.getType()).getSize();
-                var i: usize = 0;
-                while(i < num_bytes) : (i += 1) {
-                    try backends.writer.writeInt(u8, 0xAA);
+            .type_init => |ti| {
+                const ttyp = TypeIndex.unwrap(ti.init_type).?;
+                const typed_til = try typeTil(ti.first_value, ttyp);
+                var init_type = structs.get(types.get(ttyp).struct_idx);
+                for(typed_til.slice()) |value| {
+                    switch(value.assignment) {
+                        .default => |val| try values.get(val).writeBytesAtOffset(try init_type.offsetOf(@intToEnum(StructFieldIndex.Index, value.identifier))),
+                        .normal => unreachable, // FUCK YOU !!   @!#)IU(#@! )(UI# IJ)@!
+                    }
                 }
             },
             else => |other| std.debug.panic("TODO: Get bytes from {s} (type {any})", .{@tagName(other), types.get(try self.getType())}),
         }
-        return retval;
+    }
+
+    pub fn toBytes(self: *@This()) !usize {
+        const offset = backends.writer.currentOffset();
+        try backends.writer.output_bytes.appendNTimes(backends.writer.allocator, 0xAA, try types.get(try self.getType()).getSize());
+        try self.writeBytesAtOffset(offset);
+        return offset;
     }
 
     pub fn writeTo(self: @This(), writer: anytype) !void {
