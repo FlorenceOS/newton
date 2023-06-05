@@ -43,6 +43,7 @@ pub const abis = struct {
     pub const sysv = backends.Abi{
         .return_regs = &.{registers.rax, registers.rdx},
         .param_regs = &.{registers.rdi, registers.rsi, registers.rdx, registers.rcx, 8, 9},
+        .ptr_param_regs = &.{backends.any_register, registers.rdi, registers.rsi, registers.rdx, registers.rcx, 8, 9},
         .caller_saved_regs = &.{registers.rax, registers.rdi, registers.rsi, registers.rdx, registers.rcx, 8, 9, 10, 11},
     };
 };
@@ -228,6 +229,9 @@ fn writeOperandReg(
             .reference_wrap => return writeRegIndirect(writer, op_t, opcodes, uf.findReg(mr.pointer_value).?, reg, mr.pointer_value_offset, immediate, rm_reg_is_reg),
             else => unreachable,
         }
+    } else if(rm_decl.instr == .function_ref) {
+        try writeRipRelative(writer, op_t, opcodes, reg, 0, immediate, rm_reg_is_reg);
+        try writer.addFunctionRelocation(rm_decl.instr.function_ref, .{.output_offset = writer.currentOffset() - 4, .relocation_type = .rel32_post_0});
     } else {
         return writeDirect(writer, op_t, opcodes, uf.findRegByPtr(rm_decl).?, reg, immediate, rm_reg_is_reg);
     }
@@ -384,7 +388,7 @@ fn writeLeaveFunction(writer: *backends.Writer, used_registers: []const u8, leav
 fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.UnionFind, used_registers: []const u8) !?ir.BlockIndex.Index {
     const decl = ir.decls.get(decl_idx);
     switch(decl.instr) {
-        .param_ref, .stack_ref, .undefined, .clobber, .global_ref, .reference_wrap,
+        .param_ref, .stack_ref, .undefined, .clobber, .global_ref, .function_ref, .reference_wrap,
         => {},
         .enter_function => |stack_size| {
             for(used_registers) |reg| {
@@ -716,6 +720,9 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
         .function_call => |fcall| {
             try writer.writeInt(u8, 0xE8);
             try writer.writeRelocatedFunction(fcall.callee, .rel32_post_0);
+        },
+        .function_ptr_call => |fcall| {
+            try writeDirect(writer, .u32, &.{0xFF}, uf.findReg(fcall.callee).?, 2, &.{}, false);
         },
         .tail_call => |tcall| {
             try writeLeaveFunction(writer, used_registers, ir.decls.get(tcall.tail).instr.leave_function);

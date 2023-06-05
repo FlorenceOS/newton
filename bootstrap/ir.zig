@@ -93,6 +93,7 @@ pub const DeclInstr = union(enum) {
     },
     stack_ref: struct { offset: u32, orig_offset: u32, type: sema.PointerType },
     global_ref: struct { offset: u32, orig_offset: u32, type: sema.PointerType },
+    function_ref: sema.InstantiatedFunction,
     load_int_constant: struct {
         value: u64,
         type: InstrType,
@@ -114,6 +115,11 @@ pub const DeclInstr = union(enum) {
     function_call: struct {
         callee: sema.InstantiatedFunction,
         first_argument: FunctionArgumentIndex.OptIndex,
+    },
+    function_ptr_call: struct {
+        callee: DeclIndex.Index,
+        first_argument: FunctionArgumentIndex.OptIndex,
+        sema_return_type: sema.TypeIndex.Index,
     },
     tail_call: struct {
         callee: sema.InstantiatedFunction,
@@ -217,6 +223,7 @@ pub const DeclInstr = union(enum) {
             bounded_iterator: std.BoundedArray(*DeclIndex.Index, 2),
             arg_iterator: ?*FunctionArgument,
             phi_iterator: ?*PhiOperand,
+            function_ptr_call_iterator: DeclIndex.Index,
         },
 
         pub fn next(self: *@This()) ?*DeclIndex.Index {
@@ -237,7 +244,13 @@ pub const DeclInstr = union(enum) {
                     } else {
                         return null;
                     }
-                }
+                },
+                .function_ptr_call_iterator => |decl| {
+                    const fcall = &decls.get(decl).instr.function_ptr_call;
+                    const result = &fcall.callee;
+                    self.value = .{.arg_iterator = function_arguments.getOpt(fcall.first_argument)};
+                    return result;
+                },
             }
         }
     };
@@ -250,6 +263,7 @@ pub const DeclInstr = union(enum) {
 
             .phi => |p| return .{.value = .{.phi_iterator = phi_operands.getOpt(p)}},
             .function_call => |fcall| return .{.value = .{.arg_iterator = function_arguments.getOpt(fcall.first_argument)}},
+            .function_ptr_call => return .{.value = .{.function_ptr_call_iterator = decls.getIndex(@fieldParentPtr(Decl, "instr", self))}},
             .tail_call => |tcall| return .{.value = .{.arg_iterator = function_arguments.getOpt(tcall.first_argument)}},
             .syscall => |farg| return .{.value = .{.arg_iterator = function_arguments.getOpt(farg)}},
 
@@ -291,7 +305,7 @@ pub const DeclInstr = union(enum) {
             .@"if" => |*instr| bounded_result.value.bounded_iterator.appendAssumeCapacity(&instr.condition),
             .leave_function => |*value| bounded_result.value.bounded_iterator.appendAssumeCapacity(&value.value),
 
-            .param_ref, .stack_ref, .global_ref,
+            .param_ref, .stack_ref, .global_ref, .function_ref,
             .load_int_constant, .load_bool_constant,
             .undefined, .goto, .enter_function,
             .@"unreachable",
@@ -326,7 +340,7 @@ pub const DeclInstr = union(enum) {
     pub fn isVolatile(self: *const @This()) bool {
         switch(self.*) {
             .incomplete_phi => unreachable,
-            .@"if", .leave_function, .goto, .enter_function, .store, .store_constant, .function_call, .syscall,
+            .@"if", .leave_function, .goto, .enter_function, .store, .store_constant, .function_call, .function_ptr_call, .syscall,
             .inplace_add, .inplace_sub, .inplace_multiply, .inplace_divide, .inplace_modulus,
             .inplace_shift_left, .inplace_shift_right, .inplace_bit_and, .inplace_bit_or, .inplace_bit_xor,
             .inplace_add_constant, .inplace_sub_constant, .inplace_multiply_constant, .inplace_divide_constant, .inplace_modulus_constant,
@@ -340,7 +354,7 @@ pub const DeclInstr = union(enum) {
     pub fn numValues(self: *const @This()) RegIndex {
         switch(self.*) {
             .incomplete_phi => unreachable,
-            .@"if", .leave_function, .goto, .stack_ref, .global_ref, .enter_function,
+            .@"if", .leave_function, .goto, .stack_ref, .global_ref, .function_ref, .enter_function,
             .store, .store_constant, .reference_wrap,
             .inplace_add, .inplace_sub, .inplace_multiply, .inplace_divide, .inplace_modulus,
             .inplace_shift_left, .inplace_shift_right, .inplace_bit_and, .inplace_bit_or, .inplace_bit_xor,
@@ -383,7 +397,7 @@ pub const DeclInstr = union(enum) {
             .zero_extend, .sign_extend, .truncate,
             => |cast| return cast.type,
             .clobber => return .u64,
-            .addr_of, .stack_ref, .global_ref,
+            .addr_of, .stack_ref, .global_ref, .function_ref,
             => return backends.current_backend.pointer_type,
             .reference_wrap => |rr| return rr.instrType(),
             .add, .sub, .multiply, .divide, .modulus,
@@ -405,6 +419,7 @@ pub const DeclInstr = union(enum) {
                 const rt = func.instantiations.items[fcall.callee.instantiation].return_type;
                 return typeFor(sema.values.get(rt).type_idx);
             },
+            .function_ptr_call => |fcall| return typeFor(fcall.sema_return_type),
             .tail_call => return .u64,
             .syscall, .undefined => return .u64,
             .store => |val| return decls.get(val.value).instr.getOperationType(),
@@ -1713,8 +1728,9 @@ const IRWriter = struct {
             .function_call => |fcall| {
                 var builder = function_arguments.builder();
                 var curr_arg = fcall.first_arg;
-                const will_inline = fcall.callee.function_value != .syscall_func and
-                    self.attemptInlineFunctionPre(fcall.callee);
+                const will_inline = fcall.callee != .runtime and
+                    fcall.callee.instantiation.function_value != .syscall_func and
+                    self.attemptInlineFunctionPre(fcall.callee.instantiation);
                 while(sema.expressions.getOpt(curr_arg)) |arg| : (curr_arg = arg.function_arg.next) {
                     const farg = arg.function_arg;
                     var value = try self.writeValue(farg.value);
@@ -1727,14 +1743,19 @@ const IRWriter = struct {
                     }
                     _ = try builder.insert(.{.value = copy });
                 }
-                if(fcall.callee.function_value == .syscall_func) return self.emit(.{.syscall = builder.first});
-                if(will_inline) {
-                    return self.attemptInlineFunctionCommit(fcall.callee);
+                if(fcall.callee == .instantiation and fcall.callee.instantiation.function_value == .syscall_func) {
+                    return self.emit(.{.syscall = builder.first});
+                } else if(will_inline) {
+                    return self.attemptInlineFunctionCommit(fcall.callee.instantiation);
                 }
-                return self.emit(.{.function_call = .{
-                    .callee = fcall.callee,
-                    .first_argument = builder.first,
-                }});
+                switch(fcall.callee) {
+                    .instantiation => |inst| return self.emit(.{.function_call = .{.callee = inst, .first_argument = builder.first}}),
+                    .runtime => |value| return self.emit(.{.function_ptr_call = .{
+                        .callee = try self.writeValue(value),
+                        .first_argument = builder.first,
+                        .sema_return_type = sema.values.get(sema.types.get(sema.types.get(try sema.values.get(value).getType()).pointer.child).function.return_type).type_idx,
+                    }}),
+                }
             },
             .global => |offref| return self.emit(.{.global_ref = .{
                 .orig_offset = offref.offset,
@@ -1799,6 +1820,7 @@ const IRWriter = struct {
                 }});
             },
             .undefined => return self.emit(.{.undefined = {}}),
+            .function => return self.emit(.{.function_ref = .{.function_value = value_idx, .instantiation = 0}}),
             else => |val| std.debug.panic("Unhandled ssaing of value {s}", .{@tagName(val)}),
         }
     }
@@ -2018,6 +2040,7 @@ pub fn dumpBlock(
             .param_ref => |p| std.debug.print("param({d})\n", .{p.param_idx}),
             .stack_ref => |p| std.debug.print("stack({d})\n", .{p.offset}),
             .global_ref => |p| std.debug.print("global({d})\n", .{p.offset}),
+            .function_ref => |p| std.debug.print("function(${d}#{d})\n", .{@enumToInt(p.function_value), p.instantiation}),
             .addr_of => |p| std.debug.print("addr_of(${d})\n", .{@enumToInt(p)}),
             .enter_function => |stack_size| std.debug.print("enter_function({d})\n", .{stack_size}),
             .leave_function => |leave| std.debug.print("leave_function(${d})\n", .{@enumToInt(leave.value)}),
@@ -2054,6 +2077,14 @@ pub fn dumpBlock(
                     }
                 }
                 std.debug.print("call({s}", .{try name.?.toSlice()});
+                var ops = decl.instr.operands();
+                while(ops.next()) |op| {
+                    std.debug.print(", ${d}", .{@enumToInt(op.*)});
+                }
+                std.debug.print(")\n", .{});
+            },
+            .function_ptr_call => {
+                std.debug.print("call(<ptr>", .{});
                 var ops = decl.instr.operands();
                 while(ops.next()) |op| {
                     std.debug.print(", ${d}", .{@enumToInt(op.*)});

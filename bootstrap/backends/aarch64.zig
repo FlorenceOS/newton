@@ -35,6 +35,7 @@ pub const abis = struct {
     pub const aarch64 = backends.Abi{
         .return_regs = &.{0, 1, 2, 3, 4, 5, 6, 7},
         .param_regs = &.{0, 1, 2, 3, 4, 5, 6, 7},
+        .ptr_param_regs = &.{backends.any_register, 0, 1, 2, 3, 4, 5, 6, 7},
         .caller_saved_regs = &.{
             0,  1,  2,  3,  4,  5,  6,  7,  8,  9,
             10, 11, 12, 13, 14, 15,

@@ -1,0 +1,9 @@
+const std = @import("std");
+const test_lib = @import("../test_lib.n");
+
+fn main() noreturn {
+    var fptr: *const fn(*const u8) void = std.print.str.&;
+    fptr("Hello world!".&);
+    test_lib.expect_unflushed_output("Hello world!".&, 12);
+    test_lib.pass_test();
+}

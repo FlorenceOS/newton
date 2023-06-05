@@ -214,6 +214,36 @@ fn typeTil(first_value: ast.TypeInitValueIndex.OptIndex, target_type: TypeIndex.
     return result;
 }
 
+fn isPointerCompatible(value_type: *Type, target_type: *Type) bool {
+    if(target_type.* == .anyopaque) return true;
+    if(std.meta.activeTag(value_type.*) != std.meta.activeTag(target_type.*)) return false;
+    if(std.meta.eql(value_type.*, target_type.*)) return true;
+    switch(target_type.*) {
+        .void, .noreturn, .anyopaque, .undefined, .bool, .type, .comptime_int, .reference, .type_of_value,
+        => unreachable,
+
+        .signed_int, .unsigned_int, .struct_idx, .array,
+        => return false,
+
+        .pointer => |ptr| {
+            // TODO: Check pointer alignment
+            if(value_type.pointer.is_volatile != ptr.is_volatile) return false;
+            if(value_type.pointer.is_const and !ptr.is_const) return false;
+            return isPointerCompatible(types.get(value_type.pointer.child), types.get(ptr.child));
+        },
+        .function => |func| {
+            if(value_type.function.return_type != func.return_type) return false;
+            var value_type_param_idx = value_type.function.params;
+            var target_type_param_idx = func.params;
+            while(type_init_values.getOpt(value_type_param_idx)) |value_type_param| : (value_type_param_idx = value_type_param.next) {
+                const target_type_param = type_init_values.getOpt(target_type_param_idx) orelse return false;
+                if(!isPointerCompatible(types.get(values.get(target_type_param.value).type_idx), types.get(values.get(value_type_param.value).type_idx))) return false;
+            }
+            return true;
+        },
+    }
+}
+
 fn promote(vidx: *ValueIndex.Index, target_tidx: TypeIndex.Index, is_assign: bool) !void {
     var value = values.get(vidx.*);
 
@@ -248,16 +278,9 @@ fn promote(vidx: *ValueIndex.Index, target_tidx: TypeIndex.Index, is_assign: boo
                     try values.addDedupLinear(.{.type_idx = target_tidx}),
                 );
             },
-            else => {
-                if(value_ty.pointer.is_volatile == ty.pointer.is_volatile) {
-                    if(value_ty.pointer.child == ty.pointer.child) {
-                        if(!value_ty.pointer.is_const or ty.pointer.is_const) {
-                            return;
-                        }
-                    }
-                }
+            else => if(!isPointerCompatible(value_ty, ty)) {
                 std.debug.panic("Invalid assignment from {any} to pointer type {any}!", .{value_ty.*, ty.*});
-            }
+            },
         }
         return;
     }
@@ -473,8 +496,9 @@ fn evaluateComptimeCall(fn_call: FunctionCall) ValueIndex.Index {
         @panic("TODO: Non-comptime marked parameters in comptime eval of function");
     }
 
-    const callee = fn_call.callee;
+    std.debug.assert(fn_call.callee != .runtime);
 
+    const callee = fn_call.callee.instantiation;
     const instantiation = &values.get(callee.function_value).function.instantiations.items[callee.instantiation];
 
     var curr_stmt = instantiation.body.first_stmt;
@@ -654,11 +678,28 @@ fn semaASTExpr(
         .function_expression => |func_idx| blk: {
             const func = ast.functions.get(func_idx);
             const param_scope_idx = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx)});
+            if(func.body == .none) {
+                var param_builder = type_init_values.builder();
+                var curr_ast_param = func.first_param;
+                while(ast.function_params.getOpt(curr_ast_param)) |ast_param| : (curr_ast_param = ast_param.next) {
+                    _ = try param_builder.insert(.{
+                        .field_name = ast_param.identifier,
+                        .value = try semaASTExpr(scope_idx, ast_param.type, true, .type, null),
+                    });
+                }
+                break :blk try values.insert(.{.type_idx = try types.insert(.{.function = .{
+                    .params = param_builder.first,
+                    .return_type = try semaASTExpr(scope_idx, func.return_type, true, .type, null),
+                }})});
+            } else if(type_hint != null and type_hint.? == .type) {
+                return error.FunctionTypeWithBody;
+            }
+
             const param_scope = scopes.get(param_scope_idx);
             var param_builder = decls.builder();
             var curr_ast_param = func.first_param;
             var function_param_idx: u8 = 0;
-            while(ast.function_params.getOpt(curr_ast_param)) |ast_param| {
+            while(ast.function_params.getOpt(curr_ast_param)) |ast_param| : (curr_ast_param = ast_param.next) {
                 const param_type = try values.insert(.{.unresolved = .{
                     .expression = ast_param.type,
                     .requested_type = .type,
@@ -670,11 +711,10 @@ fn semaASTExpr(
                     .offset = null,
                     .comptime_param = ast_param.is_comptime,
                     .function_param_idx = if(ast_param.is_comptime) null else function_param_idx,
-                    .name = ast_param.identifier,
+                    .name = ast_param.identifier.?,
                     .init_value = try values.insert(.{.runtime = .{.expr = .none, .value_type = param_type}}),
                 });
                 if(!ast_param.is_comptime) function_param_idx += 1;
-                curr_ast_param = ast_param.next;
             }
 
             param_scope.first_decl = param_builder.first;
@@ -807,29 +847,46 @@ fn semaASTExpr(
                         }
                         return_type = .u64_type;
                         break :inner FunctionCall{
-                            .callee = .{
-                                .function_value = .syscall_func,
-                                .instantiation = 0,
-                            },
+                            .callee = .{.instantiation = .{.function_value = .syscall_func, .instantiation = 0}},
                             .first_arg = arg_builder.first,
                         };
                     },
                 },
                 else => inner: {
-                    const callee_idx = try semaASTExpr(scope_idx, call.callee, true, null, null);
+                    const callee_idx = try semaASTExpr(scope_idx, call.callee, false, null, null);
                     const callee = values.get(callee_idx);
-                    // TODO: Runtime functions (function pointers)
                     switch(callee.*) {
                         .function => {
                             const gen = try callFunctionWithArgs(callee_idx, scope_idx, call.first_arg, return_location_ptr);
-                            return_type = callee.function.instantiations.items[gen.callee.instantiation].return_type;
+                            return_type = callee.function.instantiations.items[gen.callee.instantiation.instantiation].return_type;
                             break :inner gen;
                         },
                         .bound_fn => |b| {
                             ast.expressions.get(b.first_arg).function_argument.next = call.first_arg;
                             const gen = try callFunctionWithArgs(b.callee, scope_idx, ast.ExprIndex.toOpt(b.first_arg), return_location_ptr);
-                            return_type = values.get(b.callee).function.instantiations.items[gen.callee.instantiation].return_type;
+                            return_type = values.get(b.callee).function.instantiations.items[gen.callee.instantiation.instantiation].return_type;
                             break :inner gen;
+                        },
+                        .decl_ref,
+                        .runtime => {
+                            const value_type = types.get(try callee.getType());
+                            const function_type = types.get(value_type.pointer.child);
+                            return_type = function_type.function.return_type;
+                            var runtime_params_builder = expressions.builderWithPath("function_arg.next");
+                            var curr_param_idx = function_type.function.params;
+                            var curr_arg = call.first_arg;
+                            while(ast.expressions.getOpt(curr_arg)) |ast_arg| {
+                                const func_arg = ast_arg.function_argument;
+                                const curr_param = type_init_values.getOpt(curr_param_idx) orelse return error.TooManyArguments;
+                                _ = try runtime_params_builder.insert(.{.function_arg = .{
+                                    .value = try semaASTExpr(scope_idx, func_arg.value, false, values.get(curr_param.value).type_idx, null),
+                                    .param_decl = undefined,
+                                }});
+                                curr_arg = func_arg.next;
+                                curr_param_idx = curr_param.next;
+                            }
+                            if(type_init_values.getOpt(curr_param_idx) != null) return error.NotEnoughArguments;
+                            break :inner FunctionCall{.callee = .{.runtime = callee_idx}, .first_arg = runtime_params_builder.first};
                         },
                         else => std.debug.panic("Cannot call non-function: {any}", .{callee}),
                     }
@@ -1197,6 +1254,16 @@ fn semaASTExpr(
                         .type_idx = try types.addDedupLinear(.{.pointer = value_type.reference}),
                     });
                 },
+                .function => blk: {
+                    _ = try generateExternRef(operand_idx);
+                    break : blk try values.addDedupLinear(.{
+                        .type_idx = try types.addDedupLinear(.{.pointer = .{
+                            .is_const = true,
+                            .is_volatile = false,
+                            .child = try values.get(operand_idx).getType(),
+                        }}),
+                    });
+                },
                 else => |other| std.debug.panic("Can't take the addr of {s}", .{@tagName(other)}),
             };
 
@@ -1451,6 +1518,10 @@ pub const Type = union(enum) {
     pointer: PointerType,
     reference: PointerType,
     type_of_value: ValueIndex.Index,
+    function: struct {
+        params: TypeInitValueIndex.OptIndex,
+        return_type: ValueIndex.Index,
+    },
     array: struct {
         child: TypeIndex.Index,
         size: u32,
@@ -1471,6 +1542,7 @@ pub const Type = union(enum) {
             },
             .array => |arr| try types.get(arr.child).getSize() * arr.size,
             .struct_idx => |struct_idx| try structs.get(struct_idx).offsetOf(null),
+            .function => 0,
         };
     }
 
@@ -1481,6 +1553,7 @@ pub const Type = union(enum) {
             .bool, .unsigned_int, .signed_int, .pointer, .reference => self.getSize(),
             .struct_idx => |struct_idx| structs.get(struct_idx).getAlignment(),
             .array => |arr| types.get(arr.child).getAlignment(),
+            .function => 0,
         };
     }
 
@@ -1489,6 +1562,7 @@ pub const Type = union(enum) {
             .reference => |r| types.get(r.child).isContainer(),
             .void, .undefined, .comptime_int, .type, .anyopaque,
             .bool, .unsigned_int, .signed_int, .pointer, .noreturn,
+            .function,
             => false,
             .struct_idx, .array, .type_of_value,
             => true,
@@ -1514,6 +1588,7 @@ pub const Type = union(enum) {
                 try types.get(arr.child).writeTo(writer);
             },
             .type_of_value => @panic("TODO: Write out type_of_value"),
+            .function => try writer.print("function_type", .{}),
             .reference => unreachable,
         }
     }
@@ -1587,6 +1662,21 @@ pub const Value = union(enum) {
             .runtime => |rt| values.get(rt.value_type).type_idx,
             .decl_ref => |dr| return values.get(decls.get(dr).init_value).getType(),
             .type_init => return types.addDedupLinear(.{.type_of_value = values.getIndex(self)}),
+            .function => |func| {
+                std.debug.assert(!func.hasComptimeParams());
+                var param_builder = type_init_values.builder();
+                var curr_param = scopes.get(func.generic_param_scope).first_decl;
+                while(decls.getOpt(curr_param)) |param| : (curr_param = param.next) {
+                    _ = try param_builder.insert(.{
+                        .field_name = param.name,
+                        .value = try values.addDedupLinear(.{.type_idx = try values.get(param.init_value).getType()}),
+                    });
+                }
+                return types.insert(.{.function = .{
+                    .params = param_builder.first,
+                    .return_type = try semaASTExpr(func.generic_param_scope, func.generic_return_type, true, .type, null),
+                }});
+            },
             else => |other| std.debug.panic("TODO: Get type of {s}", .{@tagName(other)}),
         };
     }
@@ -1797,10 +1887,7 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
                 std.debug.assert(curr_arg == .none);
 
                 return .{
-                    .callee = .{
-                        .function_value = fn_idx,
-                        .instantiation = @intCast(u32, i),
-                    },
+                    .callee = .{.instantiation = .{.function_value = fn_idx, .instantiation = @intCast(u32, i)}},
                     .first_arg = runtime_params_builder.first,
                 };
             }
@@ -1821,10 +1908,7 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
         );
 
         return .{
-            .callee = .{
-                .function_value = fn_idx,
-                .instantiation = @intCast(u32, instantiation),
-            },
+            .callee = .{.instantiation = .{.function_value = fn_idx, .instantiation = @intCast(u32, instantiation)}},
             .first_arg = runtime_params_builder.first,
         };
     } else {
@@ -1886,10 +1970,7 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
         }
         std.debug.assert(func.instantiations.items.len == 1);
         return .{
-            .callee = .{
-                .function_value = fn_idx,
-                .instantiation = 0,
-            },
+            .callee = .{.instantiation = .{.function_value = fn_idx, .instantiation = 0}},
             .first_arg = runtime_params_builder.first,
         };
     }
@@ -1928,7 +2009,7 @@ pub fn generateExternRef(fn_idx: ValueIndex.Index) !InstantiatedFunction {
     }
 
     const result = try callFunctionWithArgs(fn_idx, @as(ScopeIndex.Index, undefined), arg_list, null);
-    return result.callee;
+    return result.callee.instantiation;
 }
 
 pub const Function = struct {
@@ -2054,7 +2135,10 @@ pub const InstantiatedFunction = struct {
 };
 
 pub const FunctionCall = struct {
-    callee: InstantiatedFunction,
+    callee: union(enum) {
+        instantiation: InstantiatedFunction,
+        runtime: ValueIndex.Index,
+    },
     first_arg: ExpressionIndex.OptIndex,
 };
 

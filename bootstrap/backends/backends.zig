@@ -38,6 +38,7 @@ pub const Os = struct {
 pub const Abi = struct {
     return_regs: []const u8,
     param_regs: []const u8,
+    ptr_param_regs: []const u8,
     caller_saved_regs: []const u8,
 };
 
@@ -155,7 +156,7 @@ pub const Writer = struct {
         return null;
     }
 
-    fn addRelocation(self: *@This(), edge: ir.BlockEdgeIndex.Index, reloc: Relocation) !void {
+    pub fn addRelocation(self: *@This(), edge: ir.BlockEdgeIndex.Index, reloc: Relocation) !void {
         const reloc_target = ir.edges.get(edge).target_block;
         if(self.placed_blocks.get(reloc_target)) |offset| {
             reloc.resolve(self.output_bytes.items, offset);
@@ -168,7 +169,7 @@ pub const Writer = struct {
         }
     }
 
-    fn addFunctionRelocation(self: *@This(), function: sema.InstantiatedFunction, reloc: Relocation) !void {
+    pub fn addFunctionRelocation(self: *@This(), function: sema.InstantiatedFunction, reloc: Relocation) !void {
         if(self.placed_functions.get(function)) |offset| {
             reloc.resolve(self.output_bytes.items, offset);
         } else if(self.enqueued_functions.getPtr(function)) |q| {

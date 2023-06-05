@@ -258,6 +258,16 @@ pub fn doRegAlloc(
                     false,
                     &param_replacement,
                 ),
+                .function_ptr_call => try allocateRegsForInstr(
+                    decl_idx,
+                    0,
+                    backends.current_default_abi.return_regs,
+                    backends.current_default_abi.ptr_param_regs,
+                    backends.current_default_abi.caller_saved_regs,
+                    &.{},
+                    false,
+                    &param_replacement,
+                ),
                 .tail_call => try allocateRegsForInstr(decl_idx, 0, &.{}, backends.current_default_abi.param_regs, &.{}, &.{}, false, &param_replacement),
                 .syscall => try allocateRegsForInstr(
                     decl_idx,
