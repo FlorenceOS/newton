@@ -248,7 +248,7 @@ pub const FunctionExpression = struct {
 };
 
 pub const FunctionParameter = struct {
-    identifier: SourceRef,
+    identifier: ?SourceRef,
     type: ExprIndex.Index,
     next: FunctionParamIndex.OptIndex = .none,
     is_comptime: bool,
@@ -526,7 +526,7 @@ fn dumpNode(node: anytype, indent_level: usize) anyerror!void {
             std.debug.print("fn(", .{});
             var curr_param = node.first_param;
             while(function_params.getOpt(curr_param)) |param| {
-                std.debug.print("{s}: ", .{try param.identifier.toSlice()});
+                if(param.identifier) |ident| std.debug.print("{s}: ", .{try ident.toSlice()});
                 try dumpNode(expressions.get(param.type), indent_level);
                 if(param.next != .none) {
                     std.debug.print(", ", .{});

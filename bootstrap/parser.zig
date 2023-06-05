@@ -112,12 +112,19 @@ fn parseFunctionExpr(self: *@This()) anyerror!ast.FunctionIndex.Index {
     var param_builder = ast.function_params.builder();
     while((try self.peekToken()) != .@")_ch") {
         const is_comptime = (try self.tryConsume(.comptime_keyword)) != null;
-        const ident = try self.expect(.identifier);
-        defer ident.deinit();
-
-        _ = try self.expect(.@":_ch");
+        var ident: ?ast.SourceRef = null;
+        if((try self.peekToken()) == .identifier) {
+            const old_self = self.*;
+            const maybe_ident = try self.expect(.identifier);
+            defer maybe_ident.deinit();
+            if ((try self.tryConsume(.@":_ch")) != null) {
+                ident = self.toAstIdent(maybe_ident);
+            } else {
+                self.* = old_self;
+            }
+        }
         _ = try param_builder.insert(.{
-            .identifier = self.toAstIdent(ident),
+            .identifier = ident,
             .type = try self.parseExpression(null),
             .is_comptime = is_comptime,
         });
@@ -139,7 +146,7 @@ fn parseFunctionExpr(self: *@This()) anyerror!ast.FunctionIndex.Index {
     return ast.functions.insert(.{
         .first_param = param_builder.first,
         .return_type = return_type,
-        .body = try self.parseBlockStatement(),
+        .body = if((try self.peekToken()) == .@"{_ch") try self.parseBlockStatement() else ast.StmtIndex.OptIndex.none,
         .return_location = return_location,
         .is_inline = is_inline,
     });
