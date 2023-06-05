@@ -2,8 +2,6 @@ const std = @import("std");
 
 const backends = @import("backends/backends.zig");
 
-pub const BASE_VADDR = 0x100000;
-
 const SH_NULL = 0;
 const SH_TEXT = 1;
 const SH_SHSTRTAB = 2;
@@ -28,9 +26,10 @@ pub const Writer = struct {
     allocator: std.mem.Allocator,
     symtab: std.ArrayListUnmanaged(std.elf.Elf64_Sym) = .{},
     symstrtab: std.ArrayListUnmanaged(u8) = .{},
+    base_addr: u64,
 
-    pub fn init(allocator: std.mem.Allocator) !@This() {
-        var self: @This() = .{.allocator = allocator};
+    pub fn init(allocator: std.mem.Allocator, base_addr: u64) !@This() {
+        var self: @This() = .{.allocator = allocator, .base_addr = base_addr};
         try self.symtab.append(self.allocator, std.mem.zeroes(std.elf.Elf64_Sym));
         try self.symstrtab.append(self.allocator, 0);
         return self;
@@ -42,7 +41,7 @@ pub const Writer = struct {
             .st_info = if(is_function) 0x2 else 0x1,
             .st_other = 0,
             .st_shndx = SH_TEXT,
-            .st_value = BASE_VADDR + offset,
+            .st_value = self.base_addr + offset,
             .st_size = @intCast(u32, size),
         });
         try self.symstrtab.appendSlice(self.allocator, name);
@@ -68,7 +67,7 @@ pub const Writer = struct {
             .e_type = .EXEC,
             .e_machine = backends.current_backend.elf_machine,
             .e_version = 1,
-            .e_entry = BASE_VADDR + entry,
+            .e_entry = self.base_addr + entry,
             .e_phoff = @offsetOf(File, "phdrs"),
             .e_shoff = @offsetOf(File, "shdrs"),
             .e_flags = 0,
@@ -101,7 +100,7 @@ pub const Writer = struct {
             .p_type = std.elf.PT_LOAD,
             .p_flags = std.elf.PF_R | std.elf.PF_W | std.elf.PF_X,
             .p_offset = code_offset,
-            .p_vaddr = BASE_VADDR,
+            .p_vaddr = self.base_addr,
             .p_paddr = 0x0,
             .p_filesz = code.len,
             .p_memsz = (code.len + 0xFFF) & ~@as(usize, 0xFFF),
@@ -113,7 +112,7 @@ pub const Writer = struct {
             .sh_name = @offsetOf(ShStrTab, "text_name"),
             .sh_type = std.elf.SHT_PROGBITS,
             .sh_flags = std.elf.SHF_ALLOC | std.elf.SHF_WRITE | std.elf.SHF_EXECINSTR,
-            .sh_addr = BASE_VADDR,
+            .sh_addr = self.base_addr,
             .sh_offset = code_offset,
             .sh_size = code.len,
             .sh_link = 0,

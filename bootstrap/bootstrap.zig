@@ -15,6 +15,7 @@ pub fn main() !void {
     var output_path: [:0]const u8 = "a.out";
     var target: [:0]const u8 = "x86_64-linux";
     var root_path: ?[:0]u8 = null;
+    var base_address: u64 = 0x100000;
 
     _ = try parser.parsePackageRootFile("std/lib.n", "std");
 
@@ -36,6 +37,9 @@ pub fn main() !void {
                 const package_root = split_it.next().?;
                 std.debug.assert(split_it.next() == null);
                 _ = try parser.parsePackageRootFile(package_root, package_name);
+            } else if(std.mem.eql(u8, arg, "-base")) {
+                i += 1;
+                base_address = std.fmt.parseUnsigned(u64, std.mem.span(argv[i]), 0) catch unreachable;
             } else {
                 root_path = std.mem.span(argv[i]);
             }
@@ -128,7 +132,7 @@ pub fn main() !void {
         }
 
         try backends.writer.writeFunction(main_fn);
-        var elf_writer = try elf.Writer.init(std.heap.page_allocator);
+        var elf_writer = try elf.Writer.init(std.heap.page_allocator, base_address);
         var name_buf = try std.ArrayList(u8).initCapacity(std.heap.page_allocator, 4096);
         for(sema.decls.elements.items[1..]) |decl| {
             const token = try decl.name.retokenize();
