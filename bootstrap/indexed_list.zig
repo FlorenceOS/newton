@@ -52,8 +52,8 @@ pub fn Indices(comptime IndexType: type, comptime _: type, comptime extra_field_
             return @intToEnum(_Index, @enumToInt(oi));
         }
 
-        pub fn toOpt(i: _Index) _OptIndex {
-            return @intToEnum(_OptIndex, @enumToInt(i));
+        pub fn toOpt(i: ?_Index) _OptIndex {
+            return @intToEnum(_OptIndex, @enumToInt(i orelse return _OptIndex.none));
         }
     };
 }
