@@ -474,7 +474,7 @@ pub fn doRegAlloc(
         var alive = try blocks.get(blk_idx).?.outs.clone(arena.allocator());
         while(ir.decls.getOpt(curr_instr)) |instr| : (curr_instr = instr.prev) {
             const iidx = ir.decls.getIndex(instr);
-            
+
             const outs = try alive.clone(arena.allocator());
 
             for(0..instr.instr.numValues()) |v| {
@@ -552,7 +552,7 @@ pub fn doRegAlloc(
             while(in_it.next()) |in_value| {
                 in_value.key_ptr.dump();
             }
-            
+
             std.debug.print("\n\touts:", .{});
             var out_it = di.value_ptr.outs.iterator();
             while(out_it.next()) |out_value| {
@@ -563,7 +563,7 @@ pub fn doRegAlloc(
                 var cit_it = set.iterator();
                 while(cit_it.next()) |c_value| {
                     c_value.key_ptr.dump();
-                }    
+                }
             }
             std.debug.print("\n", .{});
         }
