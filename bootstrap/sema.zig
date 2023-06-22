@@ -100,6 +100,17 @@ fn decayValueType(vidx: ValueIndex.Index) !TypeIndex.Index {
     }
 }
 
+fn decay(vidx: *ValueIndex.Index) !void {
+    const value = values.get(vidx.*);
+    const value_ty = types.get(try value.getType());
+    if(value_ty.* == .reference) {
+        vidx.* = try values.insert(.{.runtime = .{
+            .expr = value.runtime.expr,
+            .value_type = try values.addDedupLinear(.{.type_idx = value_ty.reference.child}),
+        }});
+    }
+}
+
 fn commonType(lhs_ty: TypeIndex.Index, rhs_ty: TypeIndex.Index) !TypeIndex.Index {
     const lhs = types.get(lhs_ty);
     const rhs = types.get(rhs_ty);
@@ -393,7 +404,8 @@ fn analyzeStatementChain(
                         }}),
                     }),
                 }});
-                const init_value = try semaASTExpr(block_scope_idx, decl.init_value, false, decl_type, return_location_ptr);
+                var init_value = try semaASTExpr(block_scope_idx, decl.init_value, false, decl_type, return_location_ptr);
+                try decay(&init_value);
                 decls.get(new_decl).init_value = init_value;
                 if(decl_type == null) {
                     decl_type = try values.get(init_value).getType();
@@ -853,7 +865,8 @@ fn semaASTExpr(
                     },
                 },
                 else => inner: {
-                    const callee_idx = try semaASTExpr(scope_idx, call.callee, false, null, null);
+                    var callee_idx = try semaASTExpr(scope_idx, call.callee, false, null, null);
+                    try decay(&callee_idx);
                     const callee = values.get(callee_idx);
                     switch(callee.*) {
                         .function => {
