@@ -866,8 +866,7 @@ fn semaASTExpr(
                 },
                 else => inner: {
                     var callee_idx = try semaASTExpr(scope_idx, call.callee, false, null, null);
-                    try decay(&callee_idx);
-                    const callee = values.get(callee_idx);
+                    var callee = values.get(callee_idx);
                     switch(callee.*) {
                         .function => {
                             const gen = try callFunctionWithArgs(callee_idx, scope_idx, call.first_arg, return_location_ptr);
@@ -882,6 +881,8 @@ fn semaASTExpr(
                         },
                         .decl_ref,
                         .runtime => {
+                            try decay(&callee_idx);
+                            callee = values.get(callee_idx);
                             const value_type = types.get(try callee.getType());
                             const function_type = types.get(value_type.pointer.child);
                             return_type = function_type.function.return_type;
