@@ -98,10 +98,10 @@ const PrefixBits = struct {
     rex_x: bool,
     rex_b: bool,
 
-    fn fromOp(operation_type: ir.InstrType, rm: u8, reg: u8, rm_reg_is_reg: bool) @This() {
+    fn fromOp(operation_type: ir.InstrType, rm: u8, reg: u8, rm_is_direct: bool, rm_reg_is_reg: bool) @This() {
         return .{
             .op_size = operation_type == .u16,
-            .force_rex = operation_type == .u8 and (rm >= 4 or (rm_reg_is_reg and reg >= 4)),
+            .force_rex = operation_type == .u8 and ((rm_is_direct and rm >= 4) or (rm_reg_is_reg and reg >= 4)),
             .rex_w = operation_type == .u64,
             .rex_r = reg >= 8,
             .rex_x = false,
@@ -159,7 +159,7 @@ fn writeDirect(
     immediate: []const u8,
     rm_reg_is_reg: bool,
 ) !void {
-    const prefixes = PrefixBits.fromOp(op_t, rm_reg, reg, rm_reg_is_reg);
+    const prefixes = PrefixBits.fromOp(op_t, rm_reg, reg, true, rm_reg_is_reg);
     return writeInstr(writer, prefixes, opcodes, 0b11, @truncate(u3, rm_reg), @truncate(u3, reg), &.{}, immediate);
 }
 
@@ -173,7 +173,7 @@ fn writeRegIndirect(
     immediate: []const u8,
     rm_reg_is_reg: bool,
 ) !void {
-    const prefixes = PrefixBits.fromOp(op_t, rm_reg, reg, rm_reg_is_reg);
+    const prefixes = PrefixBits.fromOp(op_t, rm_reg, reg, false, rm_reg_is_reg);
     std.debug.assert(rm_reg != registers.rsp and rm_reg != 12); // SP and R12 uses SIB+DISP8
     if(offset == 0 and rm_reg != registers.rbp and rm_reg != 13) {
         return writeInstr(writer, prefixes, opcodes, 0b00, @truncate(u3, rm_reg), @truncate(u3, reg), &.{}, immediate);
@@ -193,7 +193,7 @@ fn writeRipRelative(
     immediate: []const u8,
     rm_reg_is_reg: bool,
 ) !void {
-    const prefixes = PrefixBits.fromOp(op_t, registers.rbp, reg, rm_reg_is_reg);
+    const prefixes = PrefixBits.fromOp(op_t, registers.rbp, reg, false, rm_reg_is_reg);
     const instr_len = prefixes.prefixBytes() + opcodes.len + 5 + immediate.len;
     const disp = @intCast(i32, @bitCast(i64, offset -% (writer.currentOffset() + instr_len)));
     return writeInstr(writer, prefixes, opcodes, 0b00, registers.rbp, @truncate(u3, reg), std.mem.asBytes(&disp), immediate);
