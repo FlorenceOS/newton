@@ -164,6 +164,7 @@ const TilAssignment = struct {
     assignment: union (enum) {
         default: ValueIndex.Index,
         normal: ast.ExprIndex.Index,
+        sema: ValueIndex.Index,
     },
 };
 
@@ -1400,10 +1401,9 @@ fn semaASTExpr(
             } else type_hint;
 
             if(target_type) |ttyp| {
+                var typed = try typeTil(til.first_value, ttyp);
                 if(return_location_ptr) |rloc| {
-                    const typed = try typeTil(til.first_value, ttyp);
                     var builder = statements.builder();
-
                     for(typed.slice()) |ass| {
                         var field_type: TypeIndex.Index = undefined;
                         var field_offset: u32 = undefined;
@@ -1447,6 +1447,7 @@ fn semaASTExpr(
                                 field_type,
                                 field_result_location,
                             ),
+                            .sema => unreachable,
                         };
 
                         _ = try builder.insert(.{.value = .{
@@ -1468,12 +1469,26 @@ fn semaASTExpr(
                         }})),
                         .value_type = try values.addDedupLinear(.{.type_idx = ttyp}),
                     }});
+                } else {
+                    for(typed.slice()) |*ass| {
+                        switch(ass.assignment) {
+                            .normal => |expr| {
+                                std.debug.assert(types.get(ttyp).* == .struct_idx);
+                                const field = struct_fields.get(@intToEnum(StructFieldIndex.Index, ass.identifier));
+                                ass.assignment = .{.sema = try semaASTExpr(scope_idx, expr, false, try values.get(field.init_value).getType(), null)};
+                            },
+                            .default => {},
+                            .sema => unreachable,
+                        }
+                    }
+
+                    break :blk try values.insert(.{.typed_til = .{
+                        .init_type = ttyp,
+                        .values = try til_allocator.allocator().dupe(TilAssignment, typed.slice()),
+                    }});
                 }
             }
-            break :blk try values.insert(.{.type_init = .{
-                .init_type = TypeIndex.toOpt(target_type),
-                .first_value = til.first_value,
-            }});
+            break :blk try values.insert(.{.type_init = til.first_value});
         },
         .block_expression => |ast_blk| blk: {
             const new_scope_idx = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx)});
@@ -1640,9 +1655,10 @@ pub const Value = union(enum) {
     function: Function,
     discard_underscore,
     empty_tuple,
-    type_init: struct {
-        init_type: TypeIndex.OptIndex,
-        first_value: ast.TypeInitValueIndex.OptIndex,
+    type_init: ast.TypeInitValueIndex.OptIndex,
+    typed_til: struct {
+        init_type: TypeIndex.Index,
+        values: []TilAssignment,
     },
 
     bound_fn: struct {
@@ -1688,7 +1704,8 @@ pub const Value = union(enum) {
             .signed_int => |int| try types.addDedupLinear(.{.signed_int = int.bits}),
             .runtime => |rt| values.get(rt.value_type).type_idx,
             .decl_ref => |dr| return values.get(decls.get(dr).init_value).getType(),
-            .type_init => |ti| return TypeIndex.unwrap(ti.init_type) orelse try types.addDedupLinear(.{.type_of_value = values.getIndex(self)}),
+            .type_init => return types.addDedupLinear(.{.type_of_value = values.getIndex(self)}),
+            .typed_til => |ti| ti.init_type,
             .function => |func| {
                 std.debug.assert(!func.hasComptimeParams());
                 var param_builder = type_init_values.builder();
@@ -1715,14 +1732,12 @@ pub const Value = union(enum) {
                 const num_bytes = @divTrunc(i.bits + 7, 8);
                 std.mem.copy(u8, backends.writer.output_bytes.items[offset..][0..num_bytes], std.mem.asBytes(&i.value)[0..num_bytes]);
             },
-            .type_init => |ti| {
-                const ttyp = TypeIndex.unwrap(ti.init_type).?;
-                const typed_til = try typeTil(ti.first_value, ttyp);
-                var init_type = structs.get(types.get(ttyp).struct_idx);
-                for(typed_til.slice()) |value| {
+            .typed_til => |ti| {
+                var init_type = structs.get(types.get(ti.init_type).struct_idx);
+                for(ti.values) |value| {
                     switch(value.assignment) {
-                        .default => |val| try values.get(val).writeBytesAtOffset(try init_type.offsetOf(@intToEnum(StructFieldIndex.Index, value.identifier))),
-                        .normal => unreachable, // FUCK YOU !!   @!#)IU(#@! )(UI# IJ)@!
+                        .sema, .default => |val| try values.get(val).writeBytesAtOffset(try init_type.offsetOf(@intToEnum(StructFieldIndex.Index, value.identifier))),
+                        .normal => unreachable,
                     }
                 }
             },
@@ -2238,6 +2253,8 @@ pub const TypeInitValue = struct {
     value: ValueIndex.Index,
     next: TypeInitValueIndex.OptIndex = .none,
 };
+
+var til_allocator = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 
 pub var types: TypeList = undefined;
 pub var values: ValueList = undefined;

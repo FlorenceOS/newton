@@ -1,0 +1,19 @@
+const std = @import("std");
+const test_lib = @import("../test_lib.n");
+
+const Bar = struct {
+    a: u32 = 1337,
+    b: u32,
+};
+
+const Foo = struct {
+    bar: Bar = .{.b = 420},
+};
+
+var foo: Foo = .{};
+
+fn main() noreturn {
+    test_lib.expect_equal(u32, foo.bar.a, 1337);
+    test_lib.expect_equal(u32, foo.bar.b, 420);
+    test_lib.pass_test();
+}
