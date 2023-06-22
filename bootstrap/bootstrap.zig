@@ -175,7 +175,7 @@ pub fn main() !void {
             }
         }
         const main_offset = backends.writer.placed_functions.get(main_fn).?;
-        var file = try std.fs.cwd().createFile("a.out", .{.mode = 0o777});
+        var file = try std.fs.cwd().createFile(output_path, .{.mode = 0o777});
         defer file.close();
         try elf_writer.finalize(&file, backends.writer.output_bytes.items, main_offset);
     } else {
