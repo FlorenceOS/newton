@@ -1138,25 +1138,32 @@ fn semaASTExpr(
         },
         .member_access => |bop| blk: {
             var lhs = try semaASTExpr(scope_idx, bop.lhs, force_comptime_eval, null, null);
+            try decay(&lhs);
             const lhs_value = values.get(lhs);
             const rhs_expr = ast.expressions.get(bop.rhs);
             std.debug.assert(rhs_expr.* == .identifier);
             const token = try rhs_expr.identifier.retokenize();
             defer token.deinit();
             switch(lhs_value.*) {
-                .decl_ref => |dr| {
+                .runtime, .decl_ref => {
                     const lhs_type = types.get(try lhs_value.getType());
+                    const mutable = switch(lhs_value.*) {
+                        .decl_ref => |dr| decls.get(dr).mutable,
+                        else => switch(lhs_type.*) {
+                            .pointer => |pt| !pt.is_const,
+                            else => false,
+                        },
+                    };
                     const lhs_struct = structs.get(switch(lhs_type.*) {
                         .struct_idx => |sidx| sidx,
                         .pointer => |ptr| types.get(ptr.child).struct_idx,
                         else => |other| std.debug.panic("Can't do member access on {any}", .{other}),
                     });
-                    const decl = decls.get(dr);
                     if(try lhs_struct.lookupField(token.identifier_value())) |field| {
                         if(force_comptime_eval) @panic("TODO: Comptime eval field access");
                         const member_ptr = try values.addDedupLinear(.{
                             .type_idx = try types.addDedupLinear(.{.pointer = .{
-                                .is_const = !decl.mutable,
+                                .is_const = !mutable,
                                 .is_volatile = false,
                                 .child = try values.get(field.init_value).getType(),
                             }}),
@@ -1169,7 +1176,7 @@ fn semaASTExpr(
                             try Value.fromExpression(try expressions.insert(.{.addr_of = lhs}), member_ptr);
                         const member_ref = try values.addDedupLinear(.{
                             .type_idx = try types.addDedupLinear(.{.reference = .{
-                                .is_const = !decl.mutable,
+                                .is_const = !mutable,
                                 .is_volatile = false,
                                 .child = try values.get(field.init_value).getType(),
                             }}),
