@@ -475,6 +475,11 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
                 try writeOperandReg(writer, uf, op_t, op.rhs, dest_reg, &.{0x2A | boolToU8(op_t != .u8)}, &.{}, true);
             }
         },
+        .multiply => |op| {
+            std.debug.assert(uf.findReg(op.lhs).? == registers.rax);
+            const op_t = decl.instr.getOperationType();
+            try writeOperandReg(writer, uf, op_t, op.rhs, 4, &.{0xF6 | boolToU8(op_t != .u8)}, &.{}, false);
+        },
         .divide, .modulus => |op| {
             std.debug.assert(uf.findReg(op.lhs).? == registers.rax);
             const op_t = decl.instr.getOperationType();
