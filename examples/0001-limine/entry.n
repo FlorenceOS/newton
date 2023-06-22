@@ -1,0 +1,21 @@
+const std = @import("std");
+
+var fb_request = std.boot.limine.FramebufferRequest{};
+
+fn main() noreturn {
+    var fb = fb_request.response.framebuffers[0];
+    var fb_data = @int_to_ptr(*u8, fb.base);
+    var i: u32 = 0;
+    loop {
+        if (i == 100) {
+            break;
+        }
+        const byte_offset = i * fb.pitch + i * 4;
+        fb_data[byte_offset] = 0xff;
+        fb_data[byte_offset + 1] = 0xff;
+        fb_data[byte_offset + 2] = 0xff;
+        fb_data[byte_offset + 3] = 0xff;
+        i += 1;
+    }
+    loop {}
+}

@@ -1,0 +1,295 @@
+const Magic = struct {
+    a: u64 = 0xc7b1dd30df4c8b88,
+    b: u64 = 0x0a82e883a194f07b,
+    c: u64,
+    d: u64,
+};
+
+const Uuid = struct {
+    a: u32,
+    b: u16,
+    c: u16,
+    d: [8]u8,
+};
+
+// TODO: Enums
+const MediaType = struct {
+    const generic = 0;
+    const optical = 1;
+    const tftp = 2;
+};
+
+const File = struct {
+    revision: u64,
+    address: *u8,
+    size: u64,
+    path: *u8,
+    cmdline: *u8,
+    media_type: u32,
+    unused: u32,
+    tftp_ip: u32,
+    tftp_port: u32,
+    partition_index: u32,
+    mbr_disk_id: u32,
+    gpt_disk_uuid: Uuid,
+    gpt_part_uuid: Uuid,
+    part_uuid: Uuid,
+};
+
+const BootloaderInfoResponse = struct {
+    revision: u64,
+    name: *u8,
+    version: *u8,
+};
+
+const BootloaderInfoRequest = struct {
+    id: Magic = .{.c = 0xf55038d8e2a1202f, .d = 0x279426fcf5f59740},
+    revision: u64 = 0,
+    response: *BootloaderInfoResponse = undefined,
+};
+
+const StackSizeResponse = struct {
+    revision: u64,
+};
+
+const StackSizeRequest = struct {
+    id: Magic = .{.c = 0x224ef0460a8e8926, .d = 0xe1cb0fc25f46ea3d},
+    revision: u64 = 0,
+    response: *StackSizeResponse = undefined,
+    stack_size: u64,
+};
+
+const HhdmResponse = struct {
+    revision: u64,
+    offset: u64,
+};
+
+const HhdmRequest = struct {
+    id: Magic = .{.c = 0x48dcf1cb8ad2b852, .d = 0x63984e959a98244b},
+    revision: u64 = 0,
+    response: *HhdmResponse = undefined,
+};
+
+const FramebufferMemoryModel = struct {
+    const rgb = 1;
+};
+
+const VideoMode = struct {
+    pitch: u64,
+    width: u64,
+    height: u64,
+    bpp: u16,
+    memory_model: u8,
+    red_mask_size: u8,
+    red_mask_shift: u8,
+    green_mask_size: u8,
+    green_mask_shift: u8,
+    blue_mask_size: u8,
+    blue_mask_shift: u8,
+};
+
+const Framebuffer = struct {
+    base: u64,
+    width: u64,
+    height: u64,
+    pitch: u64,
+    bpp: u16,
+    memory_model: u8,
+    red_mask_size: u8,
+    red_mask_shift: u8,
+    green_mask_size: u8,
+    green_mask_shift: u8,
+    blue_mask_size: u8,
+    blue_mask_shift: u8,
+    unused: [7]u8,
+    edid_size: u64,
+    edid: *u8,
+
+    // Response revision 1
+    mode_count: u64,
+    modes: **VideoMode,
+};
+
+const FramebufferResponse = struct {
+    revision: u64,
+    framebuffer_count: u64,
+    framebuffers: **Framebuffer,
+};
+
+const FramebufferRequest = struct {
+    id: Magic = .{.c = 0x9d5827dcd881dd75, .d = 0xa3148604f6fab11b},
+    revision: u64 = 1,
+    response: *FramebufferResponse = undefined,
+};
+
+const SmpInfo = struct {
+    processor_id: u32,
+    lapic_id: u32,
+    reserved: u64,
+    goto_address: *const fn(*SmpInfo) noreturn,
+    extra_argument: u64,
+};
+
+const SmpFlags = struct {
+    const x2apic = 1 << 0;
+};
+
+const SmpResponse = struct {
+    revision: u64,
+    flags: u32,
+    bsp_lapic_id: u32,
+    cpu_count: u64,
+    cpus: **SmpInfo,
+};
+
+const SmpRequest = struct {
+    id: Magic = .{.c = 0x95a67b819a1b857e, .d = 0xa0b61b723b6a73e0},
+    revision: u64 = 0,
+    response: *SmpResponse = undefined,
+    flags: u64 = 0,
+};
+
+const MemoryMapEntryType = struct {
+    const usable = 0;
+    const reserved = 1;
+    const acpi_reclaimable = 2;
+    const acpi_nvs = 3;
+    const bad_memory = 4;
+    const bootloader_reclaimable = 5;
+    const kernel_and_modules = 6;
+    const framebuffer = 7;
+};
+
+const MemoryMapEntry = struct {
+    base: u64,
+    length: u64,
+    kind: u64,
+};
+
+const MemoryMapResponse = struct {
+    revision: u64,
+    entry_count: u64,
+    entries: **MemoryMapEntry,
+};
+
+const MemoryMapRequest = struct {
+    id: Magic = .{.c = 0x67cf3d9d378a806f, .d = 0xe304acdfc50c3c62},
+    revision: u64 = 0,
+    response: *MemoryMapResponse = undefined,
+};
+
+const EntryPointResponse = struct {
+    revision: u64,
+};
+
+const EntryPointRequest = struct {
+    id: Magic = .{.c = 0x13d86c035a1cd3e1, .d = 0x2b0caa89d8f3026a},
+    revision: u64 = 0,
+    response: *EntryPointResponse = undefined,
+    entry: *const fn() noreturn,
+};
+
+const KernelFileResponse = struct {
+    revision: u64,
+    kernel_file: *File,
+};
+
+const KernelFileRequest = struct {
+    id: Magic = .{.c = 0xad97e90e83f1ed67, .d = 0x31eb5d1c5ff23b69},
+    revision: u64 = 0,
+    response: *KernelFileResponse = undefined,
+};
+
+const ModuleResponse = struct {
+    revision: u64,
+    module_count: u64,
+    modules: **File,
+};
+
+const InternalModuleFlags = struct {
+    const required = 1 << 0;
+};
+
+const InternalModule = struct {
+    path: *const u8,
+    cmdline: *const u8,
+    flags: u64,
+};
+
+const ModuleRequest = struct {
+    id: Magic = .{.c = 0x3e7e279702be32af, .d = 0xca1c4f3bd1280cee},
+    revision: u64 = 1,
+    response: *ModuleResponse = undefined,
+
+    // Request revision 1
+    internal_module_count: u64 = 0,
+    internal_modules: *const *const InternalModule = undefined,
+};
+
+const RsdpResponse = struct {
+    revision: u64,
+    address: u64,
+};
+
+const RsdpRequest = struct {
+    id: Magic = .{.c = 0xc5e77b6b397e7b43, .d = 0x27637845accdcf3c},
+    revision: u64 = 0,
+    response: *RsdpResponse = undefined,
+};
+
+const SmbiosResponse = struct {
+    revision: u64,
+    entry32: u64,
+    entry64: u64,
+};
+
+const SmbiosRequest = struct {
+    id: Magic = .{.c = 0x9e9046f11e095391, .d = 0xaa4a520fefbde5ee},
+    revision: u64 = 0,
+    response: *SmbiosResponse = undefined,
+};
+
+const EfiSystemStableResponse = struct {
+    revision: u64,
+    address: *anyopaque,
+};
+
+const EfiSystemTableRequest = struct {
+    id: Magic = .{.c = 0x5ceba5163eaaf6d6, .d = 0x0a6981610cf65fcc},
+    revision: u64 = 0,
+    response: *EfiSystemStableResponse = undefined,
+};
+
+const BootTimeResponse = struct {
+    revision: u64,
+    boot_time: u64,
+};
+
+const BootTimeRequest = struct {
+    id: Magic = .{.c = 0x502746e184c088aa, .d = 0xfbc5ec83e6327893},
+    revision: u64 = 0,
+    response: *BootTimeResponse = undefined,
+};
+
+const KernelAddressResponse = struct {
+    revision: u64,
+    physical_base: u64,
+    virtual_base: u64,
+};
+
+const KernelAddressRequest = struct {
+    id: Magic = .{.c = 0x71ba76863cc55f63, .d = 0xb2644a48c516a487},
+    revision: u64 = 0,
+    response: *KernelAddressResponse = undefined,
+};
+
+const DeviceTreeBlobResponse = struct {
+    revision: u64,
+    dtb: u64,
+};
+
+const DeviceTreeBlobRequest = struct {
+    id: Magic = .{.c = 0xb40ddb48fb54bac7, .d = 0x545081493f81ffb7},
+    revision: u64 = 0,
+    response: *DeviceTreeBlobResponse = undefined,
+};

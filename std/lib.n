@@ -2,6 +2,10 @@ const containers = struct {
     const PinnedVector = @import("containers/pinned_vector.n").PinnedVector;
 };
 
+const boot = struct {
+    const limine = @import("boot/limine.n");
+};
+
 const mem = @import("mem.n");
 
 const os = @import("os.n");
