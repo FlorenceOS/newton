@@ -1,6 +1,6 @@
 const std = @import("std");
 
-fn main() void {
+fn main() noreturn {
     std.print.str("Hello, world!\n".&);
     std.print.flush();
     std.os.syscalls.exit(0);
