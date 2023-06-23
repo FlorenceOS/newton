@@ -1453,7 +1453,7 @@ pub fn eliminateTrivialLoads(decl_idx: DeclIndex.Index) !bool {
             }
 
             if(it_decl.instr.getOperationType() != mr.instrType()) {
-                if(@enumToInt(mr.instrType()) < @enumToInt(it_decl.instr.getOperationType())) {
+                if(@intFromEnum(mr.instrType()) < @intFromEnum(it_decl.instr.getOperationType())) {
                     op_idx.* = try insertBefore(op_idx.*, switch(it_decl.instr) {
                         .store => |store| .{.truncate = .{
                             .value = store.value,
@@ -1604,7 +1604,7 @@ const IRWriter = struct {
         self.current_stack_offset += alignment - 1;
         self.current_stack_offset &= ~@as(u32, alignment - 1);
         self.current_stack_offset += space;
-        self.max_stack_usage = std.math.max(self.max_stack_usage, self.current_stack_offset);
+        self.max_stack_usage = @max(self.max_stack_usage, self.current_stack_offset);
         return self.current_stack_offset;
     }
 
@@ -2011,7 +2011,7 @@ pub fn dumpBlock(
     bb: BlockIndex.Index,
     uf: ?rega.UnionFind,
 ) !void {
-    std.debug.print("Block#{d}:\n", .{@enumToInt(bb)});
+    std.debug.print("Block#{d}:\n", .{@intFromEnum(bb)});
     var current_decl = blocks.get(bb).first_decl;
     while(decls.getOpt(current_decl)) |decl| : (current_decl = decl.next) {
         if(decls.getOpt(decl.next)) |next| {
@@ -2021,13 +2021,13 @@ pub fn dumpBlock(
         }
         if(decl.instr == .clobber) continue;
         std.debug.print("  ", .{});
-        std.debug.print("${d}", .{@enumToInt(current_decl)});
+        std.debug.print("${d}", .{@intFromEnum(current_decl)});
         const adecl = blk: { break :blk (uf orelse break :blk decl).findDeclByPtr(decl); };
         if(adecl != decl) {
-            std.debug.print(" (-> ${d})", .{@enumToInt(decls.getIndex(adecl))});
+            std.debug.print(" (-> ${d})", .{@intFromEnum(decls.getIndex(adecl))});
         }
         if(adecl.sema_decl != .none) {
-            std.debug.print(" (sema decl ${d})", .{@enumToInt(adecl.sema_decl)});
+            std.debug.print(" (sema decl ${d})", .{@intFromEnum(adecl.sema_decl)});
         }
         if(adecl.reg_alloc_value[0]) |reg| {
             std.debug.print(" ({s})", .{backends.current_backend.register_name(reg)});
@@ -2040,34 +2040,34 @@ pub fn dumpBlock(
             .param_ref => |p| std.debug.print("param({d})\n", .{p.param_idx}),
             .stack_ref => |p| std.debug.print("stack({d})\n", .{p.offset}),
             .global_ref => |p| std.debug.print("global({d})\n", .{p.offset}),
-            .function_ref => |p| std.debug.print("function(${d}#{d})\n", .{@enumToInt(p.function_value), p.instantiation}),
-            .addr_of => |p| std.debug.print("addr_of(${d})\n", .{@enumToInt(p)}),
+            .function_ref => |p| std.debug.print("function(${d}#{d})\n", .{@intFromEnum(p.function_value), p.instantiation}),
+            .addr_of => |p| std.debug.print("addr_of(${d})\n", .{@intFromEnum(p)}),
             .enter_function => |stack_size| std.debug.print("enter_function({d})\n", .{stack_size}),
-            .leave_function => |leave| std.debug.print("leave_function(${d})\n", .{@enumToInt(leave.value)}),
+            .leave_function => |leave| std.debug.print("leave_function(${d})\n", .{@intFromEnum(leave.value)}),
             .load_int_constant => |value| std.debug.print("{d}\n", .{value.value}),
-            .reference_wrap => |ref| std.debug.print("deref(${d}, #{d})\n", .{@enumToInt(ref.pointer_value), ref.pointer_value_offset}),
-            .zero_extend, .sign_extend, .truncate => |cast| std.debug.print("{s}(${d})\n", .{@tagName(decl.instr), @enumToInt(cast.value)}),
+            .reference_wrap => |ref| std.debug.print("deref(${d}, #{d})\n", .{@intFromEnum(ref.pointer_value), ref.pointer_value_offset}),
+            .zero_extend, .sign_extend, .truncate => |cast| std.debug.print("{s}(${d})\n", .{@tagName(decl.instr), @intFromEnum(cast.value)}),
             .load_bool_constant => |b| std.debug.print("{}\n", .{b}),
             .undefined => std.debug.print("undefined\n", .{}),
             .@"unreachable" => std.debug.print("unreachable\n", .{}),
-            .load => |p| std.debug.print("load(${d})\n", .{@enumToInt(p.source)}),
-            .clobber => |op| std.debug.print("clobber(${d})\n", .{@enumToInt(op)}),
-            .negate => |op| std.debug.print("-(${d})\n", .{@enumToInt(op)}),
-            .logical_not => |op| std.debug.print("not(${d})\n", .{@enumToInt(op)}),
+            .load => |p| std.debug.print("load(${d})\n", .{@intFromEnum(p.source)}),
+            .clobber => |op| std.debug.print("clobber(${d})\n", .{@intFromEnum(op)}),
+            .negate => |op| std.debug.print("-(${d})\n", .{@intFromEnum(op)}),
+            .logical_not => |op| std.debug.print("not(${d})\n", .{@intFromEnum(op)}),
             inline
             .add, .sub, .multiply, .divide, .modulus,
             .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,
             .inplace_add, .inplace_sub, .inplace_multiply, .inplace_divide, .inplace_modulus,
             .inplace_shift_left, .inplace_shift_right, .inplace_bit_and, .inplace_bit_or, .inplace_bit_xor,
             .less, .less_equal, .greater, .greater_equal, .equals, .not_equal,
-            => |bop, tag| std.debug.print("{s}(${d}, ${d})\n", .{@tagName(tag), @enumToInt(bop.lhs), @enumToInt(bop.rhs)}),
+            => |bop, tag| std.debug.print("{s}(${d}, ${d})\n", .{@tagName(tag), @intFromEnum(bop.lhs), @intFromEnum(bop.rhs)}),
             inline
             .add_constant, .sub_constant, .multiply_constant, .divide_constant, .modulus_constant,
             .shift_left_constant, .shift_right_constant, .bit_and_constant, .bit_or_constant, .bit_xor_constant,
             .inplace_add_constant, .inplace_sub_constant, .inplace_multiply_constant, .inplace_divide_constant, .inplace_modulus_constant,
             .inplace_shift_left_constant, .inplace_shift_right_constant, .inplace_bit_and_constant, .inplace_bit_or_constant, .inplace_bit_xor_constant,
             .less_constant, .less_equal_constant, .greater_constant, .greater_equal_constant, .equals_constant, .not_equal_constant,
-            => |bop, tag| std.debug.print("{s}(${d}, #{d})\n", .{@tagName(tag)[0..@tagName(tag).len-9], @enumToInt(bop.lhs), bop.rhs}),
+            => |bop, tag| std.debug.print("{s}(${d}, #{d})\n", .{@tagName(tag)[0..@tagName(tag).len-9], @intFromEnum(bop.lhs), bop.rhs}),
             .function_call => |fc| {
                 var name: ?ast.SourceRef = null;
                 for(sema.decls.elements.items) |decl_it| {
@@ -2079,7 +2079,7 @@ pub fn dumpBlock(
                 std.debug.print("call({s}", .{try name.?.toSlice()});
                 var ops = decl.instr.operands();
                 while(ops.next()) |op| {
-                    std.debug.print(", ${d}", .{@enumToInt(op.*)});
+                    std.debug.print(", ${d}", .{@intFromEnum(op.*)});
                 }
                 std.debug.print(")\n", .{});
             },
@@ -2087,7 +2087,7 @@ pub fn dumpBlock(
                 std.debug.print("call(<ptr>", .{});
                 var ops = decl.instr.operands();
                 while(ops.next()) |op| {
-                    std.debug.print(", ${d}", .{@enumToInt(op.*)});
+                    std.debug.print(", ${d}", .{@intFromEnum(op.*)});
                 }
                 std.debug.print(")\n", .{});
             },
@@ -2102,7 +2102,7 @@ pub fn dumpBlock(
                 std.debug.print("tail_call({s}", .{try name.?.toSlice()});
                 var ops = decl.instr.operands();
                 while(ops.next()) |op| {
-                    std.debug.print(", ${d}", .{@enumToInt(op.*)});
+                    std.debug.print(", ${d}", .{@intFromEnum(op.*)});
                 }
                 std.debug.print(")\n", .{});
             },
@@ -2114,32 +2114,32 @@ pub fn dumpBlock(
                     if (!first) {
                         std.debug.print(", ", .{});
                     }
-                    std.debug.print("${d}", .{@enumToInt(op.*)});
+                    std.debug.print("${d}", .{@intFromEnum(op.*)});
                     first = false;
                 }
                 std.debug.print(")\n", .{});
             },
-            .store => |store| std.debug.print("store(${d}, ${d})\n", .{@enumToInt(store.dest), @enumToInt(store.value)}),
-            .store_constant => |store| std.debug.print("store(${d}, #{d})\n", .{@enumToInt(store.dest), store.value}),
+            .store => |store| std.debug.print("store(${d}, ${d})\n", .{@intFromEnum(store.dest), @intFromEnum(store.value)}),
+            .store_constant => |store| std.debug.print("store(${d}, #{d})\n", .{@intFromEnum(store.dest), store.value}),
             .incomplete_phi => std.debug.print("<incomplete phi node>\n", .{}),
-            .copy => |c| std.debug.print("copy(${d})\n", .{@enumToInt(c)}),
-            .pick => |p| std.debug.print("pick(${d}#{d})\n", .{@enumToInt(p.src), p.idx}),
+            .copy => |c| std.debug.print("copy(${d})\n", .{@intFromEnum(c)}),
+            .pick => |p| std.debug.print("pick(${d}#{d})\n", .{@intFromEnum(p.src), p.idx}),
             .@"if" => |if_instr| {
                 std.debug.print("if(${d}, Block#{d}, Block#{d})\n", .{
-                    @enumToInt(if_instr.condition),
-                    @enumToInt(edges.get(if_instr.taken).target_block),
-                    @enumToInt(edges.get(if_instr.not_taken).target_block),
+                    @intFromEnum(if_instr.condition),
+                    @intFromEnum(edges.get(if_instr.taken).target_block),
+                    @intFromEnum(edges.get(if_instr.not_taken).target_block),
                 });
             },
             .goto => |goto_edge| {
-                std.debug.print("goto(Block#{d})\n", .{@enumToInt(edges.get(goto_edge).target_block)});
+                std.debug.print("goto(Block#{d})\n", .{@intFromEnum(edges.get(goto_edge).target_block)});
             },
             .phi => |phi_index| {
                 var current_phi = phi_index;
                 std.debug.print("phi(", .{});
                 while(phi_operands.getOpt(current_phi)) |phi| {
                     const edge = edges.get(phi.edge);
-                    std.debug.print("[${d}, Block#{d}]", .{@enumToInt(phi.decl), @enumToInt(edge.source_block)});
+                    std.debug.print("[${d}, Block#{d}]", .{@intFromEnum(phi.decl), @intFromEnum(edge.source_block)});
                     if(phi.next != .none) {
                         std.debug.print(", ", .{});
                     }

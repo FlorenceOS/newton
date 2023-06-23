@@ -110,7 +110,7 @@ const PrefixBits = struct {
     }
 
     fn prefixBytes(self: @This()) usize {
-        return @as(usize, @boolToInt(self.op_size)) + @boolToInt(self.rex_w or self.rex_r or self.rex_x or self.rex_b or self.force_rex);
+        return @as(usize, @intFromBool(self.op_size)) + @intFromBool(self.rex_w or self.rex_r or self.rex_x or self.rex_b or self.force_rex);
     }
 
     fn write(self: @This(), writer: *backends.Writer) !void {
@@ -130,7 +130,7 @@ fn opTypeImm(op_t: ir.InstrType, value: []const u8) []const u8 {
 }
 
 fn boolToU8(val: bool) u8 {
-    return @boolToInt(val);
+    return @intFromBool(val);
 }
 
 fn writeInstr(
@@ -431,7 +431,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             writer,
             .u8,
             uf.findRegByPtr(decl).?,
-            @boolToInt(constant),
+            @intFromBool(constant),
         ),
         .add => |op| {
             const op_t = decl.instr.getOperationType();

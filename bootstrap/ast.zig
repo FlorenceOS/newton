@@ -286,7 +286,7 @@ fn dumpNode(node: anytype, indent_level: usize) anyerror!void {
     switch(@TypeOf(node)) {
         *sources.SourceFile => {
             const index = sources.source_files.getIndex(node);
-            std.debug.print("SourceFile#{d} {s}", .{@enumToInt(index), node.realpath});
+            std.debug.print("SourceFile#{d} {s}", .{@intFromEnum(index), node.realpath});
         },
         *ExpressionNode => switch(node.*) {
             .identifier, .int_literal, .char_literal, .string_literal => |ident| std.debug.print("{s}", .{try ident.toSlice()}),

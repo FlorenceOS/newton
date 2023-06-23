@@ -190,12 +190,12 @@ fn typeTil(first_value: ast.TypeInitValueIndex.OptIndex, target_type: TypeIndex.
                     if(std.mem.eql(u8, tiv_field_name.identifier_value(), struct_field_name.identifier_value())) {
                         found_field = true;
                         for(result.slice()) |ass| {
-                            if(ass.identifier == @enumToInt(current_field)) {
+                            if(ass.identifier == @intFromEnum(current_field)) {
                                 std.debug.panic("Duplicate field '{s}'", .{tiv_field_name.identifier_value()});
                             }
                         }
                         try result.append(.{
-                            .identifier = @enumToInt(current_field),
+                            .identifier = @intFromEnum(current_field),
                             .assignment = .{.normal = tiv.value},
                         });
                     }
@@ -209,12 +209,12 @@ fn typeTil(first_value: ast.TypeInitValueIndex.OptIndex, target_type: TypeIndex.
             var current_field = target_struct.first_field;
             while(struct_fields.getOpt(current_field)) |field| : (current_field = field.next) {
                 if(for(result.slice()) |ass| {
-                    if(ass.identifier == @enumToInt(current_field)) {
+                    if(ass.identifier == @intFromEnum(current_field)) {
                         break false;
                     }
                 } else true) {
                     try result.append(.{
-                        .identifier = @enumToInt(current_field),
+                        .identifier = @intFromEnum(current_field),
                         .assignment = .{.default = field.init_value},
                     });
                 }
@@ -1410,7 +1410,7 @@ fn semaASTExpr(
 
                         switch(types.get(ttyp).*) {
                             .struct_idx => |sidx| {
-                                const fidx = @intToEnum(StructFieldIndex.Index, ass.identifier);
+                                const fidx = @enumFromInt(StructFieldIndex.Index, ass.identifier);
                                 field_type = try values.get(struct_fields.get(fidx).init_value).getType();
                                 field_offset = try structs.get(sidx).offsetOf(fidx);
                             },
@@ -1474,7 +1474,7 @@ fn semaASTExpr(
                         switch(ass.assignment) {
                             .normal => |expr| {
                                 std.debug.assert(types.get(ttyp).* == .struct_idx);
-                                const field = struct_fields.get(@intToEnum(StructFieldIndex.Index, ass.identifier));
+                                const field = struct_fields.get(@enumFromInt(StructFieldIndex.Index, ass.identifier));
                                 ass.assignment = .{.sema = try semaASTExpr(scope_idx, expr, false, try values.get(field.init_value).getType(), null)};
                             },
                             .default => {},
@@ -1615,7 +1615,7 @@ pub const Type = union(enum) {
             => |_, tag| try writer.writeAll(@tagName(tag)),
             .unsigned_int => |bits| try writer.print("u{d}", .{bits}),
             .signed_int => |bits| try writer.print("i{d}", .{bits}),
-            .struct_idx => |idx| try writer.print("struct_{d}", .{@enumToInt(idx)}),
+            .struct_idx => |idx| try writer.print("struct_{d}", .{@intFromEnum(idx)}),
             .pointer => |ptr| {
                 try writer.writeByte('*');
                 if(ptr.is_const) try writer.writeAll("const ");
@@ -1736,7 +1736,7 @@ pub const Value = union(enum) {
                 var init_type = structs.get(types.get(ti.init_type).struct_idx);
                 for(ti.values) |value| {
                     switch(value.assignment) {
-                        .sema, .default => |val| try values.get(val).writeBytesAtOffset(try init_type.offsetOf(@intToEnum(StructFieldIndex.Index, value.identifier))),
+                        .sema, .default => |val| try values.get(val).writeBytesAtOffset(try init_type.offsetOf(@enumFromInt(StructFieldIndex.Index, value.identifier))),
                         .normal => unreachable,
                     }
                 }
@@ -1820,7 +1820,7 @@ pub const Struct = struct {
         var curr_field = self.first_field;
         while(struct_fields.getOpt(curr_field)) |field| : (curr_field = field.next) {
             const field_type = types.get(try values.get(field.init_value).getType());
-            alignment = std.math.max(alignment, try field_type.getAlignment());
+            alignment = @max(alignment, try field_type.getAlignment());
         }
         return alignment;
     }

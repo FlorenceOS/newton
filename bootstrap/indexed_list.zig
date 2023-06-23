@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 fn sliceIndex(comptime T: type, ptr: *const T, slice: []const T) usize {
-    return @divExact((@ptrToInt(ptr) - @ptrToInt(slice.ptr)), @sizeOf(T));
+    return @divExact((@intFromPtr(ptr) - @intFromPtr(slice.ptr)), @sizeOf(T));
 }
 
 pub fn Indices(comptime IndexType: type, comptime _: type, comptime extra_field_tags: anytype) type {
@@ -49,11 +49,11 @@ pub fn Indices(comptime IndexType: type, comptime _: type, comptime extra_field_
 
         pub fn unwrap(oi: _OptIndex) ?_Index {
             if(oi == .none) return null;
-            return @intToEnum(_Index, @enumToInt(oi));
+            return @enumFromInt(_Index, @intFromEnum(oi));
         }
 
         pub fn toOpt(i: ?_Index) _OptIndex {
-            return @intToEnum(_OptIndex, @enumToInt(i orelse return _OptIndex.none));
+            return @enumFromInt(_OptIndex, @intFromEnum(i orelse return _OptIndex.none));
         }
     };
 }
@@ -78,7 +78,7 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
                 fn unionOffsetOf(comptime Ty: type, comptime field: []const u8) usize {
                     const union_value = @unionInit(Ty, field, undefined);
                     const field_ptr = &@field(union_value, field);
-                    return @ptrToInt(field_ptr) - @ptrToInt(&union_value);
+                    return @intFromPtr(field_ptr) - @intFromPtr(&union_value);
                 }
 
                 fn betterOffsetOf(comptime Ty: type, comptime field: []const u8) usize {
@@ -104,7 +104,7 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
                                 @field(std.meta.FieldEnum(field_type), component),
                             ).type;
                         }
-                        @intToPtr(*field_type, @ptrToInt(last) + offset).* = opt;
+                        @ptrFromInt(*field_type, @intFromPtr(last) + offset).* = opt;
                     }
                     self.last = opt;
                 }
@@ -166,11 +166,11 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
         pub fn addDedupLinear(self: *@This(), val: T) !Index {
             // Skip .none
             for(self.elements.items, 0..) |item, i| {
-                if(@intToEnum(OptIndex, i) == .none) continue;
+                if(@enumFromInt(OptIndex, i) == .none) continue;
                 if(@hasDecl(T, "equals")) {
-                    if(item.equals(&val)) return @intToEnum(Index, i);
+                    if(item.equals(&val)) return @enumFromInt(Index, i);
                 } else {
-                    if(std.meta.eql(item, val)) return @intToEnum(Index, i);
+                    if(std.meta.eql(item, val)) return @enumFromInt(Index, i);
                 }
             }
             return self.insert(val);
@@ -196,12 +196,12 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
 
         /// Get a slot index by pointer
         pub fn getIndex(self: *@This(), val: *const T) Index {
-            return @intToEnum(Index, sliceIndex(T, val, self.elements.items));
+            return @enumFromInt(Index, sliceIndex(T, val, self.elements.items));
         }
 
         /// Get a slot pointer by index
         pub fn get(self: *@This(), idx: Index) *T {
-            return &self.elements.items[@enumToInt(idx)];
+            return &self.elements.items[@intFromEnum(idx)];
         }
 
         /// Get an optional slot pointer by optional index

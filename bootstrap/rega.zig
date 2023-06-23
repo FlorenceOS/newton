@@ -9,15 +9,15 @@ const DeclReg = enum(u32) {
     const reg_shift = 32 - @bitSizeOf(ir.RegIndex);
 
     pub fn encode(d: ir.DeclIndex.Index, r: ir.RegIndex) @This() {
-        return @intToEnum(@This(), (@as(u32, r) << reg_shift) | @enumToInt(d));
+        return @enumFromInt(@This(), (@as(u32, r) << reg_shift) | @intFromEnum(d));
     }
 
     pub fn decl(self: @This()) ir.DeclIndex.Index {
-        return @intToEnum(ir.DeclIndex.Index, @enumToInt(self) & (1 << reg_shift) - 1);
+        return @enumFromInt(ir.DeclIndex.Index, @intFromEnum(self) & (1 << reg_shift) - 1);
     }
 
     pub fn reg(self: @This()) ir.RegIndex {
-        return @truncate(ir.RegIndex, @enumToInt(self) >> reg_shift);
+        return @truncate(ir.RegIndex, @intFromEnum(self) >> reg_shift);
     }
 
     pub fn alloced_reg(self: @This()) ?u8 {
@@ -26,9 +26,9 @@ const DeclReg = enum(u32) {
 
     pub fn dump(self: @This()) void {
         if(ir.decls.get(self.decl()).instr.numValues() < 2) {
-            std.debug.print(" ${d}", .{@enumToInt(self.decl())});
+            std.debug.print(" ${d}", .{@intFromEnum(self.decl())});
         } else {
-            std.debug.print(" (${d}, #{r})", .{@enumToInt(self.decl()), self.reg()});
+            std.debug.print(" (${d}, #{r})", .{@intFromEnum(self.decl()), self.reg()});
         }
     }
 };
@@ -101,7 +101,7 @@ pub const UnionFind = struct {
     }
 
     pub fn find(self: @This(), decl: ir.DeclIndex.Index) ir.DeclIndex.Index {
-        return @intToEnum(ir.DeclIndex.Index, @intCast(u32, self.findI(@intCast(i32, @enumToInt(decl)))));
+        return @enumFromInt(ir.DeclIndex.Index, @intCast(u32, self.findI(@intCast(i32, @intFromEnum(decl)))));
     }
 
     pub fn findDecl(self: @This(), decl: ir.DeclIndex.Index) *ir.Decl {
@@ -122,8 +122,8 @@ pub const UnionFind = struct {
     }
 
     fn join(self: @This(), a_c: ir.DeclIndex.Index, b_c: ir.DeclIndex.Index) bool {
-        var a = self.findI(@intCast(i32, @enumToInt(a_c)));
-        var b = self.findI(@intCast(i32, @enumToInt(b_c)));
+        var a = self.findI(@intCast(i32, @intFromEnum(a_c)));
+        var b = self.findI(@intCast(i32, @intFromEnum(b_c)));
         if(a == b) return false;
         if(self.e.get(a).? > self.e.get(b).?) std.mem.swap(i32, &a, &b);
         const ebp = self.e.getPtr(b).?;
@@ -322,7 +322,7 @@ pub fn doRegAlloc(
         const blk = ir.blocks.get(blk_idx);
         var curr_instr = blk.first_decl;
         while(ir.decls.getOpt(curr_instr)) |instr| : (curr_instr = instr.next) {
-            const i = @intCast(i32, @enumToInt(ir.decls.getIndex(instr)));
+            const i = @intCast(i32, @intFromEnum(ir.decls.getIndex(instr)));
             try uf.e.put(allocator, i, -1);
         }
     }
@@ -344,9 +344,9 @@ pub fn doRegAlloc(
     {
         var fuck = uf.e.iterator();
         while(fuck.next()) |fit| {
-            const iidx = @intToEnum(ir.DeclIndex.Index, @intCast(u32, fit.key_ptr.*));
+            const iidx = @enumFromInt(ir.DeclIndex.Index, @intCast(u32, fit.key_ptr.*));
             const replacement = uf.find(iidx);
-            std.debug.print("Union: ${d} => ${d}\n", .{@enumToInt(iidx), @enumToInt(replacement)});
+            std.debug.print("Union: ${d} => ${d}\n", .{@intFromEnum(iidx), @intFromEnum(replacement)});
             const decl = ir.decls.get(iidx);
             if(decl.instr == .phi) {
                 std.debug.assert(iidx != replacement);
@@ -547,7 +547,7 @@ pub fn doRegAlloc(
     {
         var fuck = decls.iterator();
         while(fuck.next()) |di| {
-            std.debug.print("${d}\tins:", .{@enumToInt(di.key_ptr.*)});
+            std.debug.print("${d}\tins:", .{@intFromEnum(di.key_ptr.*)});
             var in_it = di.value_ptr.ins.iterator();
             while(in_it.next()) |in_value| {
                 in_value.key_ptr.dump();

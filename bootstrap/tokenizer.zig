@@ -177,7 +177,7 @@ const keywords = blk: {
     }
 
     var sorted_result = result[0..result.len].*;
-    std.sort.sort([]const u8, &sorted_result, {}, lengthSort);
+    std.sort.insertion([]const u8, &sorted_result, {}, lengthSort);
     break :blk sorted_result;
 };
 
@@ -192,7 +192,7 @@ const character_tokens = blk: {
     }
 
     var sorted_result = result[0..result.len].*;
-    std.sort.sort([]const u8, &sorted_result, {}, lengthSort);
+    std.sort.insertion([]const u8, &sorted_result, {}, lengthSort);
     break :blk sorted_result;
 };
 
@@ -234,7 +234,7 @@ fn keywordOrIdent(input: *[*:0]const u8) !Token {
         input.* += 1; // Also skip end quote
 
         return Token{ .identifier = .{
-            .body = body_start[0..(@ptrToInt(input.*) - 1) - @ptrToInt(body_start)],
+            .body = body_start[0..(@intFromPtr(input.*) - 1) - @intFromPtr(body_start)],
             .value = try value.toOwnedSlice(),
             .owned = true,
         } };
@@ -245,7 +245,7 @@ fn keywordOrIdent(input: *[*:0]const u8) !Token {
             input.* += 1;
         }
 
-        const ident_slice = start[0..@ptrToInt(input.*) - @ptrToInt(start)];
+        const ident_slice = start[0..@intFromPtr(input.*) - @intFromPtr(start)];
 
         return Token{ .identifier = .{
             .body = ident_slice,
@@ -372,7 +372,7 @@ pub fn tokenize(input: *[*:0]const u8) !Token {
             input.* += 1; // Also skip quotes
 
             return Token{ .string_literal = .{
-                .body = body_start[0..(@ptrToInt(input.*) - 1) - @ptrToInt(body_start)],
+                .body = body_start[0..(@intFromPtr(input.*) - 1) - @intFromPtr(body_start)],
                 .value = try value.toOwnedSliceSentinel(0),
                 .ident = try string_ident.toOwnedSlice(),
             } };
@@ -387,7 +387,7 @@ pub fn tokenize(input: *[*:0]const u8) !Token {
             input.* += 1;
 
             return Token{ .char_literal = . {
-                .body = body_start[0..(@ptrToInt(input.*) - 1) - @ptrToInt(body_start)],
+                .body = body_start[0..(@intFromPtr(input.*) - 1) - @intFromPtr(body_start)],
                 .value = value,
             } };
         },
@@ -402,5 +402,5 @@ pub fn tokenLength(input_c: [*:0]const u8) !usize {
 
     const prev = input;
     _ = try tokenize(&input);
-    return @ptrToInt(input) - @ptrToInt(prev);
+    return @intFromPtr(input) - @intFromPtr(prev);
 }

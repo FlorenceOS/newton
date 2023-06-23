@@ -53,7 +53,7 @@ pub const Writer = struct {
     }
 
     pub fn finalize(self: *const @This(), file: *std.fs.File, code: []const u8, entry: u64) !void {
-        std.sort.sort(std.elf.Elf64_Sym, self.symtab.items, {}, compareSyms);
+        std.sort.insertion(std.elf.Elf64_Sym, self.symtab.items, {}, compareSyms);
 
         var current_offset: usize = @sizeOf(File);
         var elf: File = .{
