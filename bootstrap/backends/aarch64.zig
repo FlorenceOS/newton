@@ -118,7 +118,7 @@ fn ldpPost(writer: *backends.Writer, ptr_reg: u8, r1: u8, r2: u8, imm: i7) !void
         | @as(u32, ptr_reg) << 5
         | @as(u32, r1) << 0
         | @as(u32, r2) << 10
-        | @as(u32, @bitCast(u7, imm)) << 15
+        | @as(u32, @as(u7, @bitCast(imm))) << 15
     );
 }
 
@@ -127,7 +127,7 @@ fn stpPre(writer: *backends.Writer, ptr_reg: u8, r1: u8, r2: u8, imm: i7) !void 
         | @as(u32, ptr_reg) << 5
         | @as(u32, r1) << 0
         | @as(u32, r2) << 10
-        | @as(u32, @bitCast(u7, imm)) << 15
+        | @as(u32, @as(u7, @bitCast(imm))) << 15
     );
 }
 
@@ -156,10 +156,10 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
         .load_int_constant => |value| {
             const dest_reg = uf.findReg(decl_idx).?;
             const mov_ops: [4]std.meta.Tuple(&.{u16, u2, MovType}) = .{
-                .{@truncate(u16, value.value >> 0),  0b00, .movz},
-                .{@truncate(u16, value.value >> 16), 0b01, .movk},
-                .{@truncate(u16, value.value >> 32), 0b10, .movk},
-                .{@truncate(u16, value.value >> 48), 0b11, .movk},
+                .{@truncate(value.value >> 0),  0b00, .movz},
+                .{@truncate(value.value >> 16), 0b01, .movk},
+                .{@truncate(value.value >> 32), 0b10, .movk},
+                .{@truncate(value.value >> 48), 0b11, .movk},
             };
             comptime var len = 0;
             inline while(len < 4) : (len += 1) {
@@ -224,14 +224,14 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             const operand = ir.decls.get(op);
             switch(operand.instr) {
                 .global_ref => |offref| {
-                    const disp = @bitCast(u21, @intCast(i21, @bitCast(i64, offref.offset -% writer.currentOffset())));
+                    const disp: u21 = @bitCast(@as(i21, @intCast(@as(i64, @bitCast(offref.offset -% writer.currentOffset())))));
                     try writer.writeInt(u32, 0x10000000
                         | @as(u32, uf.findRegByPtr(decl).?) << 0
                         | @as(u32, disp >> 2) << 5
-                        | @as(u32, @truncate(u2, disp)) << 29
+                        | @as(u32, @as(u2, @truncate(disp))) << 29
                     );
                 },
-                .stack_ref => |stackoff| try subImm(writer, uf.findRegByPtr(decl).?, registers.fp, @intCast(u12, stackoff.offset)),
+                .stack_ref => |stackoff| try subImm(writer, uf.findRegByPtr(decl).?, registers.fp, @as(u12, @intCast(stackoff.offset))),
                 else => |other| std.debug.panic("aarch64: TODO addr_of {s}", .{@tagName(other)}),
             }
         },
@@ -267,12 +267,12 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
         .add_constant => |bop| {
             const dest_reg = uf.findReg(decl_idx).?;
             const lhs_reg = uf.findReg(bop.lhs).?;
-            try addImm(writer, dest_reg, lhs_reg, @intCast(u12, bop.rhs));
+            try addImm(writer, dest_reg, lhs_reg, @intCast(bop.rhs));
         },
         .sub_constant => |bop| {
             const dest_reg = uf.findReg(decl_idx).?;
             const lhs_reg = uf.findReg(bop.lhs).?;
-            try subImm(writer, dest_reg, lhs_reg, @intCast(u12, bop.rhs));
+            try subImm(writer, dest_reg, lhs_reg, @intCast(bop.rhs));
         },
         .multiply => |bop| {
             const dest_reg = uf.findReg(decl_idx).?;
@@ -299,7 +299,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             try writer.writeInt(u32, opSizeBit(decl) | 0x71000000
                 | @as(u32, registers.zero)
                 | @as(u32, lhs_reg) << 5
-                | @as(u32, @intCast(u12, bop.rhs)) << 10
+                | @as(u32, @as(u12, @intCast(bop.rhs))) << 10
             );
         },
         .@"if" => |if_instr| {
@@ -328,7 +328,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
         .enter_function => |stack_size| {
             try pushTwo(writer, registers.fp, registers.lr);
             if(stack_size > 0) {
-                try subImm(writer, registers.sp, registers.sp, @intCast(u12, stack_size));
+                try subImm(writer, registers.sp, registers.sp, @intCast(stack_size));
             }
         },
         .function_call => |fcall| try writer.writeIntWithFunctionRelocation(u32, 0x94000000, fcall.callee, .imm26_div4),

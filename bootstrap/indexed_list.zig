@@ -49,11 +49,11 @@ pub fn Indices(comptime IndexType: type, comptime _: type, comptime extra_field_
 
         pub fn unwrap(oi: _OptIndex) ?_Index {
             if(oi == .none) return null;
-            return @enumFromInt(_Index, @intFromEnum(oi));
+            return @enumFromInt(@intFromEnum(oi));
         }
 
         pub fn toOpt(i: ?_Index) _OptIndex {
-            return @enumFromInt(_OptIndex, @intFromEnum(i orelse return _OptIndex.none));
+            return @enumFromInt(@intFromEnum(i orelse return _OptIndex.none));
         }
     };
 }
@@ -104,7 +104,7 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
                                 @field(std.meta.FieldEnum(field_type), component),
                             ).type;
                         }
-                        @ptrFromInt(*field_type, @intFromPtr(last) + offset).* = opt;
+                        @as(*field_type, @ptrFromInt(@intFromPtr(last) + offset)).* = opt;
                     }
                     self.last = opt;
                 }
@@ -157,7 +157,7 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
         /// Allocate a slot for a new object
         pub fn addOne(self: *@This()) !*T {
             if (self.getOpt(self.first_free)) |first_free| {
-                self.first_free = @ptrCast(*OptIndex, first_free).*;
+                self.first_free = @as(*OptIndex, @ptrCast(first_free)).*;
                 return first_free;
             }
             return try self.elements.addOne();
@@ -166,11 +166,11 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
         pub fn addDedupLinear(self: *@This(), val: T) !Index {
             // Skip .none
             for(self.elements.items, 0..) |item, i| {
-                if(@enumFromInt(OptIndex, i) == .none) continue;
+                if(@as(OptIndex, @enumFromInt(i)) == .none) continue;
                 if(@hasDecl(T, "equals")) {
-                    if(item.equals(&val)) return @enumFromInt(Index, i);
+                    if(item.equals(&val)) return @enumFromInt(i);
                 } else {
-                    if(std.meta.eql(item, val)) return @enumFromInt(Index, i);
+                    if(std.meta.eql(item, val)) return @enumFromInt(i);
                 }
             }
             return self.insert(val);
@@ -185,7 +185,7 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
 
         /// Free a slot by index
         pub fn free(self: *@This(), idx: Index) void {
-            @ptrCast(*OptIndex, self.get(idx)).* = self.first_free;
+            @as(*OptIndex, @ptrCast(self.get(idx))).* = self.first_free;
             self.first_free = _Indices.toOpt(idx);
         }
 
@@ -196,7 +196,7 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
 
         /// Get a slot index by pointer
         pub fn getIndex(self: *@This(), val: *const T) Index {
-            return @enumFromInt(Index, sliceIndex(T, val, self.elements.items));
+            return @enumFromInt(sliceIndex(T, val, self.elements.items));
         }
 
         /// Get a slot pointer by index

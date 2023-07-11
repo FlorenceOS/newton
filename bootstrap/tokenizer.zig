@@ -226,7 +226,7 @@ fn keywordOrIdent(input: *[*:0]const u8) !Token {
         var value = std.ArrayList(u8).init(gpa.allocator());
         input.* += 2;
 
-        const body_start = @ptrCast([*]const u8, input.*);
+        const body_start: [*]const u8 = @ptrCast(input.*);
         while(input.*[0] != '"') {
             try value.append(try parseLiteralChar(input));
         }
@@ -239,7 +239,7 @@ fn keywordOrIdent(input: *[*:0]const u8) !Token {
             .owned = true,
         } };
     } else {
-        const start = @ptrCast([*]const u8, input.*);
+        const start: [*]const u8 = @ptrCast(input.*);
 
         while(isIdentChar(input.*[0])) {
             input.* += 1;
@@ -353,7 +353,7 @@ pub fn tokenize(input: *[*:0]const u8) !Token {
             var string_ident = std.ArrayList(u8).init(gpa.allocator());
             try string_ident.appendSlice("str");
 
-            const body_start = @ptrCast([*]const u8, input.*);
+            const body_start: [*]const u8 = @ptrCast(input.*);
             input.* += 1;
 
             var last_alnum = false;
@@ -379,7 +379,7 @@ pub fn tokenize(input: *[*:0]const u8) !Token {
         },
 
         '\'' => {
-            const body_start = @ptrCast([*]const u8, input.*);
+            const body_start: [*]const u8 = @ptrCast(input.*);
             input.* += 1;
             const value = try parseLiteralChar(input);
 

@@ -94,19 +94,19 @@ const Relocation = struct {
         switch(self.relocation_type) {
             .rel8_post_0 => {
                 const rel = relocation_target_offset -% (self.output_offset +% 1);
-                output_bytes[self.output_offset..][0..1].* = std.mem.toBytes(@intCast(i8, @bitCast(i64, rel)));
+                output_bytes[self.output_offset..][0..1].* = std.mem.toBytes(@as(i8, @intCast(@as(i64, @bitCast(rel)))));
             },
             .rel32_post_0 => {
                 const rel = relocation_target_offset -% (self.output_offset +% 4);
-                output_bytes[self.output_offset..][0..4].* = std.mem.toBytes(@intCast(i32, @bitCast(i64, rel)));
+                output_bytes[self.output_offset..][0..4].* = std.mem.toBytes(@as(i32, @intCast(@as(i64, @bitCast(rel)))));
             },
             .imm19_div4_shift5 => {
-                const rel = @intCast(i19, @bitCast(i64, (relocation_target_offset -% self.output_offset)) >> 2);
-                std.mem.bytesAsValue(u32, output_bytes[self.output_offset..][0..4]).* |= @as(u32, @bitCast(u19, rel)) << 5;
+                const rel = @as(i19, @intCast(@as(i64, @bitCast(relocation_target_offset -% self.output_offset)) >> 2));
+                std.mem.bytesAsValue(u32, output_bytes[self.output_offset..][0..4]).* |= @as(u32, @as(u19, @bitCast(rel))) << 5;
             },
             .imm26_div4 => {
-                const rel = @intCast(i26, @bitCast(i64, (relocation_target_offset -% self.output_offset)) >> 2);
-                std.mem.bytesAsValue(u32, output_bytes[self.output_offset..][0..4]).* |= @as(u32, @bitCast(u26, rel));
+                const rel = @as(i26, @intCast(@as(i64, @bitCast(relocation_target_offset -% self.output_offset)) >> 2));
+                std.mem.bytesAsValue(u32, output_bytes[self.output_offset..][0..4]).* |= @as(u32, @as(u26, @bitCast(rel)));
             },
         }
     }
@@ -149,7 +149,7 @@ pub const Writer = struct {
         if(self.blockOffset(edge)) |offset| {
             inline for(types) |t| {
                 const instr_size = t[1].byteSize() + t[0];
-                const disp = @bitCast(isize, offset -% (self.currentOffset() + instr_size));
+                const disp: isize = @bitCast(offset -% (self.currentOffset() + instr_size));
                 if(disp >= t[1].minDisplacement() and disp <= t[1].maxDisplacement()) return t[1];
             }
         }

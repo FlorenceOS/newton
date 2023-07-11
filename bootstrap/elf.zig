@@ -37,12 +37,12 @@ pub const Writer = struct {
 
     pub fn addSymbol(self: *@This(), name: []const u8, offset: u64, is_function: bool, size: usize) !void {
         try self.symtab.append(self.allocator, .{
-            .st_name = @intCast(u32, self.symstrtab.items.len),
+            .st_name = @intCast(self.symstrtab.items.len),
             .st_info = if(is_function) 0x2 else 0x1,
             .st_other = 0,
             .st_shndx = SH_TEXT,
             .st_value = self.base_addr + offset,
-            .st_size = @intCast(u32, size),
+            .st_size = @intCast(size),
         });
         try self.symstrtab.appendSlice(self.allocator, name);
         try self.symstrtab.append(self.allocator, 0);
@@ -142,7 +142,7 @@ pub const Writer = struct {
             .sh_offset = symtab_offset,
             .sh_size = symtab_size,
             .sh_link = SH_SYMSTRTAB,
-            .sh_info = @intCast(u32, self.symtab.items.len),
+            .sh_info = @intCast(self.symtab.items.len),
             .sh_addralign = 0,
             .sh_entsize = @sizeOf(std.elf.Elf64_Sym),
         };

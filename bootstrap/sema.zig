@@ -553,7 +553,7 @@ fn semaASTExpr(
                     break :blk decl.init_value;
                 }
                 if(decl.static and decl.offset == null) {
-                    decl.offset = @intCast(u32, try init_value.toBytes());
+                    decl.offset = @intCast(try init_value.toBytes());
                 }
                 break :blk try values.addDedupLinear(.{.decl_ref = decls.getIndex(decl)});
             }
@@ -581,7 +581,7 @@ fn semaASTExpr(
             if(force_comptime_eval) @panic("TODO: Comptime string literals");
             const init_value = try values.insert(.{.runtime = .{
                 .expr = ExpressionIndex.toOpt(try expressions.insert(.{.global = .{
-                    .offset = @intCast(u32, offset),
+                    .offset = @intCast(offset),
                     .type = .{
                         .is_volatile = false,
                         .is_const = true,
@@ -596,7 +596,7 @@ fn semaASTExpr(
                 .mutable = false,
                 .static = true,
                 .comptime_param = false,
-                .offset = @intCast(u32, offset),
+                .offset = @intCast(offset),
                 .function_param_idx = null,
                 .name = sr,
                 .init_value = init_value,
@@ -617,7 +617,7 @@ fn semaASTExpr(
             const child = try semaASTExpr(scope_idx, arr.rhs, true, .type, null);
             break :blk try values.addDedupLinear(.{.type_idx = try types.addDedupLinear(.{.array = .{
                 .child = values.get(child).type_idx,
-                .size = @intCast(u32, values.get(size).unsigned_int.value),
+                .size = @intCast(values.get(size).unsigned_int.value),
             }})});
         },
         .pointer_type => |ptr| blk: {
@@ -1116,8 +1116,8 @@ fn semaASTExpr(
                     .multiply => .{.comptime_int = lhs_int *% rhs_int},
                     .divide => .{.comptime_int = @divTrunc(lhs_int, rhs_int)},
                     .modulus => .{.comptime_int = @rem(lhs_int, rhs_int)},
-                    .shift_left => .{.comptime_int = lhs_int << @intCast(u7, rhs_int)},
-                    .shift_right => .{.comptime_int = lhs_int >> @intCast(u7, rhs_int)},
+                    .shift_left => .{.comptime_int = lhs_int << @as(u7, @intCast(rhs_int))},
+                    .shift_right => .{.comptime_int = lhs_int >> @as(u7, @intCast(rhs_int))},
                     .bitand => .{.comptime_int = lhs_int & rhs_int},
                     .bitor => .{.comptime_int = lhs_int | rhs_int},
                     .bitxor => .{.comptime_int = lhs_int ^ rhs_int},
@@ -1238,7 +1238,7 @@ fn semaASTExpr(
                             break :blk static_decl.init_value;
                         }
                         if(static_decl.offset == null) {
-                            static_decl.offset = @intCast(u32, try values.get(static_decl.init_value).toBytes());
+                            static_decl.offset = @intCast(try values.get(static_decl.init_value).toBytes());
                         }
                         break :blk try values.addDedupLinear(.{.decl_ref = decls.getIndex(static_decl)});
                     } else {
@@ -1348,7 +1348,7 @@ fn semaASTExpr(
 
             const size_expr = try values.addDedupLinear(.{.unsigned_int = .{
                 .bits = 64,
-                .value = @as(i65, @intCast(i64, try types.get(child_type).getSize())),
+                .value = @as(i65, @as(i64, @intCast(try types.get(child_type).getSize()))),
             }});
             var rhs_idx = try semaASTExpr(scope_idx, bop.rhs, force_comptime_eval, null, null);
             try inplaceOp(size_expr, &rhs_idx, false);
@@ -1410,7 +1410,7 @@ fn semaASTExpr(
 
                         switch(types.get(ttyp).*) {
                             .struct_idx => |sidx| {
-                                const fidx = @enumFromInt(StructFieldIndex.Index, ass.identifier);
+                                const fidx: StructFieldIndex.Index = @enumFromInt(ass.identifier);
                                 field_type = try values.get(struct_fields.get(fidx).init_value).getType();
                                 field_offset = try structs.get(sidx).offsetOf(fidx);
                             },
@@ -1474,7 +1474,7 @@ fn semaASTExpr(
                         switch(ass.assignment) {
                             .normal => |expr| {
                                 std.debug.assert(types.get(ttyp).* == .struct_idx);
-                                const field = struct_fields.get(@enumFromInt(StructFieldIndex.Index, ass.identifier));
+                                const field = struct_fields.get(@enumFromInt(ass.identifier));
                                 ass.assignment = .{.sema = try semaASTExpr(scope_idx, expr, false, try values.get(field.init_value).getType(), null)};
                             },
                             .default => {},
@@ -1572,7 +1572,7 @@ pub const Type = union(enum) {
             .anyopaque => error.AnyopaqueHasNoSize,
             .type_of_value => @panic("type_of_value size"),
             .bool => 1,
-            .unsigned_int, .signed_int => |bits| @as(u32, 1) << @intCast(u5, std.math.log2_int_ceil(u32, @divTrunc(bits + 7, 8))),
+            .unsigned_int, .signed_int => |bits| @as(u32, 1) << @as(u5, @intCast(std.math.log2_int_ceil(u32, @divTrunc(bits + 7, 8)))),
             .pointer, .reference => switch(backends.current_backend.pointer_type) {
                 .u64 => 8,
                 .u32 => 4,
@@ -1736,7 +1736,7 @@ pub const Value = union(enum) {
                 var init_type = structs.get(types.get(ti.init_type).struct_idx);
                 for(ti.values) |value| {
                     switch(value.assignment) {
-                        .sema, .default => |val| try values.get(val).writeBytesAtOffset(try init_type.offsetOf(@enumFromInt(StructFieldIndex.Index, value.identifier))),
+                        .sema, .default => |val| try values.get(val).writeBytesAtOffset(try init_type.offsetOf(@enumFromInt(value.identifier))),
                         .normal => unreachable,
                     }
                 }
@@ -1937,7 +1937,7 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
                 std.debug.assert(curr_arg == .none);
 
                 return .{
-                    .callee = .{.instantiation = .{.function_value = fn_idx, .instantiation = @intCast(u32, i)}},
+                    .callee = .{.instantiation = .{.function_value = fn_idx, .instantiation = @intCast(i)}},
                     .first_arg = runtime_params_builder.first,
                 };
             }
@@ -1958,7 +1958,7 @@ pub fn callFunctionWithArgs(fn_idx: ValueIndex.Index, arg_scope: ?ScopeIndex.Ind
         );
 
         return .{
-            .callee = .{.instantiation = .{.function_value = fn_idx, .instantiation = @intCast(u32, instantiation)}},
+            .callee = .{.instantiation = .{.function_value = fn_idx, .instantiation = @intCast(instantiation)}},
             .first_arg = runtime_params_builder.first,
         };
     } else {
