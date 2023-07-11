@@ -160,7 +160,7 @@ fn writeDirect(
     rm_reg_is_reg: bool,
 ) !void {
     const prefixes = PrefixBits.fromOp(op_t, rm_reg, reg, true, rm_reg_is_reg);
-    return writeInstr(writer, prefixes, opcodes, 0b11, @truncate(u3, rm_reg), @truncate(u3, reg), &.{}, immediate);
+    return writeInstr(writer, prefixes, opcodes, 0b11, @truncate(rm_reg), @truncate(reg), &.{}, immediate);
 }
 
 fn writeRegIndirect(
@@ -176,11 +176,11 @@ fn writeRegIndirect(
     const prefixes = PrefixBits.fromOp(op_t, rm_reg, reg, false, rm_reg_is_reg);
     std.debug.assert(rm_reg != registers.rsp and rm_reg != 12); // SP and R12 uses SIB+DISP8
     if(offset == 0 and rm_reg != registers.rbp and rm_reg != 13) {
-        return writeInstr(writer, prefixes, opcodes, 0b00, @truncate(u3, rm_reg), @truncate(u3, reg), &.{}, immediate);
+        return writeInstr(writer, prefixes, opcodes, 0b00, @truncate(rm_reg), @truncate(reg), &.{}, immediate);
     } else if(std.math.cast(i8, offset)) |i8_offset| {
-        return writeInstr(writer, prefixes, opcodes, 0b01, @truncate(u3, rm_reg), @truncate(u3, reg), std.mem.asBytes(&i8_offset), immediate);
+        return writeInstr(writer, prefixes, opcodes, 0b01, @truncate(rm_reg), @truncate(reg), std.mem.asBytes(&i8_offset), immediate);
     } else {
-        return writeInstr(writer, prefixes, opcodes, 0b10, @truncate(u3, rm_reg), @truncate(u3, reg), std.mem.asBytes(&offset), immediate);
+        return writeInstr(writer, prefixes, opcodes, 0b10, @truncate(rm_reg), @truncate(reg), std.mem.asBytes(&offset), immediate);
     }
 }
 
@@ -195,8 +195,8 @@ fn writeRipRelative(
 ) !void {
     const prefixes = PrefixBits.fromOp(op_t, registers.rbp, reg, false, rm_reg_is_reg);
     const instr_len = prefixes.prefixBytes() + opcodes.len + 5 + immediate.len;
-    const disp = @intCast(i32, @bitCast(i64, offset -% (writer.currentOffset() + instr_len)));
-    return writeInstr(writer, prefixes, opcodes, 0b00, registers.rbp, @truncate(u3, reg), std.mem.asBytes(&disp), immediate);
+    const disp: i32 = @intCast(@as(i64, @bitCast(offset -% (writer.currentOffset() + instr_len))));
+    return writeInstr(writer, prefixes, opcodes, 0b00, registers.rbp, @truncate(reg), std.mem.asBytes(&disp), immediate);
 }
 
 fn writeStackOffset(
@@ -225,7 +225,7 @@ fn writeOperandReg(
     if(rm_decl.instr.memoryReference()) |mr| {
         switch(rm_decl.instr) {
             .global_ref => |offset| return writeRipRelative(writer, op_t, opcodes, reg, offset.offset, immediate, rm_reg_is_reg),
-            .stack_ref => |offset| return writeStackOffset(writer, op_t, opcodes, reg, @intCast(i32, offset.offset), immediate, rm_reg_is_reg),
+            .stack_ref => |offset| return writeStackOffset(writer, op_t, opcodes, reg, @intCast(offset.offset), immediate, rm_reg_is_reg),
             .reference_wrap => return writeRegIndirect(writer, op_t, opcodes, uf.findReg(mr.pointer_value).?, reg, mr.pointer_value_offset, immediate, rm_reg_is_reg),
             else => unreachable,
         }
@@ -317,10 +317,10 @@ fn movRegReg(writer: *backends.Writer, op_t: ir.InstrType, dest_reg: u8, src_reg
 fn movImmToReg(writer: *backends.Writer, op_t: ir.InstrType, dest_reg: u8, value: u64) !void {
     if(value == 0) {
         try writeDirect(writer, .u32, &.{0x31}, dest_reg, dest_reg, &.{}, true);
-    } else if(std.math.cast(i8, @bitCast(i64, value))) |i8_value| {
+    } else if(std.math.cast(i8, @as(i64, @bitCast(value)))) |i8_value| {
         try pushImm(writer, i8_value);
         try popReg(writer, dest_reg);
-    } else if(std.math.cast(i32, @bitCast(i64, value))) |i32_value| {
+    } else if(std.math.cast(i32, @as(i64, @bitCast(value)))) |i32_value| {
         try writeDirect(writer, op_t, &.{0xC6 | boolToU8(op_t != .u8)}, dest_reg, 0, std.mem.asBytes(&i32_value), false);
     } else {
         @panic("TODO");
@@ -399,7 +399,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
             if(stack_size > 0) {
                 try pushReg(writer, registers.rbp);
                 try movRegReg(writer, .u64, registers.rbp, registers.rsp);
-                try subImm(writer, .u64, registers.rsp, @intCast(i32, stack_size));
+                try subImm(writer, .u64, registers.rsp, @intCast(stack_size));
             }
         },
         .leave_function => |leave| {
@@ -524,7 +524,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
                 }
             } else if(op_t != .u8) { // lea r/m64, [r + disp32]
                 if(lhs_reg) |reg| {
-                    try writeRegIndirect(writer, op_t, &.{0x8D}, reg, dest_reg, @intCast(i32, @bitCast(i64, op.rhs)), &.{}, true);
+                    try writeRegIndirect(writer, op_t, &.{0x8D}, reg, dest_reg, @intCast(@as(i64, @bitCast(op.rhs))), &.{}, true);
                 } else {
                     try mov(writer, uf, op_t, decl_idx, op.lhs, false);
                     try writeOperandReg(writer, uf, op_t, decl_idx, 0, &.{
@@ -613,7 +613,7 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
         .store_constant => |op| {
             if((op.type == .u16 or op.type == .u64) and (op.value <= 0x7F or op.value > 0xFFFFFFFFFFFFFF80)) {
                 // push imm8; pop r/mN
-                try pushImm(writer, @intCast(i8, @bitCast(i64, op.value)));
+                try pushImm(writer, @as(i8, @intCast(@as(i64, @intCast(op.value)))));
                 try writeOperandReg(writer, uf, if(op.type == .u64) .u32 else op.type, op.dest, 0, &.{0x8F}, &.{}, false);
             } else { // mov r/mN, immN
                 const imm = std.mem.asBytes(&op.value);

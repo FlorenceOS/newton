@@ -9,15 +9,15 @@ const DeclReg = enum(u32) {
     const reg_shift = 32 - @bitSizeOf(ir.RegIndex);
 
     pub fn encode(d: ir.DeclIndex.Index, r: ir.RegIndex) @This() {
-        return @enumFromInt(@This(), (@as(u32, r) << reg_shift) | @intFromEnum(d));
+        return @enumFromInt((@as(u32, r) << reg_shift) | @intFromEnum(d));
     }
 
     pub fn decl(self: @This()) ir.DeclIndex.Index {
-        return @enumFromInt(ir.DeclIndex.Index, @intFromEnum(self) & (1 << reg_shift) - 1);
+        return @enumFromInt(@intFromEnum(self) & (1 << reg_shift) - 1);
     }
 
     pub fn reg(self: @This()) ir.RegIndex {
-        return @truncate(ir.RegIndex, @intFromEnum(self) >> reg_shift);
+        return @truncate(@intFromEnum(self) >> reg_shift);
     }
 
     pub fn alloced_reg(self: @This()) ?u8 {
@@ -101,7 +101,7 @@ pub const UnionFind = struct {
     }
 
     pub fn find(self: @This(), decl: ir.DeclIndex.Index) ir.DeclIndex.Index {
-        return @enumFromInt(ir.DeclIndex.Index, @intCast(u32, self.findI(@intCast(i32, @intFromEnum(decl)))));
+        return @enumFromInt(@as(u32, @intCast(self.findI(@as(i32, @intCast(@intFromEnum(decl)))))));
     }
 
     pub fn findDecl(self: @This(), decl: ir.DeclIndex.Index) *ir.Decl {
@@ -122,8 +122,8 @@ pub const UnionFind = struct {
     }
 
     fn join(self: @This(), a_c: ir.DeclIndex.Index, b_c: ir.DeclIndex.Index) bool {
-        var a = self.findI(@intCast(i32, @intFromEnum(a_c)));
-        var b = self.findI(@intCast(i32, @intFromEnum(b_c)));
+        var a = self.findI(@as(i32, @intCast(@intFromEnum(a_c))));
+        var b = self.findI(@as(i32, @intCast(@intFromEnum(b_c))));
         if(a == b) return false;
         if(self.e.get(a).? > self.e.get(b).?) std.mem.swap(i32, &a, &b);
         const ebp = self.e.getPtr(b).?;
@@ -159,7 +159,7 @@ pub fn allocateRegsForInstr(
         } else {
             for(return_regs[0..decl.instr.numValues()], 0..) |reg, i| {
                 if(reg != backends.any_register) {
-                    const ri = @intCast(ir.RegIndex, i);
+                    const ri: ir.RegIndex = @intCast(i);
                     decl.reg_alloc_value[i] = reg;
                     const pick = try ir.insertBefore(next_instr, .{.pick = .{
                         .src = decl_idx,
@@ -322,7 +322,7 @@ pub fn doRegAlloc(
         const blk = ir.blocks.get(blk_idx);
         var curr_instr = blk.first_decl;
         while(ir.decls.getOpt(curr_instr)) |instr| : (curr_instr = instr.next) {
-            const i = @intCast(i32, @intFromEnum(ir.decls.getIndex(instr)));
+            const i: i32 = @intCast(@intFromEnum(ir.decls.getIndex(instr)));
             try uf.e.put(allocator, i, -1);
         }
     }
@@ -344,7 +344,7 @@ pub fn doRegAlloc(
     {
         var fuck = uf.e.iterator();
         while(fuck.next()) |fit| {
-            const iidx = @enumFromInt(ir.DeclIndex.Index, @intCast(u32, fit.key_ptr.*));
+            const iidx: ir.DeclIndex.Index = @enumFromInt(@as(u32, @intCast(fit.key_ptr.*)));
             const replacement = uf.find(iidx);
             std.debug.print("Union: ${d} => ${d}\n", .{@intFromEnum(iidx), @intFromEnum(replacement)});
             const decl = ir.decls.get(iidx);
@@ -414,7 +414,7 @@ pub fn doRegAlloc(
 
             // Find everything that's defined
             for(0..instr.instr.numValues()) |v| {
-                const reg = DeclReg.encode(uf.find(iidx), @truncate(ir.RegIndex, v));
+                const reg = DeclReg.encode(uf.find(iidx), @truncate(v));
                 try defs.put(arena.allocator(), reg, {});
                 if(instr.instr.isFlagsValue()) break;
                 if(instr.reg_alloc_value[v] == null) {
@@ -479,7 +479,7 @@ pub fn doRegAlloc(
 
             for(0..instr.instr.numValues()) |v| {
                 if(instr.instr.isFlagsValue()) break;
-                const reg = DeclReg.encode(uf.find(iidx), @truncate(ir.RegIndex, v));
+                const reg = DeclReg.encode(uf.find(iidx), @truncate(v));
                 _ = alive.swapRemove(reg);
             }
 

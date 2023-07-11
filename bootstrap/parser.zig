@@ -75,7 +75,7 @@ fn identToAstNode(self: *@This(), tok: anytype) !ast.ExprIndex.Index {
 
     inline for(@typeInfo(ast.BuiltinFunction).Enum.fields) |ef| {
         if(std.mem.eql(u8, tok.body, "@" ++ ef.name)) {
-            return ast.expressions.addDedupLinear(.{.builtin_function = @enumFromInt(ast.BuiltinFunction, ef.value)});
+            return ast.expressions.addDedupLinear(.{.builtin_function = @enumFromInt(ef.value)});
         }
     }
 
@@ -95,7 +95,7 @@ fn toAstIdent(self: *@This(), tok: anytype) ast.SourceRef {
     const file_offset = offset_ptr - base_ptr;
 
     return .{
-        .file_offset = @intCast(u32, file_offset),
+        .file_offset = @intCast(file_offset),
         .source_file = self.source_file_index,
     };
 }

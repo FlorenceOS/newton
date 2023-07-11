@@ -1214,12 +1214,12 @@ fn eliminateTrivialArithmetic(decl_idx: DeclIndex.Index) !bool {
             switch(pointer_value.instr) {
                 .add_constant => |bop| {
                     mr.pointer_value = bop.lhs;
-                    mr.pointer_value_offset += @intCast(i32, bop.rhs);
+                    mr.pointer_value_offset += @intCast(bop.rhs);
                     return true;
                 },
                 .sub_constant => |bop| {
                     mr.pointer_value = bop.lhs;
-                    mr.pointer_value_offset -= @intCast(i32, bop.rhs);
+                    mr.pointer_value_offset -= @intCast(bop.rhs);
                     return true;
                 },
                 else => {},
@@ -1255,8 +1255,8 @@ fn eliminateConstantExpressions(decl_idx: DeclIndex.Index) !bool {
                         .multiply_constant => lhs.instr.load_int_constant.value *% bop.rhs,
                         .divide_constant => lhs.instr.load_int_constant.value / bop.rhs,
                         .modulus_constant => lhs.instr.load_int_constant.value % bop.rhs,
-                        .shift_left_constant => lhs.instr.load_int_constant.value << @intCast(u6, bop.rhs),
-                        .shift_right_constant => lhs.instr.load_int_constant.value >> @intCast(u6, bop.rhs),
+                        .shift_left_constant => lhs.instr.load_int_constant.value << @as(u6, @intCast(bop.rhs)),
+                        .shift_right_constant => lhs.instr.load_int_constant.value >> @as(u6, @intCast(bop.rhs)),
                         .bit_and_constant => lhs.instr.load_int_constant.value & bop.rhs,
                         .bit_or_constant => lhs.instr.load_int_constant.value | bop.rhs,
                         .bit_xor_constant => lhs.instr.load_int_constant.value ^ bop.rhs,
@@ -1298,11 +1298,11 @@ fn eliminateOffsetPointers(decl_idx: DeclIndex.Index) !bool {
     switch(decl.instr) {
         .add_constant => |op| {
             operand = op.lhs;
-            offset = @intCast(i32, @bitCast(i64, op.rhs));
+            offset = @intCast(@as(i64, @bitCast(op.rhs)));
         },
         .sub_constant => |op| {
             operand = op.lhs;
-            offset = @intCast(i32, -@bitCast(i64, op.rhs));
+            offset = @intCast(-@as(i64, @bitCast(op.rhs)));
         },
         else => return false,
     }
@@ -1311,12 +1311,12 @@ fn eliminateOffsetPointers(decl_idx: DeclIndex.Index) !bool {
         .addr_of => |ao| switch(decls.get(ao).instr) {
             .stack_ref => |o| .{.addr_of = try insertBefore(decl_idx, .{.stack_ref = .{
                 .orig_offset = o.orig_offset,
-                .offset = o.offset -% @bitCast(u32, offset),
+                .offset = o.offset -% @as(u32, @bitCast(offset)),
                 .type = o.type,
             }})},
             .global_ref => |o| .{.addr_of = try insertBefore(decl_idx, .{.global_ref = .{
                 .orig_offset = o.orig_offset,
-                .offset = o.offset +% @bitCast(u32, offset),
+                .offset = o.offset +% @as(u32, @bitCast(offset)),
                 .type = o.type,
             }})},
             .reference_wrap => |o| .{.addr_of = try insertBefore(decl_idx, .{.reference_wrap = .{
@@ -1339,12 +1339,12 @@ pub fn eliminateDerefOfAddrOf(decl_idx: DeclIndex.Index) !bool {
     if(operand.instr != .addr_of) return false;
     const new_instr: DeclInstr = switch(decls.get(operand.instr.addr_of).instr) {
         .stack_ref => |sr| .{.stack_ref = .{
-            .offset = @intCast(u32, @intCast(i32, sr.offset) - ref_wrap.pointer_value_offset),
+            .offset = @intCast(@as(i32, @intCast(sr.offset)) - ref_wrap.pointer_value_offset),
             .orig_offset = sr.orig_offset,
             .type = ref_wrap.sema_pointer_type,
         }},
         .global_ref => |gr| .{.global_ref = .{
-            .offset = @intCast(u32, @intCast(i32, gr.offset) + ref_wrap.pointer_value_offset),
+            .offset = @intCast(@as(i32, @intCast(gr.offset)) + ref_wrap.pointer_value_offset),
             .orig_offset = gr.orig_offset,
             .type = ref_wrap.sema_pointer_type,
         }},
@@ -1369,13 +1369,13 @@ fn arePointersDeeplyEqual(lhs_mr: MemoryReference, rhs_mr: MemoryReference) bool
 
     switch(lhs.instr) {
         .stack_ref => |sr| {
-            const lhs_offset = @intCast(u32, @intCast(i32, sr.offset) - lhs_mr.pointer_value_offset);
-            const rhs_offset = @intCast(u32, @intCast(i32, rhs.instr.stack_ref.offset) - rhs_mr.pointer_value_offset);
+            const lhs_offset: u32 = @intCast(@as(i32, @intCast(sr.offset)) - lhs_mr.pointer_value_offset);
+            const rhs_offset: u32 = @intCast(@as(i32, @intCast(rhs.instr.stack_ref.offset)) - rhs_mr.pointer_value_offset);
             return lhs_offset == rhs_offset;
         },
         .global_ref => |gr| {
-            const lhs_offset = @intCast(u32, @intCast(i32, gr.offset) + lhs_mr.pointer_value_offset);
-            const rhs_offset = @intCast(u32, @intCast(i32, rhs.instr.global_ref.offset) + rhs_mr.pointer_value_offset);
+            const lhs_offset: u32 = @intCast(@as(i32, @intCast(gr.offset)) + lhs_mr.pointer_value_offset);
+            const rhs_offset: u32 = @intCast(@as(i32, @intCast(rhs.instr.global_ref.offset)) + rhs_mr.pointer_value_offset);
             return lhs_offset == rhs_offset;
         },
         else => return false,
@@ -1392,16 +1392,16 @@ fn canPointersOverlap(lhs_mr: MemoryReference, rhs_mr: MemoryReference) !bool {
     switch(lhs.instr) {
         .stack_ref => |sr| {
             const rhs_sr = rhs.instr.stack_ref;
-            const lhs_offset = @intCast(u32, @intCast(i32, sr.offset) - lhs_mr.pointer_value_offset);
-            const rhs_offset = @intCast(u32, @intCast(i32, rhs_sr.offset) - rhs_mr.pointer_value_offset);
+            const lhs_offset: u32 = @intCast(@as(i32, @intCast(sr.offset)) - lhs_mr.pointer_value_offset);
+            const rhs_offset: u32 = @intCast(@as(i32, @intCast(rhs_sr.offset)) - rhs_mr.pointer_value_offset);
             if(lhs_offset - try sema.types.get(sr.type.child).getSize() >= rhs_offset) return false;
             if(rhs_offset - try sema.types.get(rhs_sr.type.child).getSize() >= lhs_offset) return false;
             return true;
         },
         .global_ref => |gr| {
             const rhs_gr = rhs.instr.global_ref;
-            const lhs_offset = @intCast(u32, @intCast(i32, gr.offset) + lhs_mr.pointer_value_offset);
-            const rhs_offset = @intCast(u32, @intCast(i32, rhs_gr.offset) + rhs_mr.pointer_value_offset);
+            const lhs_offset: u32 = @intCast(@as(i32, @intCast(gr.offset)) + lhs_mr.pointer_value_offset);
+            const rhs_offset: u32 = @intCast(@as(i32, @intCast(rhs_gr.offset)) + rhs_mr.pointer_value_offset);
             if(lhs_offset + try sema.types.get(gr.type.child).getSize() <= rhs_offset) return false;
             if(rhs_offset + try sema.types.get(rhs_gr.type.child).getSize() <= lhs_offset) return false;
             return true;
@@ -1461,9 +1461,9 @@ pub fn eliminateTrivialLoads(decl_idx: DeclIndex.Index) !bool {
                         }},
                         .store_constant => |store| .{.load_int_constant = .{
                             .value = switch(mr.instrType()) {
-                                .u8 => @truncate(u8, store.value),
-                                .u16 => @truncate(u16, store.value),
-                                .u32 => @truncate(u32, store.value),
+                                .u8 =>  @as(u8,  @truncate(store.value)),
+                                .u16 => @as(u16, @truncate(store.value)),
+                                .u32 => @as(u32, @truncate(store.value)),
                                 else => unreachable,
                             },
                             .type = mr.instrType(),
@@ -1807,7 +1807,7 @@ const IRWriter = struct {
             },
             .comptime_int => |c| {
                 return self.emit(.{.load_int_constant = .{
-                    .value = @truncate(u64, @bitCast(u65, c)),
+                    .value = @as(u64, @truncate(@as(u65, @bitCast(c)))),
                     .type = .u64, // TODO
                 }});
             },
@@ -1815,7 +1815,7 @@ const IRWriter = struct {
             .unsigned_int, .signed_int => |int| {
                 // TODO: Pass value bit width along too
                 return self.emit(.{.load_int_constant = .{
-                    .value = @truncate(u64, @bitCast(u65, int.value)),
+                    .value = @as(u64, @truncate(@as(u65, @bitCast(int.value)))),
                     .type = typeForBits(int.bits),
                 }});
             },

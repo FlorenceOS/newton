@@ -147,7 +147,7 @@ pub fn main() !void {
                     for(func.instantiations.items, 0..) |instantiation, i| {
                         const inst = sema.InstantiatedFunction{
                             .function_value = decl.init_value,
-                            .instantiation = @intCast(u32, i),
+                            .instantiation = @intCast(i),
                         };
                         if(backends.writer.placed_functions.get(inst)) |offset| {
                             name_buf.shrinkRetainingCapacity(base_name_len);
