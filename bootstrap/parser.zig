@@ -375,11 +375,30 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
         }}),
 
         // Type expressions
-        .enum_keyword => @panic("TODO: Enum type expression"),
+        .enum_keyword => blk: {
+            const tag_type = if(try self.tryConsume(.@"(_ch") != null) tag_type_blk: {
+                const tag_type_name = try self.expect(.identifier);
+                _ = try self.expect(.@")_ch");
+                break :tag_type_blk tag_type_name;
+            } else null;
+
+            _ = try self.expect(.@"{_ch");
+
+            const user_type = try ast.expressions.insert(.{.enum_expression = .{
+                .tag_type = if(tag_type) |tag_type_value| self.toAstIdent(tag_type_value) else null,
+                .first_decl = try self.parseTypeBody(),
+            }});
+
+            _ = try self.expect(.@"}_ch");
+
+            break :blk user_type;
+        },
+
         .struct_keyword => blk: {
             _ = try self.expect(.@"{_ch");
 
-            const user_type = try ast.expressions.insert(.{ .struct_expression = .{
+            const user_type = try ast.expressions.insert(.{.struct_expression = .{
+                .tag_type = null,
                 .first_decl = try self.parseTypeBody(),
             }});
 

@@ -43,6 +43,7 @@ pub const FunctionParamIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const TypeInitValueIndex = indexed_list.Indices(u32, opaque{}, .{});
 
 pub const TypeBody = struct {
+    tag_type: ?SourceRef = null,
     first_decl: StmtIndex.OptIndex,
 };
 
@@ -190,6 +191,7 @@ pub const ExpressionNode = union(enum) {
     function_argument: FunctionArgument,
 
     struct_expression: TypeBody,
+    enum_expression: TypeBody,
 };
 
 pub const StatementNode = struct {
@@ -410,6 +412,15 @@ fn dumpNode(node: anytype, indent_level: usize) anyerror!void {
             .function_expression => |func_idx| try dumpNode(functions.get(func_idx), indent_level),
             .struct_expression => |expr| {
                 std.debug.print("struct ", .{});
+                try dumpStatementChain(expr.first_decl, indent_level);
+            },
+            .enum_expression => |expr| {
+                std.debug.print("enum", .{});
+                if(expr.tag_type) |tag_type| {
+                    std.debug.print("({s}) ", .{try tag_type.toSlice()});
+                } else {
+                    std.debug.print(" ", .{});
+                }
                 try dumpStatementChain(expr.first_decl, indent_level);
             },
             .array_subscript => |bop| {

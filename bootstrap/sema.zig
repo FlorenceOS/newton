@@ -629,6 +629,7 @@ fn semaASTExpr(
             }})});
         },
         .struct_expression => |type_body| blk: {
+            std.debug.assert(type_body.tag_type == null);
             const struct_scope = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx)});
             var decl_builder = decls.builder();
             var field_builder = struct_fields.builder();
