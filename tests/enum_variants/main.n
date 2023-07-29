@@ -1,0 +1,21 @@
+const std = @import("std");
+const test_lib = @import("../test_lib.n");
+
+const Foo = enum {
+    a = 1,
+    b,
+    c = 4,
+    d,
+};
+
+fn main() noreturn {
+    std.print.unsigned_decimal(Foo.a);
+    test_lib.expect_unflushed_output("1".&, 1);
+    std.print.unsigned_decimal(Foo.b);
+    test_lib.expect_unflushed_output("2".&, 1);
+    std.print.unsigned_decimal(Foo.c);
+    test_lib.expect_unflushed_output("4".&, 1);
+    std.print.unsigned_decimal(Foo.d);
+    test_lib.expect_unflushed_output("5".&, 1);
+    test_lib.pass_test();
+}

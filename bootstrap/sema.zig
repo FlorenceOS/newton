@@ -42,7 +42,6 @@ pub const ValueIndex = indexed_list.Indices(u32, opaque{}, .{
 pub const DeclIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const StructFieldIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const StructIndex = indexed_list.Indices(u32, opaque{}, .{});
-pub const EnumVariantIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const EnumIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const ScopeIndex = indexed_list.Indices(u32, opaque{}, .{
     .builtin_scope = .{
@@ -59,7 +58,6 @@ const ValueList = indexed_list.IndexedList(ValueIndex, Value);
 const DeclList = indexed_list.IndexedList(DeclIndex, Decl);
 const StructFieldList = indexed_list.IndexedList(StructFieldIndex, StructField);
 const StructList = indexed_list.IndexedList(StructIndex, Struct);
-const EnumVariantList = indexed_list.IndexedList(EnumVariantIndex, EnumVariant);
 const EnumList = indexed_list.IndexedList(EnumIndex, Enum);
 const ScopeList = indexed_list.IndexedList(ScopeIndex, Scope);
 const StatementList = indexed_list.IndexedList(StatementIndex, Statement);
@@ -700,7 +698,6 @@ fn semaASTExpr(
             else .comptime_int;
 
             var decl_builder = decls.builder();
-            var variant_builder = enum_variants.builder();
             var curr_decl = type_body.first_decl;
             var curr_value = try promoteComptimeInt(0, backing_type);
             while(ast.statements.getOpt(curr_decl)) |decl| {
@@ -724,9 +721,14 @@ fn semaASTExpr(
                         if(ast.ExprIndex.unwrap(variant_decl.init_value)) |init_value_idx| {
                             curr_value = try semaASTExpr(scope_idx, init_value_idx, true, backing_type, null);
                         }
-                        _ = try variant_builder.insert(.{
+                        _ = try decl_builder.insert(.{
+                            .mutable = false,
+                            .static = true,
+                            .offset = null,
+                            .comptime_param = true,
+                            .function_param_idx = null,
                             .name = variant_decl.identifier,
-                            .value = curr_value,
+                            .init_value = curr_value,
                         });
                         // TODO: This could probably be improved upon, but I can't think of a better
                         // way to write this to this will have to do for now.
@@ -746,7 +748,6 @@ fn semaASTExpr(
             // if the user hasn't provided one. Operations like @size_of will fail
             // because of this.
             const enum_idx = try enums.insert(.{
-                .first_variant = variant_builder.first,
                 .backing_type = backing_type,
                 .scope = enum_scope,
             });
@@ -1300,8 +1301,19 @@ fn semaASTExpr(
                 },
                 .type_idx => |idx| {
                     const lhs_type = types.get(idx);
-                    const lhs_struct = structs.get(lhs_type.struct_idx);
-                    if(try scopes.get(lhs_struct.scope).lookupDecl(token.identifier_value())) |static_decl| {
+                    var decl: ?*Decl = null;
+                    switch(lhs_type.*) {
+                        .struct_idx => |struct_idx| {
+                            const lhs_struct = structs.get(struct_idx);
+                            decl = try scopes.get(lhs_struct.scope).lookupDecl(token.identifier_value());
+                        },
+                        .enum_idx => |enum_idx| {
+                            const lhs_enum = enums.get(enum_idx);
+                            decl = try scopes.get(lhs_enum.scope).lookupDecl(token.identifier_value());
+                        },
+                        else => unreachable,
+                    }
+                    if(decl) |static_decl| {
                         std.debug.assert(static_decl.static);
                         try values.get(static_decl.init_value).analyze();
                         if(!static_decl.mutable) {
@@ -1918,16 +1930,7 @@ pub const Struct = struct {
     }
 };
 
-// NOTE: This is very similar to StructField, but I decided to split them
-// to not cause any confusion when working with either of them.
-pub const EnumVariant = struct {
-    name: ast.SourceRef,
-    value: ValueIndex.Index,
-    next: EnumVariantIndex.OptIndex = .none,
-};
-
 pub const Enum = struct {
-    first_variant: EnumVariantIndex.OptIndex,
     backing_type: TypeIndex.Index,
     scope: ScopeIndex.Index,
 };
@@ -2349,7 +2352,6 @@ pub var values: ValueList = undefined;
 pub var decls: DeclList = undefined;
 pub var struct_fields: StructFieldList = undefined;
 pub var structs: StructList = undefined;
-pub var enum_variants: EnumVariantList = undefined;
 pub var enums: EnumList = undefined;
 pub var scopes: ScopeList = undefined;
 pub var statements: StatementList = undefined;
@@ -2362,7 +2364,6 @@ pub fn init() !void {
     decls = try DeclList.init(std.heap.page_allocator);
     struct_fields = try StructFieldList.init(std.heap.page_allocator);
     structs = try StructList.init(std.heap.page_allocator);
-    enum_variants = try EnumVariantList.init(std.heap.page_allocator);
     enums = try EnumList.init(std.heap.page_allocator);
     scopes = try ScopeList.init(std.heap.page_allocator);
     statements = try StatementList.init(std.heap.page_allocator);
