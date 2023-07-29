@@ -42,6 +42,8 @@ pub const ValueIndex = indexed_list.Indices(u32, opaque{}, .{
 pub const DeclIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const StructFieldIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const StructIndex = indexed_list.Indices(u32, opaque{}, .{});
+pub const EnumVariantIndex = indexed_list.Indices(u32, opaque{}, .{});
+pub const EnumIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const ScopeIndex = indexed_list.Indices(u32, opaque{}, .{
     .builtin_scope = .{
         .outer_scope = .none,
@@ -57,6 +59,8 @@ const ValueList = indexed_list.IndexedList(ValueIndex, Value);
 const DeclList = indexed_list.IndexedList(DeclIndex, Decl);
 const StructFieldList = indexed_list.IndexedList(StructFieldIndex, StructField);
 const StructList = indexed_list.IndexedList(StructIndex, Struct);
+const EnumVariantList = indexed_list.IndexedList(EnumVariantIndex, EnumVariant);
+const EnumList = indexed_list.IndexedList(EnumIndex, Enum);
 const ScopeList = indexed_list.IndexedList(ScopeIndex, Scope);
 const StatementList = indexed_list.IndexedList(StatementIndex, Statement);
 const ExpressionList = indexed_list.IndexedList(ExpressionIndex, Expression);
@@ -234,7 +238,7 @@ fn isPointerCompatible(value_type: *Type, target_type: *Type) bool {
         .void, .noreturn, .anyopaque, .undefined, .bool, .type, .comptime_int, .reference, .type_of_value,
         => unreachable,
 
-        .signed_int, .unsigned_int, .struct_idx, .array,
+        .signed_int, .unsigned_int, .struct_idx, .enum_idx, .array,
         => return false,
 
         .pointer => |ptr| {
@@ -686,6 +690,71 @@ fn semaASTExpr(
 
             scopes.get(struct_scope).first_decl = decl_builder.first;
             scopes.get(struct_scope).this_type = TypeIndex.toOpt(type_idx);
+
+            break :blk try values.insert(.{.type_idx = type_idx});
+        },
+        .enum_expression => |type_body| blk: {
+            const enum_scope = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx)});
+            const backing_type = if(ast.ExprIndex.unwrap(type_body.tag_type)) |tag_type|
+                values.get(try semaASTExpr(scope_idx, tag_type, true, .type, null)).type_idx
+            else .comptime_int;
+
+            var decl_builder = decls.builder();
+            var variant_builder = enum_variants.builder();
+            var curr_decl = type_body.first_decl;
+            var curr_value = try promoteComptimeInt(0, backing_type);
+            while(ast.statements.getOpt(curr_decl)) |decl| {
+                switch(decl.value) {
+                    .declaration => |inner_decl| {
+                        _ = try decl_builder.insert(.{
+                            .mutable = inner_decl.mutable,
+                            .static = true,
+                            .offset = null,
+                            .comptime_param = false,
+                            .function_param_idx = null,
+                            .name = inner_decl.identifier,
+                            .init_value = try lazyDeclInit(
+                                enum_scope,
+                                ast.ExprIndex.toOpt(inner_decl.init_value),
+                                inner_decl.type,
+                            ),
+                        });
+                    },
+                    .field_decl => |variant_decl| {
+                        if(ast.ExprIndex.unwrap(variant_decl.init_value)) |init_value_idx| {
+                            curr_value = try semaASTExpr(scope_idx, init_value_idx, true, backing_type, null);
+                        }
+                        _ = try variant_builder.insert(.{
+                            .name = variant_decl.identifier,
+                            .value = curr_value,
+                        });
+                        // TODO: This could probably be improved upon, but I can't think of a better
+                        // way to write this to this will have to do for now.
+                        curr_value = try promoteComptimeInt(switch(values.get(curr_value).*) {
+                            .comptime_int => |int| int,
+                            .unsigned_int, .signed_int => |int| int.value,
+                            else => unreachable,
+                        } +% 1, backing_type);
+                    },
+                    else => unreachable,
+                }
+
+                curr_decl = decl.next;
+            }
+
+            // TODO: Pick a sufficiently sized backing type instead of comptime_int
+            // if the user hasn't provided one. Operations like @size_of will fail
+            // because of this.
+            const enum_idx = try enums.insert(.{
+                .first_variant = variant_builder.first,
+                .backing_type = backing_type,
+                .scope = enum_scope,
+            });
+
+            const type_idx = try types.insert(.{ .enum_idx = enum_idx });
+
+            scopes.get(enum_scope).first_decl = decl_builder.first;
+            scopes.get(enum_scope).this_type = TypeIndex.toOpt(type_idx);
 
             break :blk try values.insert(.{.type_idx = type_idx});
         },
@@ -1555,6 +1624,7 @@ pub const Type = union(enum) {
     unsigned_int: u32,
     signed_int: u32,
     struct_idx: StructIndex.Index,
+    enum_idx: EnumIndex.Index,
     pointer: PointerType,
     reference: PointerType,
     type_of_value: ValueIndex.Index,
@@ -1582,6 +1652,7 @@ pub const Type = union(enum) {
             },
             .array => |arr| try types.get(arr.child).getSize() * arr.size,
             .struct_idx => |struct_idx| try structs.get(struct_idx).offsetOf(null),
+            .enum_idx => |enum_idx| try types.get(enums.get(enum_idx).backing_type).getSize(),
             .function => 0,
         };
     }
@@ -1592,6 +1663,7 @@ pub const Type = union(enum) {
             .type_of_value => @panic("type_of_value align"),
             .bool, .unsigned_int, .signed_int, .pointer, .reference => self.getSize(),
             .struct_idx => |struct_idx| structs.get(struct_idx).getAlignment(),
+            .enum_idx => |enum_idx| types.get(enums.get(enum_idx).backing_type).getAlignment(),
             .array => |arr| types.get(arr.child).getAlignment(),
             .function => 0,
         };
@@ -1602,7 +1674,7 @@ pub const Type = union(enum) {
             .reference => |r| types.get(r.child).isContainer(),
             .void, .undefined, .comptime_int, .type, .anyopaque,
             .bool, .unsigned_int, .signed_int, .pointer, .noreturn,
-            .function,
+            .function, .enum_idx,
             => false,
             .struct_idx, .array, .type_of_value,
             => true,
@@ -1617,6 +1689,7 @@ pub const Type = union(enum) {
             .unsigned_int => |bits| try writer.print("u{d}", .{bits}),
             .signed_int => |bits| try writer.print("i{d}", .{bits}),
             .struct_idx => |idx| try writer.print("struct_{d}", .{@intFromEnum(idx)}),
+            .enum_idx => |idx| try writer.print("enum_{d}", .{@intFromEnum(idx)}),
             .pointer => |ptr| {
                 try writer.writeByte('*');
                 if(ptr.is_const) try writer.writeAll("const ");
@@ -1843,6 +1916,20 @@ pub const Struct = struct {
         offset &= ~(alignment - 1);
         return offset;
     }
+};
+
+// NOTE: This is very similar to StructField, but I decided to split them
+// to not cause any confusion when working with either of them.
+pub const EnumVariant = struct {
+    name: ast.SourceRef,
+    value: ValueIndex.Index,
+    next: EnumVariantIndex.OptIndex = .none,
+};
+
+pub const Enum = struct {
+    first_variant: EnumVariantIndex.OptIndex,
+    backing_type: TypeIndex.Index,
+    scope: ScopeIndex.Index,
 };
 
 var func_instantiation_alloc = std.heap.GeneralPurposeAllocator(.{}){
@@ -2262,6 +2349,8 @@ pub var values: ValueList = undefined;
 pub var decls: DeclList = undefined;
 pub var struct_fields: StructFieldList = undefined;
 pub var structs: StructList = undefined;
+pub var enum_variants: EnumVariantList = undefined;
+pub var enums: EnumList = undefined;
 pub var scopes: ScopeList = undefined;
 pub var statements: StatementList = undefined;
 pub var expressions: ExpressionList = undefined;
@@ -2273,6 +2362,8 @@ pub fn init() !void {
     decls = try DeclList.init(std.heap.page_allocator);
     struct_fields = try StructFieldList.init(std.heap.page_allocator);
     structs = try StructList.init(std.heap.page_allocator);
+    enum_variants = try EnumVariantList.init(std.heap.page_allocator);
+    enums = try EnumList.init(std.heap.page_allocator);
     scopes = try ScopeList.init(std.heap.page_allocator);
     statements = try StatementList.init(std.heap.page_allocator);
     expressions = try ExpressionList.init(std.heap.page_allocator);
