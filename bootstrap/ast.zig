@@ -43,7 +43,7 @@ pub const FunctionParamIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const TypeInitValueIndex = indexed_list.Indices(u32, opaque{}, .{});
 
 pub const TypeBody = struct {
-    tag_type: ?SourceRef = null,
+    tag_type: ExprIndex.OptIndex = .none,
     first_decl: StmtIndex.OptIndex,
 };
 
@@ -416,8 +416,10 @@ fn dumpNode(node: anytype, indent_level: usize) anyerror!void {
             },
             .enum_expression => |expr| {
                 std.debug.print("enum", .{});
-                if(expr.tag_type) |tag_type| {
-                    std.debug.print("({s}) ", .{try tag_type.toSlice()});
+                if(ExprIndex.unwrap(expr.tag_type)) |tag_type| {
+                    std.debug.print("(", .{});
+                    try dumpNode(expressions.get(tag_type), indent_level);
+                    std.debug.print(") ", .{});
                 } else {
                     std.debug.print(" ", .{});
                 }
