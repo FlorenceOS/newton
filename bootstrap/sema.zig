@@ -42,6 +42,7 @@ pub const ValueIndex = indexed_list.Indices(u32, opaque{}, .{
 pub const DeclIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const ContainerFieldIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const StructIndex = indexed_list.Indices(u32, opaque{}, .{});
+pub const UnionIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const EnumIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const ScopeIndex = indexed_list.Indices(u32, opaque{}, .{
     .builtin_scope = .{
@@ -58,6 +59,7 @@ const ValueList = indexed_list.IndexedList(ValueIndex, Value);
 const DeclList = indexed_list.IndexedList(DeclIndex, Decl);
 const ContainerFieldList = indexed_list.IndexedList(ContainerFieldIndex, ContainerField);
 const StructList = indexed_list.IndexedList(StructIndex, Struct);
+const UnionList = indexed_list.IndexedList(UnionIndex, Union);
 const EnumList = indexed_list.IndexedList(EnumIndex, Enum);
 const ScopeList = indexed_list.IndexedList(ScopeIndex, Scope);
 const StatementList = indexed_list.IndexedList(StatementIndex, Statement);
@@ -221,6 +223,39 @@ fn typeTil(first_value: ast.TypeInitValueIndex.OptIndex, target_type: TypeIndex.
                 }
             }
         },
+        .union_idx => |uidx| {
+            const target_union = unions.get(uidx);
+            if(ast.type_init_values.getOpt(first_value)) |tiv| {
+                const tiv_field_name = try tiv.identifier.?.retokenize();
+                defer tiv_field_name.deinit();
+
+                var found_field = false;
+                var current_field = target_union.first_field;
+                while(container_fields.getOpt(current_field)) |field| : (current_field = field.next) {
+                    const struct_field_name = try field.name.retokenize();
+                    defer struct_field_name.deinit();
+
+                    if(std.mem.eql(u8, tiv_field_name.identifier_value(), struct_field_name.identifier_value())) {
+                        found_field = true;
+                        try result.append(.{
+                            .identifier = @intFromEnum(current_field),
+                            .assignment = .{.normal = tiv.value},
+                        });
+                        break;
+                    }
+                }
+
+                if(!found_field) {
+                    std.debug.panic("Union field '{s}' does not exist", .{tiv_field_name.identifier_value()});
+                }
+
+                std.debug.assert(tiv.next == .none);
+            }
+
+            if(result.len != 1) {
+                std.debug.panic("You need to initialize one of the union fields", .{});
+            }
+        },
         else => |t| std.debug.panic("typeTil for type {s}", .{@tagName(t)}),
     }
 
@@ -235,7 +270,7 @@ fn isPointerCompatible(value_type: *Type, target_type: *Type) bool {
         .void, .noreturn, .anyopaque, .undefined, .bool, .type, .comptime_int, .reference, .type_of_value,
         => unreachable,
 
-        .signed_int, .unsigned_int, .struct_idx, .enum_idx, .array,
+        .signed_int, .unsigned_int, .struct_idx, .union_idx, .enum_idx, .array,
         => return false,
 
         .pointer => |ptr| {
@@ -687,6 +722,56 @@ fn semaASTExpr(
 
             scopes.get(struct_scope).first_decl = decl_builder.first;
             scopes.get(struct_scope).this_type = TypeIndex.toOpt(type_idx);
+
+            break :blk try values.insert(.{.type_idx = type_idx});
+        },
+        .union_expression => |type_body| blk: {
+            std.debug.assert(type_body.tag_type == .none);
+            const union_scope = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx)});
+            var decl_builder = decls.builder();
+            var field_builder = container_fields.builder();
+            var curr_decl = type_body.first_decl;
+            while(ast.statements.getOpt(curr_decl)) |decl| {
+                switch(decl.value) {
+                    .declaration => |inner_decl| {
+                        _ = try decl_builder.insert(.{
+                            .mutable = inner_decl.mutable,
+                            .static = true,
+                            .offset = null,
+                            .comptime_param = false,
+                            .function_param_idx = null,
+                            .name = inner_decl.identifier,
+                            .init_value = try lazyDeclInit(
+                                union_scope,
+                                ast.ExprIndex.toOpt(inner_decl.init_value),
+                                inner_decl.type,
+                            ),
+                        });
+                    },
+                    .field_decl => |field_decl| {
+                        std.debug.assert(field_decl.type != .none);
+                        std.debug.assert(field_decl.init_value == .none);
+                        const field_type = try semaASTExpr(union_scope, ast.ExprIndex.unwrap(field_decl.type).?, true, .type, null);
+                        _ = try field_builder.insert(.{
+                            .name = field_decl.identifier,
+                            .init_value = try values.insert(.{.runtime = .{.expr = .none, .value_type = field_type}}),
+                        });
+                    },
+                    else => unreachable,
+                }
+
+                curr_decl = decl.next;
+            }
+
+            const union_idx = try unions.insert(.{
+                .first_field = field_builder.first,
+                .scope = union_scope,
+            });
+
+            const type_idx = try types.insert(.{.union_idx = union_idx});
+
+            scopes.get(union_scope).first_decl = decl_builder.first;
+            scopes.get(union_scope).this_type = TypeIndex.toOpt(type_idx);
 
             break :blk try values.insert(.{.type_idx = type_idx});
         },
@@ -1226,42 +1311,42 @@ fn semaASTExpr(
                             else => false,
                         },
                     };
-                    const lhs_struct = structs.get(switch(lhs_type.*) {
-                        .struct_idx => |sidx| sidx,
-                        .pointer => |ptr| types.get(ptr.child).struct_idx,
-                        else => |other| std.debug.panic("Can't do member access on {any}", .{other}),
-                    });
-                    if(try lhs_struct.lookupField(token.identifier_value())) |field| {
-                        if(force_comptime_eval) @panic("TODO: Comptime eval field access");
-                        const member_ptr = try values.addDedupLinear(.{
-                            .type_idx = try types.addDedupLinear(.{.pointer = .{
-                                .is_const = !mutable,
-                                .is_volatile = false,
-                                .child = try values.get(field.init_value).getType(),
-                            }}),
-                        });
-                        const offset_expr = try values.insert(.{.unsigned_int = .{
-                            .bits = 64,
-                            .value = try lhs_struct.offsetOf(struct_fields.getIndex(field)),
-                        }});
-                        const addr_of_expr = if(types.get(try decayValueType(lhs)).* == .pointer) lhs else
-                            try Value.fromExpression(try expressions.insert(.{.addr_of = lhs}), member_ptr);
-                        const member_ref = try values.addDedupLinear(.{
-                            .type_idx = try types.addDedupLinear(.{.reference = .{
-                                .is_const = !mutable,
-                                .is_volatile = false,
-                                .child = try values.get(field.init_value).getType(),
-                            }}),
-                        });
-                        const add_expr = try Value.fromExpression(try expressions.insert(.{.add = .{.lhs = addr_of_expr, .rhs = offset_expr}}), member_ptr);
-                        break :blk try values.insert(.{.runtime = .{
-                            .expr = ExpressionIndex.toOpt(try expressions.insert(.{.deref = add_expr})),
-                            .value_type = member_ref,
-                        }});
-                    } else {
-                        if(try scopes.get(lhs_struct.scope).lookupDecl(token.identifier_value())) |static_decl| {
-                            try values.get(static_decl.init_value).analyze();
-                            const fn_value = &values.get(static_decl.init_value).function;
+                    const field_or_decl = try getFieldOrDecl(lhs, token.identifier_value());
+                    if(field_or_decl == null) {
+                        return error.MemberNotFound;
+                    }
+                    switch(field_or_decl.?) {
+                        .field => |field| {
+                            if(force_comptime_eval) @panic("TODO: Comptime eval field access");
+                            const member_ptr = try values.addDedupLinear(.{
+                                .type_idx = try types.addDedupLinear(.{.pointer = .{
+                                    .is_const = !mutable,
+                                    .is_volatile = false,
+                                    .child = try values.get(field.field.init_value).getType(),
+                                }}),
+                            });
+                            const offset_expr = try values.insert(.{.unsigned_int = .{
+                                .bits = 64,
+                                .value = field.offset,
+                            }});
+                            const addr_of_expr = if(types.get(try decayValueType(lhs)).* == .pointer) lhs else
+                                try Value.fromExpression(try expressions.insert(.{.addr_of = lhs}), member_ptr);
+                            const member_ref = try values.addDedupLinear(.{
+                                .type_idx = try types.addDedupLinear(.{.reference = .{
+                                    .is_const = !mutable,
+                                    .is_volatile = false,
+                                    .child = try values.get(field.field.init_value).getType(),
+                                }}),
+                            });
+                            const add_expr = try Value.fromExpression(try expressions.insert(.{.add = .{.lhs = addr_of_expr, .rhs = offset_expr}}), member_ptr);
+                            break :blk try values.insert(.{.runtime = .{
+                                .expr = ExpressionIndex.toOpt(try expressions.insert(.{.deref = add_expr})),
+                                .value_type = member_ref,
+                            }});
+                        },
+                        .decl => |decl| {
+                            try values.get(decl.init_value).analyze();
+                            const fn_value = &values.get(decl.init_value).function;
                             const first_param = decls.getOpt(scopes.get(fn_value.generic_param_scope).first_decl).?;
                             std.debug.assert(!first_param.comptime_param);
 
@@ -1274,28 +1359,27 @@ fn semaASTExpr(
                             const first_param_is_ptr = types.get(values.get(param_type).type_idx).* == .pointer;
                             if(lhs_type.* != .pointer and first_param_is_ptr) {
                                 break :blk try values.insert(.{.bound_fn = .{
-                                    .callee = static_decl.init_value,
+                                    .callee = decl.init_value,
                                     .first_arg = try ast.expressions.insert(.{.function_argument = .{
                                         .value = try ast.expressions.insert(.{.addr_of = .{.operand = bop.lhs}}),
                                     }}),
                                 }});
                             } else if(lhs_type.* == .pointer and !first_param_is_ptr) {
                                 break :blk try values.insert(.{.bound_fn = .{
-                                    .callee = static_decl.init_value,
+                                    .callee = decl.init_value,
                                     .first_arg = try ast.expressions.insert(.{.function_argument = .{
                                         .value = try ast.expressions.insert(.{.deref = .{.operand = bop.lhs}}),
                                     }}),
                                 }});
                             } else {
                                 break :blk try values.insert(.{.bound_fn = .{
-                                    .callee = static_decl.init_value,
+                                    .callee = decl.init_value,
                                     .first_arg = try ast.expressions.insert(.{.function_argument = .{
                                         .value = bop.lhs,
                                     }}),
                                 }});
                             }
-                        }
-                        return error.MemberNotFound;
+                        },
                     }
                 },
                 .type_idx => |idx| {
@@ -1495,6 +1579,10 @@ fn semaASTExpr(
                                 field_type = try values.get(container_fields.get(fidx).init_value).getType();
                                 field_offset = try structs.get(sidx).offsetOf(fidx);
                             },
+                            .union_idx => {
+                                field_type = try values.get(container_fields.get(fidx).init_value).getType();
+                                field_offset = 0;
+                            },
                             else => unreachable,
                         }
 
@@ -1635,6 +1723,7 @@ pub const Type = union(enum) {
     unsigned_int: u32,
     signed_int: u32,
     struct_idx: StructIndex.Index,
+    union_idx: UnionIndex.Index,
     enum_idx: EnumIndex.Index,
     pointer: PointerType,
     reference: PointerType,
@@ -1663,6 +1752,18 @@ pub const Type = union(enum) {
             },
             .array => |arr| try types.get(arr.child).getSize() * arr.size,
             .struct_idx => |struct_idx| try structs.get(struct_idx).offsetOf(null),
+            .union_idx => |union_idx| blk: {
+                var biggest_field: u32 = 0;
+                var curr_field = unions.get(union_idx).first_field;
+                while(container_fields.getOpt(curr_field)) |field| : (curr_field = field.next) {
+                    const field_type = try values.get(field.init_value).getType();
+                    const field_size = try types.get(field_type).getSize();
+                    if(field_size > biggest_field) {
+                        biggest_field = field_size;
+                    }
+                }
+                break :blk biggest_field;
+            },
             .enum_idx => |enum_idx| try types.get(enums.get(enum_idx).backing_type).getSize(),
             .function => 0,
         };
@@ -1674,6 +1775,7 @@ pub const Type = union(enum) {
             .type_of_value => @panic("type_of_value align"),
             .bool, .unsigned_int, .signed_int, .pointer, .reference => self.getSize(),
             .struct_idx => |struct_idx| structs.get(struct_idx).getAlignment(),
+            .union_idx => |union_idx| unions.get(union_idx).getAlignment(),
             .enum_idx => |enum_idx| types.get(enums.get(enum_idx).backing_type).getAlignment(),
             .array => |arr| types.get(arr.child).getAlignment(),
             .function => 0,
@@ -1687,7 +1789,7 @@ pub const Type = union(enum) {
             .bool, .unsigned_int, .signed_int, .pointer, .noreturn,
             .function, .enum_idx,
             => false,
-            .struct_idx, .array, .type_of_value,
+            .struct_idx, .union_idx, .array, .type_of_value,
             => true,
         };
     }
@@ -1700,6 +1802,7 @@ pub const Type = union(enum) {
             .unsigned_int => |bits| try writer.print("u{d}", .{bits}),
             .signed_int => |bits| try writer.print("i{d}", .{bits}),
             .struct_idx => |idx| try writer.print("struct_{d}", .{@intFromEnum(idx)}),
+            .union_idx => |idx| try writer.print("union_{d}", .{@intFromEnum(idx)}),
             .enum_idx => |idx| try writer.print("enum_{d}", .{@intFromEnum(idx)}),
             .pointer => |ptr| {
                 try writer.writeByte('*');
@@ -1926,6 +2029,25 @@ pub const Struct = struct {
         offset += alignment - 1;
         offset &= ~(alignment - 1);
         return offset;
+    }
+};
+
+pub const Union = struct {
+    first_field: ContainerFieldIndex.OptIndex,
+    scope: ScopeIndex.Index,
+
+    pub fn lookupField(self: *@This(), name: []const u8) !?*ContainerField {
+        return genericChainLookup(ContainerFieldIndex, ContainerField, &container_fields, self.first_field, name);
+    }
+
+    pub fn getAlignment(self: *@This()) anyerror!u32 {
+        var alignment: u32 = 0;
+        var curr_field = self.first_field;
+        while(container_fields.getOpt(curr_field)) |field| : (curr_field = field.next) {
+            const field_type = types.get(try values.get(field.init_value).getType());
+            alignment = @max(alignment, try field_type.getAlignment());
+        }
+        return alignment;
     }
 };
 
@@ -2351,6 +2473,7 @@ pub var values: ValueList = undefined;
 pub var decls: DeclList = undefined;
 pub var container_fields: ContainerFieldList = undefined;
 pub var structs: StructList = undefined;
+pub var unions: UnionList = undefined;
 pub var enums: EnumList = undefined;
 pub var scopes: ScopeList = undefined;
 pub var statements: StatementList = undefined;
@@ -2363,6 +2486,7 @@ pub fn init() !void {
     decls = try DeclList.init(std.heap.page_allocator);
     container_fields = try ContainerFieldList.init(std.heap.page_allocator);
     structs = try StructList.init(std.heap.page_allocator);
+    unions = try UnionList.init(std.heap.page_allocator);
     enums = try EnumList.init(std.heap.page_allocator);
     scopes = try ScopeList.init(std.heap.page_allocator);
     statements = try StatementList.init(std.heap.page_allocator);
@@ -2399,4 +2523,50 @@ fn lazyDeclInit(
     } else {
         return values.insert(.{.runtime = .{.expr = .none, .value_type = ValueIndex.unwrap(value_type).?}});
     }
+}
+
+const FieldOrDeclResult = union(enum) {
+    field: struct {
+        field: *ContainerField,
+        offset: u32,
+    },
+    decl: *Decl,
+};
+
+fn getFieldOrDecl(value_idx: ValueIndex.Index, name: []const u8) !?FieldOrDeclResult {
+    var value_type = types.get(try values.get(value_idx).getType());
+    if(value_type.* == .pointer) {
+        value_type = types.get(value_type.pointer.child);
+    }
+
+    var field_opt: ?*ContainerField = null;
+    var field_offset: u32 = 0;
+    switch(value_type.*) {
+        .struct_idx => |idx| {
+            const struct_type = structs.get(idx);
+            field_opt = try struct_type.lookupField(name);
+            if(field_opt) |field| {
+                field_offset = try struct_type.offsetOf(container_fields.getIndex(field));
+            }
+        },
+        .union_idx => |idx| field_opt = try unions.get(idx).lookupField(name),
+        else => |other| std.debug.panic("Can't do member access on {any}", .{other}),
+    }
+
+    if(field_opt) |field| {
+        return .{.field = .{.field = field, .offset = field_offset}};
+    }
+
+    var scope: *Scope = undefined;
+    switch(value_type.*) {
+        .struct_idx => |idx| scope = scopes.get(structs.get(idx).scope),
+        .union_idx => |idx| scope = scopes.get(unions.get(idx).scope),
+        else => unreachable,
+    }
+
+    if(try scope.lookupDecl(name)) |decl| {
+        return .{.decl = decl};
+    }
+
+    return null;
 }

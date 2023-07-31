@@ -1,0 +1,14 @@
+const std = @import("std");
+const test_lib = @import("../test_lib.n");
+
+const Foo = union {
+    byte: u8,
+    word: u16,
+};
+
+fn main() noreturn {
+    var a = Foo{.word = 0x6942};
+    test_lib.expect_equal(u64, a.byte, 0x42);
+    test_lib.expect_equal(u64, a.word, 0x6942);
+    test_lib.pass_test();
+}
