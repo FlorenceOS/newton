@@ -40,7 +40,7 @@ pub const ValueIndex = indexed_list.Indices(u32, opaque{}, .{
     .undefined = .{.undefined = null},
 });
 pub const DeclIndex = indexed_list.Indices(u32, opaque{}, .{});
-pub const StructFieldIndex = indexed_list.Indices(u32, opaque{}, .{});
+pub const ContainerFieldIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const StructIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const EnumIndex = indexed_list.Indices(u32, opaque{}, .{});
 pub const ScopeIndex = indexed_list.Indices(u32, opaque{}, .{
@@ -56,7 +56,7 @@ pub const TypeInitValueIndex = indexed_list.Indices(u32, opaque{}, .{});
 const TypeList = indexed_list.IndexedList(TypeIndex, Type);
 const ValueList = indexed_list.IndexedList(ValueIndex, Value);
 const DeclList = indexed_list.IndexedList(DeclIndex, Decl);
-const StructFieldList = indexed_list.IndexedList(StructFieldIndex, StructField);
+const ContainerFieldList = indexed_list.IndexedList(ContainerFieldIndex, ContainerField);
 const StructList = indexed_list.IndexedList(StructIndex, Struct);
 const EnumList = indexed_list.IndexedList(EnumIndex, Enum);
 const ScopeList = indexed_list.IndexedList(ScopeIndex, Scope);
@@ -183,9 +183,8 @@ fn typeTil(first_value: ast.TypeInitValueIndex.OptIndex, target_type: TypeIndex.
                 defer tiv_field_name.deinit();
 
                 var found_field = false;
-
                 var current_field = target_struct.first_field;
-                while(struct_fields.getOpt(current_field)) |field| : (current_field = field.next) {
+                while(container_fields.getOpt(current_field)) |field| : (current_field = field.next) {
                     const struct_field_name = try field.name.retokenize();
                     defer struct_field_name.deinit();
 
@@ -209,7 +208,7 @@ fn typeTil(first_value: ast.TypeInitValueIndex.OptIndex, target_type: TypeIndex.
             }
 
             var current_field = target_struct.first_field;
-            while(struct_fields.getOpt(current_field)) |field| : (current_field = field.next) {
+            while(container_fields.getOpt(current_field)) |field| : (current_field = field.next) {
                 if(for(result.slice()) |ass| {
                     if(ass.identifier == @intFromEnum(current_field)) {
                         break false;
@@ -634,7 +633,7 @@ fn semaASTExpr(
             std.debug.assert(type_body.tag_type == .none);
             const struct_scope = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx)});
             var decl_builder = decls.builder();
-            var field_builder = struct_fields.builder();
+            var field_builder = container_fields.builder();
             var curr_decl = type_body.first_decl;
             while(ast.statements.getOpt(curr_decl)) |decl| {
                 switch(decl.value) {
@@ -1490,10 +1489,10 @@ fn semaASTExpr(
                         var field_type: TypeIndex.Index = undefined;
                         var field_offset: u32 = undefined;
 
+                        const fidx: ContainerFieldIndex.Index = @enumFromInt(ass.identifier);
                         switch(types.get(ttyp).*) {
                             .struct_idx => |sidx| {
-                                const fidx: StructFieldIndex.Index = @enumFromInt(ass.identifier);
-                                field_type = try values.get(struct_fields.get(fidx).init_value).getType();
+                                field_type = try values.get(container_fields.get(fidx).init_value).getType();
                                 field_offset = try structs.get(sidx).offsetOf(fidx);
                             },
                             else => unreachable,
@@ -1556,7 +1555,7 @@ fn semaASTExpr(
                         switch(ass.assignment) {
                             .normal => |expr| {
                                 std.debug.assert(types.get(ttyp).* == .struct_idx);
-                                const field = struct_fields.get(@enumFromInt(ass.identifier));
+                                const field = container_fields.get(@enumFromInt(ass.identifier));
                                 ass.assignment = .{.sema = try semaASTExpr(scope_idx, expr, false, try values.get(field.init_value).getType(), null)};
                             },
                             .default => {},
@@ -1868,10 +1867,10 @@ pub const Decl = struct {
     }
 };
 
-pub const StructField = struct {
+pub const ContainerField = struct {
     name: ast.SourceRef,
     init_value: ValueIndex.Index,
-    next: StructFieldIndex.OptIndex = .none,
+    next: ContainerFieldIndex.OptIndex = .none,
 };
 
 fn genericChainLookup(
@@ -1894,32 +1893,32 @@ fn genericChainLookup(
 }
 
 pub const Struct = struct {
-    first_field: StructFieldIndex.OptIndex,
+    first_field: ContainerFieldIndex.OptIndex,
     scope: ScopeIndex.Index,
 
-    pub fn lookupField(self: *@This(), name: []const u8) !?*StructField {
-        return genericChainLookup(StructFieldIndex, StructField, &struct_fields, self.first_field, name);
+    pub fn lookupField(self: *@This(), name: []const u8) !?*ContainerField {
+        return genericChainLookup(ContainerFieldIndex, ContainerField, &container_fields, self.first_field, name);
     }
 
     pub fn getAlignment(self: *@This()) anyerror!u32 {
         var alignment: u32 = 0;
         var curr_field = self.first_field;
-        while(struct_fields.getOpt(curr_field)) |field| : (curr_field = field.next) {
+        while(container_fields.getOpt(curr_field)) |field| : (curr_field = field.next) {
             const field_type = types.get(try values.get(field.init_value).getType());
             alignment = @max(alignment, try field_type.getAlignment());
         }
         return alignment;
     }
 
-    pub fn offsetOf(self: *@This(), field_idx: ?StructFieldIndex.Index) anyerror!u32 {
+    pub fn offsetOf(self: *@This(), field_idx: ?ContainerFieldIndex.Index) anyerror!u32 {
         var offset: u32 = 0;
         var curr_field = self.first_field;
-        while(struct_fields.getOpt(curr_field)) |field| : (curr_field = field.next) {
+        while(container_fields.getOpt(curr_field)) |field| : (curr_field = field.next) {
             const field_type = types.get(try values.get(field.init_value).getType());
             const alignment = try field_type.getAlignment();
             offset += alignment - 1;
             offset &= ~(alignment - 1);
-            if(field_idx == struct_fields.getIndex(field)) return offset;
+            if(field_idx == container_fields.getIndex(field)) return offset;
             offset += try field_type.getSize();
         }
         std.debug.assert(field_idx == null);
@@ -2350,7 +2349,7 @@ var til_allocator = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 pub var types: TypeList = undefined;
 pub var values: ValueList = undefined;
 pub var decls: DeclList = undefined;
-pub var struct_fields: StructFieldList = undefined;
+pub var container_fields: ContainerFieldList = undefined;
 pub var structs: StructList = undefined;
 pub var enums: EnumList = undefined;
 pub var scopes: ScopeList = undefined;
@@ -2362,7 +2361,7 @@ pub fn init() !void {
     types = try TypeList.init(std.heap.page_allocator);
     values = try ValueList.init(std.heap.page_allocator);
     decls = try DeclList.init(std.heap.page_allocator);
-    struct_fields = try StructFieldList.init(std.heap.page_allocator);
+    container_fields = try ContainerFieldList.init(std.heap.page_allocator);
     structs = try StructList.init(std.heap.page_allocator);
     enums = try EnumList.init(std.heap.page_allocator);
     scopes = try ScopeList.init(std.heap.page_allocator);
