@@ -286,7 +286,7 @@ fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
         .end_of_file, .else_keyword, .enum_keyword, .fn_keyword,
         .struct_keyword, .bool_keyword, .type_keyword, .void_keyword,
         .anyopaque_keyword, .volatile_keyword, .true_keyword, .false_keyword, .undefined_keyword,
-        .inline_keyword, .noreturn_keyword,
+        .inline_keyword, .noreturn_keyword, .union_keyword,
         => |_, tag| {
             std.debug.print("Unexpected statement token: {s}\n", .{@tagName(tag)});
             return error.UnexpectedToken;
@@ -399,6 +399,25 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
 
             const user_type = try ast.expressions.insert(.{.struct_expression = .{
                 .tag_type = .none,
+                .first_decl = try self.parseTypeBody(),
+            }});
+
+            _ = try self.expect(.@"}_ch");
+
+            break :blk user_type;
+        },
+
+        .union_keyword => blk: {
+            const tag_type: ast.ExprIndex.OptIndex = if(try self.tryConsume(.@"(_ch") != null) tag_type_blk: {
+                const tag_type_idx = try self.parseExpression(0);
+                _ = try self.expect(.@")_ch");
+                break :tag_type_blk ast.ExprIndex.toOpt(tag_type_idx);
+            } else .none;
+
+            _ = try self.expect(.@"{_ch");
+
+            const user_type = try ast.expressions.insert(.{.union_expression = .{
+                .tag_type = tag_type,
                 .first_decl = try self.parseTypeBody(),
             }});
 
@@ -657,7 +676,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
             .switch_keyword, .var_keyword, .volatile_keyword, .__keyword, .bool_keyword,
             .type_keyword, .void_keyword, .anyopaque_keyword,
             .end_of_file, .true_keyword, .false_keyword, .undefined_keyword, .comptime_keyword,
-            .inline_keyword, .unreachable_keyword, .noreturn_keyword,
+            .inline_keyword, .unreachable_keyword, .noreturn_keyword, .union_keyword,
             => |_, tag| {
                 std.debug.panic("Unexpected post-primary expression token: {s}\n", .{@tagName(tag)});
             },

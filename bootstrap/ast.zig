@@ -191,6 +191,7 @@ pub const ExpressionNode = union(enum) {
     function_argument: FunctionArgument,
 
     struct_expression: TypeBody,
+    union_expression: TypeBody,
     enum_expression: TypeBody,
 };
 
@@ -412,6 +413,24 @@ fn dumpNode(node: anytype, indent_level: usize) anyerror!void {
             .function_expression => |func_idx| try dumpNode(functions.get(func_idx), indent_level),
             .struct_expression => |expr| {
                 std.debug.print("struct ", .{});
+                if(ExprIndex.unwrap(expr.tag_type)) |tag_type| {
+                    std.debug.print("(", .{});
+                    try dumpNode(expressions.get(tag_type), indent_level);
+                    std.debug.print(") ", .{});
+                } else {
+                    std.debug.print(" ", .{});
+                }
+                try dumpStatementChain(expr.first_decl, indent_level);
+            },
+            .union_expression => |expr| {
+                std.debug.print("union", .{});
+                if(ExprIndex.unwrap(expr.tag_type)) |tag_type| {
+                    std.debug.print("(", .{});
+                    try dumpNode(expressions.get(tag_type), indent_level);
+                    std.debug.print(") ", .{});
+                } else {
+                    std.debug.print(" ", .{});
+                }
                 try dumpStatementChain(expr.first_decl, indent_level);
             },
             .enum_expression => |expr| {
