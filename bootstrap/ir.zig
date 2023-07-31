@@ -68,6 +68,7 @@ fn typeFor(type_idx: sema.TypeIndex.Index) InstrType {
     return switch(sema.types.get(type_idx).*) {
         .signed_int, .unsigned_int => |bits| typeForBits(bits),
         .reference, .pointer, .void, .noreturn => backends.current_backend.pointer_type,
+        .enum_idx => |idx| typeFor(sema.enums.get(idx).backing_type),
         .bool, => .u8,
         else => |other| std.debug.panic("TODO: typeFor {s}", .{@tagName(other)}),
     };
@@ -1819,6 +1820,7 @@ const IRWriter = struct {
                     .type = typeForBits(int.bits),
                 }});
             },
+            .enum_variant => |ev| return self.writeValue(ev.value),
             .undefined => return self.emit(.{.undefined = {}}),
             .function => return self.emit(.{.function_ref = .{.function_value = value_idx, .instantiation = 0}}),
             else => |val| std.debug.panic("Unhandled ssaing of value {s}", .{@tagName(val)}),

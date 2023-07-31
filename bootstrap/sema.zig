@@ -777,14 +777,17 @@ fn semaASTExpr(
         },
         .enum_expression => |type_body| blk: {
             const enum_scope = try scopes.insert(.{.outer_scope = ScopeIndex.toOpt(scope_idx)});
+            // FIXME: Properly pick a sufficiently sized backing type, u32 might not be able to hold
+            // all possible enum variants a user could provide which might cause errors.
             const backing_type = if(ast.ExprIndex.unwrap(type_body.tag_type)) |tag_type|
                 values.get(try semaASTExpr(scope_idx, tag_type, true, .type, null)).type_idx
-            else .comptime_int;
+            else .u32;
 
             var decl_builder = decls.builder();
             var curr_decl = type_body.first_decl;
             var curr_value = try promoteComptimeInt(0, backing_type);
-            while(ast.statements.getOpt(curr_decl)) |decl| {
+            var enum_idx = try enums.insert(undefined);
+            while(ast.statements.getOpt(curr_decl)) |decl| : (curr_decl = decl.next) {
                 switch(decl.value) {
                     .declaration => |inner_decl| {
                         _ = try decl_builder.insert(.{
@@ -812,7 +815,10 @@ fn semaASTExpr(
                             .comptime_param = true,
                             .function_param_idx = null,
                             .name = variant_decl.identifier,
-                            .init_value = curr_value,
+                            .init_value = try values.insert(.{.enum_variant = .{
+                                .value = curr_value,
+                                .enum_type = enum_idx,
+                            }}),
                         });
                         // TODO: This could probably be improved upon, but I can't think of a better
                         // way to write this to this will have to do for now.
@@ -824,19 +830,14 @@ fn semaASTExpr(
                     },
                     else => unreachable,
                 }
-
-                curr_decl = decl.next;
             }
 
-            // TODO: Pick a sufficiently sized backing type instead of comptime_int
-            // if the user hasn't provided one. Operations like @size_of will fail
-            // because of this.
-            const enum_idx = try enums.insert(.{
+            enums.get(enum_idx).* = .{
                 .backing_type = backing_type,
                 .scope = enum_scope,
-            });
+            };
 
-            const type_idx = try types.insert(.{ .enum_idx = enum_idx });
+            const type_idx = try types.insert(.{.enum_idx = enum_idx});
 
             scopes.get(enum_scope).first_decl = decl_builder.first;
             scopes.get(enum_scope).this_type = TypeIndex.toOpt(type_idx);
@@ -1018,6 +1019,50 @@ fn semaASTExpr(
                             .callee = .{.instantiation = .{.function_value = .syscall_func, .instantiation = 0}},
                             .first_arg = arg_builder.first,
                         };
+                    },
+                    .int_to_enum => {
+                        const type_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
+                        const expr_arg = ast.expressions.getOpt(type_arg.next).?.function_argument;
+                        std.debug.assert(expr_arg.next == .none);
+
+                        const ty = try semaASTExpr(scope_idx, type_arg.value, true, .type, null);
+                        std.debug.assert(types.get(values.get(ty).type_idx).* == .enum_idx);
+                        const value = try semaASTExpr(scope_idx, expr_arg.value, false, null, null);
+                        switch(types.get(try values.get(value).getType()).*) {
+                            .comptime_int, .signed_int, .unsigned_int => {},
+                            else => @panic("Can't use @int_to_enum with a non-integer value"),
+                        }
+
+                        const target_enum_idx = types.get(values.get(ty).type_idx).enum_idx;
+                        if(force_comptime_eval) {
+                            break :outer try promoteComptimeInt(switch(values.get(value).*) {
+                                .comptime_int => |int| int,
+                                .unsigned_int, .signed_int => |int| int.value,
+                                else => unreachable,
+                            }, enums.get(target_enum_idx).backing_type);
+                        } else {
+                            break :outer try values.insert(.{.runtime = .{
+                                .expr = ExpressionIndex.toOpt(try expressions.insert(.{.value = value})),
+                                .value_type = ty,
+                            }});
+                        }
+                    },
+                    .enum_to_int => {
+                        const expr_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
+                        std.debug.assert(expr_arg.next == .none);
+
+                        var value = try semaASTExpr(scope_idx, expr_arg.value, force_comptime_eval, null, null);
+                        if (force_comptime_eval) {
+                            try promote(&value, try decayValueType(value), true);
+                            std.debug.assert(values.get(value).* != .decl_ref);
+                            break :outer values.get(value).enum_variant.value;
+                        } else {
+                            const value_enum = enums.get(types.get(try decayValueType(value)).enum_idx);
+                            break :outer try values.insert(.{.runtime = .{
+                                .expr = ExpressionIndex.toOpt(try expressions.insert(.{.value = value})),
+                                .value_type = try values.addDedupLinear(.{.type_idx = value_enum.backing_type}),
+                            }});
+                        }
                     },
                 },
                 else => inner: {
@@ -1840,6 +1885,10 @@ pub const Value = union(enum) {
     comptime_int: i65,
     unsigned_int: SizedInt,
     signed_int: SizedInt,
+    enum_variant: struct {
+        value: ValueIndex.Index,
+        enum_type: EnumIndex.Index,
+    },
     function: Function,
     discard_underscore,
     empty_tuple,
@@ -1890,6 +1939,7 @@ pub const Value = union(enum) {
             .comptime_int => .comptime_int,
             .unsigned_int => |int| try types.addDedupLinear(.{.unsigned_int = int.bits}),
             .signed_int => |int| try types.addDedupLinear(.{.signed_int = int.bits}),
+            .enum_variant => |ev| try types.addDedupLinear(.{.enum_idx = ev.enum_type}),
             .runtime => |rt| values.get(rt.value_type).type_idx,
             .decl_ref => |dr| return values.get(decls.get(dr).init_value).getType(),
             .type_init => return types.addDedupLinear(.{.type_of_value = values.getIndex(self)}),

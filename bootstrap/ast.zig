@@ -98,6 +98,8 @@ pub const BuiltinFunction = enum {
     syscall,
     This,
     truncate,
+    int_to_enum,
+    enum_to_int,
 };
 
 pub const ExpressionNode = union(enum) {

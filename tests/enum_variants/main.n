@@ -8,14 +8,18 @@ const Foo = enum {
     d,
 };
 
+fn bar(value: u32) Foo {
+    return @int_to_enum(Foo, value);
+}
+
+fn baz(value: Foo, expected: u32) void {
+    test_lib.expect_equal(u32, @enum_to_int(value), expected);
+}
+
 fn main() noreturn {
-    std.print.unsigned_decimal(Foo.a);
-    test_lib.expect_unflushed_output("1".&, 1);
-    std.print.unsigned_decimal(Foo.b);
-    test_lib.expect_unflushed_output("2".&, 1);
-    std.print.unsigned_decimal(Foo.c);
-    test_lib.expect_unflushed_output("4".&, 1);
-    std.print.unsigned_decimal(Foo.d);
-    test_lib.expect_unflushed_output("5".&, 1);
+    test_lib.expect_equal(u32, @enum_to_int(Foo.a), 1);
+    baz(Foo.b, @enum_to_int(Foo.b));
+    baz(bar(4), 4);
+    baz(Foo.d, 5);
     test_lib.pass_test();
 }
