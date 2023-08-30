@@ -243,7 +243,7 @@ fn token_length(token_idx: u32) u32 {
         .line = token_line.get(token_idx).*,
         .column = token_column.get(token_idx).*,
         .offset = old_offset,
-        .file_data = source_files.source_files.get(file).file_data,
+        .file_data = source_files.source_files.get(file).file_data + old_offset,
     };
 
     tokenize_one_token(context.&);
