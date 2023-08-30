@@ -118,7 +118,7 @@ fn decay(vidx: *ValueIndex.Index) !void {
 fn commonType(lhs_ty: TypeIndex.Index, rhs_ty: TypeIndex.Index) !TypeIndex.Index {
     const lhs = types.get(lhs_ty);
     const rhs = types.get(rhs_ty);
-    if(lhs.* == .comptime_int and rhs.* == .comptime_int) return lhs_ty;
+    if(std.meta.eql(lhs.*, rhs.*)) return lhs_ty;
     if(lhs.* == .comptime_int) return rhs_ty;
     if(rhs.* == .comptime_int) return lhs_ty;
 
