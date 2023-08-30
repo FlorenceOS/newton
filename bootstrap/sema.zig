@@ -1248,6 +1248,7 @@ fn semaASTExpr(
                     const lhs_tidx = try values.get(lhs).getType();
                     const lhs_type = types.get(lhs_tidx);
                     if(lhs_type.* == .reference) {
+                        std.debug.assert(!lhs_type.reference.is_const);
                         const target_ptr = values.addDedupLinear(.{
                             .type_idx = types.addDedupLinear(.{.pointer = .{
                                 .is_const = false,
@@ -1349,7 +1350,6 @@ fn semaASTExpr(
         },
         .member_access => |bop| blk: {
             var lhs = try semaASTExpr(scope_idx, bop.lhs, force_comptime_eval, null, null);
-            try decay(&lhs);
             const lhs_value = values.get(lhs);
             const rhs_expr = ast.expressions.get(bop.rhs);
             std.debug.assert(rhs_expr.* == .identifier);
@@ -1361,7 +1361,7 @@ fn semaASTExpr(
                     const mutable = switch(lhs_value.*) {
                         .decl_ref => |dr| decls.get(dr).mutable,
                         else => switch(lhs_type.*) {
-                            .pointer => |pt| !pt.is_const,
+                            .pointer, .reference => |pt| !pt.is_const,
                             else => false,
                         },
                     };
@@ -2597,6 +2597,9 @@ fn getFieldOrDecl(value_idx: ValueIndex.Index, name: []const u8) !?FieldOrDeclRe
     var value_type = types.get(try values.get(value_idx).getType());
     if(value_type.* == .pointer) {
         value_type = types.get(value_type.pointer.child);
+    }
+    if(value_type.* == .reference) {
+        value_type = types.get(value_type.reference.child);
     }
 
     var field_opt: ?*ContainerField = null;
