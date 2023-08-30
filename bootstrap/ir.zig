@@ -1923,23 +1923,39 @@ const IRWriter = struct {
                     self.basic_block = if_exit;
                 },
                 .loop_statement => |loop| {
+                    const original_bb = self.basic_block;
                     const loop_enter_branch = try self.emit(.{.goto = undefined});
-                    const loop_body_entry = blocks.insert(.{});
-                    decls.get(loop_enter_branch).instr.goto = try addEdge(self.basic_block, loop_body_entry);
-                    try blocks.get(self.basic_block).filled();
+                    try blocks.get(original_bb).filled();
 
-                    const exit_block = blocks.insert(.{});
-                    stmt.ir_block = BlockIndex.toOpt(exit_block);
-                    const loop_body_end = try self.writeBlockStatementIntoBlock(loop.body.first_stmt, loop_body_entry);
-                    try blocks.get(exit_block).seal();
-                    if(loop.body.reaches_end) {
-                        const loop_instr = try self.emit(.{.goto = undefined});
-                        decls.get(loop_instr).instr.goto = try addEdge(loop_body_end, loop_body_entry);
+                    const loop_body_block = blocks.insert(.{});
+                    const loop_exit_block = blocks.insert(.{});
+
+                    var loop_start_block = loop_body_block;
+                    if(sema.ValueIndex.unwrap(loop.condition)) |sema_cond_idx| {
+                        loop_start_block = blocks.insert(.{});
+                        self.basic_block = loop_start_block;
+                        _ = try self.emit(.{.@"if" = .{
+                            .condition = try self.writeValue(sema_cond_idx),
+                            .taken = try addEdge(self.basic_block, loop_body_block),
+                            .not_taken = try addEdge(self.basic_block, loop_exit_block),
+                        }});
+                        try blocks.get(loop_start_block).filled();
                     }
-                    try blocks.get(loop_body_end).filled();
-                    try blocks.get(loop_body_entry).seal();
 
-                    self.basic_block = exit_block;
+                    decls.get(loop_enter_branch).instr.goto = try addEdge(original_bb, loop_start_block);
+                    stmt.ir_block = BlockIndex.toOpt(loop_exit_block);
+                    self.basic_block = try self.writeBlockStatementIntoBlock(loop.body.first_stmt, loop_body_block);
+                    try blocks.get(loop_exit_block).seal();
+                    if(loop.body.reaches_end) {
+                        _ = try self.emit(.{.goto = try addEdge(self.basic_block, loop_start_block)});
+                    }
+                    try blocks.get(self.basic_block).filled();
+                    try blocks.get(loop_body_block).seal();
+                    if(loop_start_block != loop_body_block) {
+                        try blocks.get(loop_start_block).seal();
+                    }
+                    self.basic_block = loop_exit_block;
+                    _ = try self.emit(.{.undefined = {}});
                 },
                 .break_statement => |break_block| {
                     const goto_block = BlockIndex.unwrap(sema.statements.get(break_block).ir_block).?;

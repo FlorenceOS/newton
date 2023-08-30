@@ -1,0 +1,12 @@
+const std = @import("std");
+const test_lib = @import("../test_lib.n");
+
+fn main() noreturn {
+    var i: u32 = 0;
+    loop(i < 10) {
+        std.print.unsigned_decimal(i);
+        i += 1;
+    }
+    test_lib.expect_unflushed_output("0123456789".&, 10);
+    test_lib.pass_test();
+}
