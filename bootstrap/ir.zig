@@ -1035,10 +1035,10 @@ fn inlineConstants(decl_idx: DeclIndex.Index) !bool {
         .inplace_shift_left, .inplace_shift_right,
         => |bop, tag| {
             const swapped_tag: ?[]const u8 = comptime switch(tag) {
-                .less => "greater_equal",
-                .less_equal => "greater",
-                .greater => "less_equal",
-                .greater_equal => "less",
+                .less => "greater",
+                .less_equal => "greater_equal",
+                .greater => "less",
+                .greater_equal => "less_equal",
                 else => null,
             };
 
