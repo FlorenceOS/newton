@@ -2023,7 +2023,7 @@ const IRWriter = struct {
                 try self.evaluateShortCircuitingValue(bop.rhs, taken_block, not_taken_block);
             },
             .logical_not => |value| try self.evaluateShortCircuitingValue(value, not_taken_block, taken_block),
-            .less, .less_equal, .greater, .greater_equal, .equals, .not_equal, .function_call => {
+            else => {
                 const cond = try self.writeExpression(expr_idx);
                 _ = try self.emit(.{.@"if" = .{
                     .condition = cond,
@@ -2031,7 +2031,6 @@ const IRWriter = struct {
                     .not_taken = try addEdge(self.basic_block, not_taken_block),
                 }});
             },
-            else => unreachable,
         }
     }
 
