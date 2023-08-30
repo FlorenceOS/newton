@@ -653,6 +653,7 @@ fn semaASTExpr(
         .bool => .bool,
         .type => .type,
         .noreturn => .noreturn,
+        .pointer_int_unsigned => .pointer_int_type,
         .unsigned_int => |bits| values.addDedupLinear(.{.type_idx = types.addDedupLinear(.{.unsigned_int = bits})}),
         .signed_int => |bits| values.addDedupLinear(.{.type_idx = types.addDedupLinear(.{.signed_int = bits})}),
 

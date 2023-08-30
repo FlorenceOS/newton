@@ -63,6 +63,7 @@ fn identToAstNode(self: *@This(), tok: anytype) !ast.ExprIndex.Index {
     if(std.mem.eql(u8, tok.body, "u16")) return .u16;
     if(std.mem.eql(u8, tok.body, "u32")) return .u32;
     if(std.mem.eql(u8, tok.body, "u64")) return .u64;
+    if(std.mem.eql(u8, tok.body, "usize")) return .usize;
     if(std.mem.eql(u8, tok.body, "i8")) return .i8;
     if(std.mem.eql(u8, tok.body, "i16")) return .i16;
     if(std.mem.eql(u8, tok.body, "i32")) return .i32;

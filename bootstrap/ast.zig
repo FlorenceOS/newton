@@ -21,6 +21,7 @@ pub const ExprIndex = indexed_list.Indices(u32, opaque{}, .{
     .bool = .{ .bool = {} },
     .type = .{ .type = {} },
     .noreturn = .{ .noreturn = {} },
+    .usize = .{ .pointer_int_unsigned = {} },
     .u8 = .{ .unsigned_int = 8 },
     .u16 = .{ .unsigned_int = 16 },
     .u32 = .{ .unsigned_int = 32 },
@@ -129,6 +130,7 @@ pub const ExpressionNode = union(enum) {
     anyopaque,
     bool,
     type,
+    pointer_int_unsigned,
     unsigned_int: u32,
     signed_int: u32,
     builtin_function: BuiltinFunction,
@@ -297,6 +299,7 @@ fn dumpNode(node: anytype, indent_level: usize) anyerror!void {
             .identifier, .int_literal, .char_literal, .string_literal => |ident| std.debug.print("{s}", .{try ident.toSlice()}),
             .bool_literal => |value| std.debug.print("{}", .{value}),
             .void, .anyopaque, .bool, .type, .undefined, .noreturn => std.debug.print("{s}", .{@tagName(node.*)}),
+            .pointer_int_unsigned => std.debug.print("usize", .{}),
             .unsigned_int => |bits| std.debug.print("u{d}", .{bits}),
             .signed_int => |bits| std.debug.print("i{d}", .{bits}),
             .pointer_type => |ptr_type| {
