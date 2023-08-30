@@ -380,7 +380,6 @@ pub const DeclInstr = union(enum) {
     pub fn outEdges(self: *@This()) std.BoundedArray(*BlockEdgeIndex.Index, 2) {
         var result = std.BoundedArray(*BlockEdgeIndex.Index, 2){};
         switch(self.*) {
-            .incomplete_phi => unreachable,
             .@"if" => |*instr| {
                 result.appendAssumeCapacity(&instr.taken);
                 result.appendAssumeCapacity(&instr.not_taken);
@@ -1540,8 +1539,10 @@ fn appendToBlock(
 ) !DeclIndex.Index {
     const block = blocks.get(block_idx);
 
-    if(block.is_filled) { // There is a branch from this block already
-        return insertBefore(DeclIndex.unwrap(block.last_decl).?, instr);
+    if(DeclIndex.unwrap(block.last_decl)) |ld| {
+        if(decls.get(ld).instr.outEdges().len > 0) {
+            return insertBefore(ld, instr);
+        }
     }
 
     const retval = decls.insert(.{
