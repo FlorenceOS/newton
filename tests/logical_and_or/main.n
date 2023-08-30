@@ -1,0 +1,21 @@
+const std = @import("std");
+const test_lib = @import("../test_lib.n");
+
+fn die() bool {
+    test_lib.fail_test();
+}
+
+fn test_and(a: u8) void {
+    _ = a < 5 && die();
+}
+
+fn test_or(a: u8) void {
+    _ = a < 5 || die();
+}
+
+fn main() noreturn {
+    test_and(7);
+    test_or(3);
+
+    test_lib.pass_test();
+}

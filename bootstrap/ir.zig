@@ -1776,6 +1776,33 @@ const IRWriter = struct {
                 try self.writeBlockStatement(blk.first_stmt);
                 return undef;
             },
+            .logical_and, .logical_or => {
+                const out_block = blocks.insert(.{});
+
+                const true_block = blocks.insert(.{});
+                const true_decl = try appendToBlock(true_block, .{.load_bool_constant = true});
+                const true_to_out_edge = try addEdge(true_block, out_block);
+                _ = try appendToBlock(true_block, .{.goto = true_to_out_edge});
+                try blocks.get(true_block).filled();
+
+                const false_block = blocks.insert(.{});
+                const false_decl = try appendToBlock(false_block, .{.load_bool_constant = false});
+                const false_to_out_edge = try addEdge(false_block, out_block);
+                _ = try appendToBlock(false_block, .{.goto = false_to_out_edge});
+                try blocks.get(false_block).filled();
+
+                try self.evaluateShortCircuitingExpression(expr_idx, true_block, false_block);
+                try blocks.get(true_block).seal();
+                try blocks.get(false_block).seal();
+                try blocks.get(out_block).seal();
+
+                var phi_operand_builder = phi_operands.builder();
+                _ = phi_operand_builder.insert(.{.edge = false_to_out_edge, .decl = false_decl});
+                _ = phi_operand_builder.insert(.{.edge = true_to_out_edge, .decl = true_decl});
+
+                self.basic_block = out_block;
+                return self.emit(.{.phi = phi_operand_builder.first});
+            },
             else => |expr| std.debug.panic("Unhandled ssaing of expr {s}", .{@tagName(expr)}),
         }
     }
@@ -1837,7 +1864,7 @@ const IRWriter = struct {
         return self.basic_block;
     }
 
-    fn writeBlockStatement(self: *@This(), first_stmt: sema.StatementIndex.OptIndex) !void {
+    fn writeBlockStatement(self: *@This(), first_stmt: sema.StatementIndex.OptIndex) anyerror!void {
         var current_statement = first_stmt;
         while(sema.statements.getOpt(current_statement)) |stmt| : (current_statement = stmt.next) {
             switch(stmt.value) {
@@ -1888,20 +1915,12 @@ const IRWriter = struct {
                     _ = try self.writeExpression(expr_idx);
                 },
                 .if_statement => |if_stmt| {
-                    const condition_value = try self.writeValue(if_stmt.condition);
-
-                    const if_branch = try self.emit(.{.@"if" = .{
-                        .condition = condition_value,
-                        .taken = undefined,
-                        .not_taken = undefined,
-                    }});
-                    try blocks.get(self.basic_block).filled();
-
                     const taken_entry = blocks.insert(.{});
                     const not_taken_entry = blocks.insert(.{});
-                    decls.get(if_branch).instr.@"if".taken = try addEdge(self.basic_block, taken_entry);
+
+                    try self.evaluateShortCircuitingValue(if_stmt.condition, taken_entry, not_taken_entry);
+                    try blocks.get(self.basic_block).filled();
                     try blocks.get(taken_entry).seal();
-                    decls.get(if_branch).instr.@"if".not_taken = try addEdge(self.basic_block, not_taken_entry);
                     try blocks.get(not_taken_entry).seal();
 
                     const if_exit = blocks.insert(.{});
@@ -1934,11 +1953,7 @@ const IRWriter = struct {
                     if(sema.ValueIndex.unwrap(loop.condition)) |sema_cond_idx| {
                         loop_start_block = blocks.insert(.{});
                         self.basic_block = loop_start_block;
-                        _ = try self.emit(.{.@"if" = .{
-                            .condition = try self.writeValue(sema_cond_idx),
-                            .taken = try addEdge(self.basic_block, loop_body_block),
-                            .not_taken = try addEdge(self.basic_block, loop_exit_block),
-                        }});
+                        try self.evaluateShortCircuitingValue(sema_cond_idx, loop_body_block, loop_exit_block);
                         try blocks.get(loop_start_block).filled();
                     }
 
@@ -1980,6 +1995,61 @@ const IRWriter = struct {
                 },
                 .unreachable_statement => _ = try self.emit(.{.@"unreachable" = {}}),
             }
+        }
+    }
+
+    fn evaluateShortCircuitingExpression(
+        self: *@This(),
+        expr_idx: sema.ExpressionIndex.Index,
+        taken_block: BlockIndex.Index,
+        not_taken_block: BlockIndex.Index,
+    ) anyerror!void {
+        switch(sema.expressions.get(expr_idx).*) {
+            .logical_and => |bop| {
+                const first_true = blocks.insert(.{});
+                try self.evaluateShortCircuitingValue(bop.lhs, first_true, not_taken_block);
+                try blocks.get(first_true).seal();
+                try blocks.get(self.basic_block).filled();
+                self.basic_block = first_true;
+                try self.evaluateShortCircuitingValue(bop.rhs, taken_block, not_taken_block);
+            },
+            .logical_or => |bop| {
+                const first_false = blocks.insert(.{});
+                try self.evaluateShortCircuitingValue(bop.lhs, taken_block, first_false);
+                try blocks.get(first_false).seal();
+                try blocks.get(self.basic_block).filled();
+                self.basic_block = first_false;
+                try self.evaluateShortCircuitingValue(bop.rhs, taken_block, not_taken_block);
+            },
+            .logical_not => |value| try self.evaluateShortCircuitingValue(value, not_taken_block, taken_block),
+            .less, .less_equal, .greater, .greater_equal, .equals, .not_equal, .function_call => {
+                const cond = try self.writeExpression(expr_idx);
+                _ = try self.emit(.{.@"if" = .{
+                    .condition = cond,
+                    .taken = try addEdge(self.basic_block, taken_block),
+                    .not_taken = try addEdge(self.basic_block, not_taken_block),
+                }});
+            },
+            else => unreachable,
+        }
+    }
+
+    fn evaluateShortCircuitingValue(
+        self: *@This(),
+        value_idx: sema.ValueIndex.Index,
+        taken_block: BlockIndex.Index,
+        not_taken_block: BlockIndex.Index,
+    ) !void {
+        switch(sema.values.get(value_idx).*) {
+            .bool => |value| _ = try self.emit(.{
+                .goto = try addEdge(self.basic_block, if(value) taken_block else not_taken_block),
+            }),
+            .runtime => |rt| try self.evaluateShortCircuitingExpression(
+                sema.ExpressionIndex.unwrap(rt.expr).?,
+                taken_block,
+                not_taken_block,
+            ),
+            else => unreachable,
         }
     }
 };
