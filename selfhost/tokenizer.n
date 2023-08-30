@@ -1,0 +1,240 @@
+const std = @import("std");
+
+const source_files = @import("source_files.n");
+const error = @import("error.n");
+
+const MAX_TOKENS = 0x100000;
+
+const TokenType = enum(u8) {
+    identifier,
+    int_literal,
+    string_literal,
+
+    opening_curly,
+    closing_curly,
+    opening_paren,
+    closing_paren,
+
+    semicolon,
+    dot,
+    comma,
+
+    ampersand,
+
+    equals,
+    assign,
+};
+
+const TokenizationContext = struct {
+    file: u32,
+    line: u32,
+    column: u32,
+    offset: u32,
+    file_data: *const u8,
+
+    fn advance(self: *@This(), num: u32) inline void {
+        self.column += num;
+        self.offset += num;
+        self.file_data += num;
+    }
+
+    fn peek(self: *@This(), offset: u64) inline u8 {
+        return self.file_data[offset];
+    }
+
+    fn report_error(self: *@This(), message: *const u8) inline noreturn {
+        error.report(self.file, self.line, self.column, self.offset, message);
+    }
+
+    fn add_token(self: *@This(), tag: TokenType) inline void {
+        token_type.append_assume_capacity(tag);
+        token_file.append_assume_capacity(self.file);
+        token_line.append_assume_capacity(self.line);
+        token_column.append_assume_capacity(self.column);
+        token_offset.append_assume_capacity(self.offset);
+    }
+
+    fn add_token_advance(self: *@This(), tag: TokenType) void {
+        self.add_token(tag);
+        self.advance(1);
+    }
+};
+
+const Handler = *const fn(*TokenizationContext, u8) void;
+
+var token_type: std.containers.PinnedVector(TokenType, MAX_TOKENS) = undefined;
+var token_file: std.containers.PinnedVector(u32, MAX_TOKENS) = undefined;
+var token_line: std.containers.PinnedVector(u32, MAX_TOKENS) = undefined;
+var token_column: std.containers.PinnedVector(u32, MAX_TOKENS) = undefined;
+var token_offset: std.containers.PinnedVector(u32, MAX_TOKENS) = undefined;
+
+// TODO add array initializers
+var token_handlers: [256]Handler = undefined;
+
+fn fill_handlers(start: u64, end: u64, handler: Handler) inline void {
+    var curr_h = token_handlers[start].&;
+    const end_h = token_handlers[end].&;
+    loop {
+        if(curr_h < end_h) {
+            curr_h.* = handler;
+            curr_h += 1;
+        } else {
+            break;
+        }
+    }
+}
+
+fn register_single_char_token(ch: u8, comptime tt: TokenType) inline void {
+    token_handlers[ch] = fn (context: *TokenizationContext) void {
+        context.add_token_advance(tt);
+    }.&;
+}
+
+fn init() void {
+    token_type.init();
+    token_file.init();
+    token_line.init();
+    token_column.init();
+    token_offset.init();
+
+    fill_handlers(0, 0x100, badchar_handler.&);
+
+    const ident_h = ident_handler.&;
+    fill_handlers('a', 'z' + 1, ident_h);
+    fill_handlers('A', 'Z' + 1, ident_h);
+    token_handlers['@'] = ident_h;
+    token_handlers['_'] = ident_h;
+
+    fill_handlers('0', '9' + 1, fn (context: *TokenizationContext, ch: u8) void {
+        context.add_token(TokenType.int_literal);
+        var base: u8 = 10;
+        if(ch == '0') {
+            const next = context.peek(1);
+            if(next == 'x') {
+                context.advance(2);
+                base = 16;
+            }
+            else if(next == 'b') {
+                context.advance(2);
+                base = 2;
+            }
+        }
+        loop(digit_value(context.peek(0)) < base) {
+            context.advance(1);
+        }
+    }.&);
+
+    const whitespace_handler = fn(context: *TokenizationContext) void {
+        context.advance(1);
+    }.&;
+    token_handlers[' '] = whitespace_handler;
+    token_handlers['\t'] = whitespace_handler;
+    token_handlers['\r'] = whitespace_handler;
+
+    token_handlers['\n'] = fn (context: *TokenizationContext) void {
+        context.line += 1;
+        context.column = 1;
+        context.offset += 1;
+        context.file_data += 1;
+    }.&;
+
+    register_single_char_token('{', TokenType.opening_curly);
+    register_single_char_token('}', TokenType.closing_curly);
+    register_single_char_token('(', TokenType.opening_paren);
+    register_single_char_token(')', TokenType.closing_paren);
+    register_single_char_token(';', TokenType.semicolon);
+    register_single_char_token('.', TokenType.dot);
+    register_single_char_token(',', TokenType.comma);
+    register_single_char_token('&', TokenType.ampersand);
+
+    token_handlers['='] = fn (context: *TokenizationContext) void {
+        if(context.peek(1) == '=') {
+            context.add_token_advance(TokenType.equals);
+            context.advance(1);
+        } else {
+            context.add_token_advance(TokenType.assign);
+        }
+    }.&;
+
+    token_handlers['"'] = fn (context: *TokenizationContext) void {
+        context.add_token_advance(TokenType.string_literal);
+        loop {
+            if(context.peek(0) == '\\') {
+                context.report_error("TODO: String escape".&);
+            }
+            const chr = context.peek(0);
+            context.advance(1);
+            if(chr == '"') {
+                break;
+            }
+        }
+    }.&;
+}
+
+fn digit_value(ch: u8) inline u8 {
+    if('0' <= ch && ch <= '9') {
+        return ch - '0' + 0x0;
+    }
+    if('a' <= ch && ch <= 'f') {
+        return ch - 'a' + 0xa;
+    }
+    if('A' <= ch && ch <= 'F') {
+        return ch - 'A' + 0xA;
+    }
+    return 0xFF;
+}
+
+fn badchar_handler(context: *TokenizationContext) void {
+    context.report_error("Bad character".&);
+}
+
+fn ident_handler(context: *TokenizationContext) void {
+    context.add_token_advance(TokenType.identifier);
+    loop {
+        const c = context.peek(0);
+        if((('a' <= c) && (c <= 'z')) || (('A' <= c) && (c <= 'Z')) || (c == '_')) {
+            context.advance(1);
+        } else {
+            break;
+        }
+    }
+}
+
+fn tokenize_one_token(context: *TokenizationContext) inline void {
+    const p: u32 = context.peek(0);
+    return token_handlers[p](context, p);
+}
+
+fn token_length(token_idx: u32) u32 {
+    const old_offset = token_offset.ptr[token_idx];
+    const file = token_file.ptr[token_idx];
+
+    var context = TokenizationContext{
+        .file = file,
+        .line = token_line.ptr[token_idx],
+        .column = token_column.ptr[token_idx],
+        .offset = old_offset,
+        .file_data = source_files.source_files.ptr[file].file_data,
+    };
+
+    tokenize_one_token(context.&);
+
+    return context.offset - old_offset;
+}
+
+fn tokenize_file(file: u32) void {
+    var context = TokenizationContext{
+        .file = file,
+        .line = 1,
+        .column = 1,
+        .offset = 0,
+        .file_data = source_files.source_files.ptr[file].file_data,
+    };
+
+    loop {
+        if(context.peek(0) == 0) {
+            return;
+        }
+        tokenize_one_token(context.&);
+    }
+}

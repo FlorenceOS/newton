@@ -1,0 +1,16 @@
+const source_files = @import("source_files.n");
+
+fn report(file_idx: u32, line: u32, column: u32, offset: u32, message: *const u8) noreturn {
+    const file = source_files.source_files.ptr[file_idx].&;
+    std.os.print.str("\x1b[31;1m[ERROR]\x1b[0m ".&);
+    std.os.print.str(file.absolute_file_path[0].&);
+    std.os.print.char(':');
+    std.os.print.unsigned_decimal(line);
+    std.os.print.char(':');
+    std.os.print.unsigned_decimal(column);
+    std.os.print.str(": ".&);
+    std.os.print.str(message);
+    std.os.print.str("\n".&);
+    std.os.print.flush();
+    std.os.syscalls.exit(1);
+}

@@ -1,7 +1,5 @@
 const std = @import("std");
 
-const PinnedVector = std.containers.PinnedVector;
-
 const SourceFile = struct {
     file_data: *const u8,
     absolute_file_path: [std.os.MAX_PATH]u8,
@@ -9,7 +7,7 @@ const SourceFile = struct {
     dir_fd: u32,
 };
 
-var source_files: PinnedVector(SourceFile, 0x1000) = undefined;
+var source_files: std.containers.PinnedVector(SourceFile, 0x1000) = undefined;
 
 fn init() inline void {
     source_files.init();
