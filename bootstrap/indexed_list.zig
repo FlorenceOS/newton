@@ -109,8 +109,8 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
                     self.last = opt;
                 }
 
-                pub fn insert(self: *@This(), value: T) !Index {
-                    const idx = try self.list.insert(value);
+                pub fn insert(self: *@This(), value: T) Index {
+                    const idx = self.list.insert(value);
                     self.insertIndex(idx);
                     return idx;
                 }
@@ -120,18 +120,18 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
         elements: std.ArrayList(T),
         first_free: OptIndex,
 
-        pub fn init(allocator: std.mem.Allocator) !@This() {
+        pub fn init(allocator: std.mem.Allocator, initial_capacity: usize) !@This() {
             var result = @This() {
-                .elements = try std.ArrayList(T).initCapacity(allocator, 2048),
+                .elements = try std.ArrayList(T).initCapacity(allocator, initial_capacity),
                 .first_free = .none,
             };
             errdefer result.deinit();
 
             inline for(@typeInfo(@TypeOf(_Indices.ExtraFieldTags)).Struct.fields) |tag_field| {
-                try result.elements.append(@field(_Indices.ExtraFieldTags, tag_field.name));
+                result.elements.appendAssumeCapacity(@field(_Indices.ExtraFieldTags, tag_field.name));
             }
 
-            _ = try result.elements.addOne();
+            _ = result.elements.addOneAssumeCapacity();
             std.debug.assert(result.elements.items.len == _Indices.alloc_base);
 
             return result;
@@ -155,15 +155,15 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
         }
 
         /// Allocate a slot for a new object
-        pub fn addOne(self: *@This()) !*T {
+        pub fn addOne(self: *@This()) *T {
             if (self.getOpt(self.first_free)) |first_free| {
                 self.first_free = @as(*OptIndex, @ptrCast(first_free)).*;
                 return first_free;
             }
-            return try self.elements.addOne();
+            return self.elements.addOneAssumeCapacity();
         }
 
-        pub fn addDedupLinear(self: *@This(), val: T) !Index {
+        pub fn addDedupLinear(self: *@This(), val: T) Index {
             // Skip .none
             for(self.elements.items, 0..) |item, i| {
                 if(@as(OptIndex, @enumFromInt(i)) == .none) continue;
@@ -177,8 +177,8 @@ pub fn IndexedList(comptime _Indices: type, comptime T: anytype) type {
         }
 
         /// Add an object to the list and return its id
-        pub fn insert(self: *@This(), b: T) !Index {
-            const ptr = try self.addOne();
+        pub fn insert(self: *@This(), b: T) Index {
+            const ptr = self.addOne();
             ptr.* = b;
             return self.getIndex(ptr);
         }

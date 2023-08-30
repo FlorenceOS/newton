@@ -108,7 +108,7 @@ pub fn main() !void {
             try ast.dumpFile(file);
         }
 
-        const root_value_idx = try sema.values.insert(.{
+        const root_value_idx = sema.values.insert(.{
             .unresolved = .{
                 .expression = root_ast,
                 .requested_type = .type,

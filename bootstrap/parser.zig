@@ -123,7 +123,7 @@ fn parseFunctionExpr(self: *@This()) anyerror!ast.FunctionIndex.Index {
                 self.* = old_self;
             }
         }
-        _ = try param_builder.insert(.{
+        _ = param_builder.insert(.{
             .identifier = ident,
             .type = try self.parseExpression(null),
             .is_comptime = is_comptime,
@@ -304,7 +304,7 @@ fn parseTypeInitList(self: *@This(), specified_type: ast.ExprIndex.OptIndex) any
                 var ident = try self.expect(.identifier);
                 defer ident.deinit();
                 _ = try self.expect(.@"=_ch");
-                _ = try builder.insert(.{
+                _ = builder.insert(.{
                     .identifier = self.toAstIdent(ident),
                     .value = try self.parseExpression(null),
                 });
@@ -315,7 +315,7 @@ fn parseTypeInitList(self: *@This(), specified_type: ast.ExprIndex.OptIndex) any
         // .@"}_ch" => {}, // Empty tuple
         else => { // Nonempty tuple
             while((try self.peekToken()) != .@"}_ch") {
-                _ = try builder.insert(.{
+                _ = builder.insert(.{
                     .identifier = null,
                     .value = try self.parseExpression(null),
                 });
@@ -336,11 +336,11 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
 
     var lhs: ast.ExprIndex.Index = switch(try self.tokenize()) {
         // Literals
-        .int_literal => |lit| try ast.expressions.insert(.{.int_literal = self.toAstIdent(lit)}),
-        .char_literal => |lit| try ast.expressions.insert(.{.char_literal = self.toAstIdent(lit)}),
-        .string_literal => |lit| try ast.expressions.insert(.{.string_literal = self.toAstIdent(lit)}),
-        .true_keyword => try ast.expressions.insert(.{.bool_literal = true}),
-        .false_keyword => try ast.expressions.insert(.{.bool_literal = false}),
+        .int_literal => |lit| ast.expressions.insert(.{.int_literal = self.toAstIdent(lit)}),
+        .char_literal => |lit| ast.expressions.insert(.{.char_literal = self.toAstIdent(lit)}),
+        .string_literal => |lit| ast.expressions.insert(.{.string_literal = self.toAstIdent(lit)}),
+        .true_keyword => ast.expressions.insert(.{.bool_literal = true}),
+        .false_keyword => ast.expressions.insert(.{.bool_literal = false}),
 
         // Atom keyword literal expressions
         .void_keyword => .void,
@@ -364,7 +364,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
             _ = try self.expect(.@"]_ch");
             const child_type = try self.parseExpression(0);
 
-            break :blk try ast.expressions.insert(.{ .array_type = .{
+            break :blk ast.expressions.insert(.{ .array_type = .{
                 .lhs = size,
                 .rhs = child_type,
             }});
@@ -384,7 +384,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
 
             _ = try self.expect(.@"{_ch");
 
-            const user_type = try ast.expressions.insert(.{.enum_expression = .{
+            const user_type = ast.expressions.insert(.{.enum_expression = .{
                 .tag_type = tag_type,
                 .first_decl = try self.parseTypeBody(),
             }});
@@ -397,7 +397,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
         .struct_keyword => blk: {
             _ = try self.expect(.@"{_ch");
 
-            const user_type = try ast.expressions.insert(.{.struct_expression = .{
+            const user_type = ast.expressions.insert(.{.struct_expression = .{
                 .tag_type = .none,
                 .first_decl = try self.parseTypeBody(),
             }});
@@ -416,7 +416,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
 
             _ = try self.expect(.@"{_ch");
 
-            const user_type = try ast.expressions.insert(.{.union_expression = .{
+            const user_type = ast.expressions.insert(.{.union_expression = .{
                 .tag_type = tag_type,
                 .first_decl = try self.parseTypeBody(),
             }});
@@ -428,13 +428,13 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
 
         .fn_keyword => blk: {
             const fidx = try self.parseFunctionExpr();
-            break :blk try ast.expressions.insert(.{ .function_expression = fidx });
+            break :blk ast.expressions.insert(.{ .function_expression = fidx });
         },
 
         .@"(_ch" => blk: {
             const expr = try self.parseExpression(null);
             _ = try self.expect(.@")_ch");
-            break :blk try ast.expressions.insert(.{ .parenthesized = .{ .operand = expr }});
+            break :blk ast.expressions.insert(.{ .parenthesized = .{ .operand = expr }});
         },
 
         inline
@@ -450,7 +450,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
                 else => unreachable,
             };
 
-            break :blk try ast.expressions.insert(@unionInit(ast.ExpressionNode, @tagName(kind), .{
+            break :blk ast.expressions.insert(@unionInit(ast.ExpressionNode, @tagName(kind), .{
                 .operand = expr,
             }));
         },
@@ -470,7 +470,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
                 _ = try self.tokenize();
             }
             pointer_type.child = try self.parseExpression(0);
-            break :blk try ast.expressions.insert(.{ .pointer_type = pointer_type });
+            break :blk ast.expressions.insert(.{ .pointer_type = pointer_type });
         },
 
         .__keyword => .discard_underscore,
@@ -507,17 +507,17 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
                 _ = try self.tokenize();
                 switch(try self.tokenize()) {
                     .identifier => |token| {
-                        lhs = try ast.expressions.insert(.{ .member_access = .{
+                        lhs = ast.expressions.insert(.{ .member_access = .{
                             .lhs = lhs,
                             .rhs = try self.identToAstNode(token),
                         }});
                         token.deinit();
                     },
                     .@"&_ch" => {
-                        lhs = try ast.expressions.insert(.{ .addr_of = .{ .operand = lhs } });
+                        lhs = ast.expressions.insert(.{ .addr_of = .{ .operand = lhs } });
                     },
                     .@"*_ch" => {
-                        lhs = try ast.expressions.insert(.{ .deref = .{ .operand = lhs } });
+                        lhs = ast.expressions.insert(.{ .deref = .{ .operand = lhs } });
                     },
                     else => |token|  {
                         std.debug.print("Unexpected postfix token: {s}\n", .{@tagName(token)});
@@ -529,7 +529,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
                 _ = try self.tokenize();
                 var arg_builder = ast.expressions.builderWithPath("function_argument.next");
                 while((try self.peekToken()) != .@")_ch") {
-                    _ = try arg_builder.insert(.{ .function_argument = .{.value = try self.parseExpression(null)}});
+                    _ = arg_builder.insert(.{ .function_argument = .{.value = try self.parseExpression(null)}});
                     if ((try self.tryConsume(.@",_ch")) == null) {
                         break;
                     }
@@ -549,7 +549,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
                     arg.* = .{ .imported_file = parsed_file };
                     lhs = ast.expressions.getIndex(arg);
                 } else {
-                    lhs = try ast.expressions.insert(.{ .function_call = .{
+                    lhs = ast.expressions.insert(.{ .function_call = .{
                         .callee = lhs,
                         .first_arg = arg_builder.first,
                     }});
@@ -559,7 +559,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
                 _ = try self.tokenize();
                 const index = try self.parseExpression(null);
                 _ = try self.expect(.@"]_ch");
-                lhs = try ast.expressions.insert(.{.array_subscript = .{
+                lhs = ast.expressions.insert(.{.array_subscript = .{
                     .lhs = lhs,
                     .rhs = index,
                 }});
@@ -652,7 +652,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
 
                 _ = try self.tokenize();
                 const rhs = try self.parseExpression(op_prec);
-                lhs = try ast.expressions.insert(@unionInit(ast.ExpressionNode, @tagName(kind), .{
+                lhs = ast.expressions.insert(@unionInit(ast.ExpressionNode, @tagName(kind), .{
                     .lhs = lhs,
                     .rhs = rhs,
                 }));
@@ -693,7 +693,7 @@ fn parseDeclaration(self: *@This(), token: tokenizer.Token) !ast.StmtIndex.Index
     var init_expr: ast.ExprIndex.Index = undefined;
     if(token == .fn_keyword) {
         const fidx = try self.parseFunctionExpr();
-        init_expr = try ast.expressions.insert(.{ .function_expression = fidx });
+        init_expr = ast.expressions.insert(.{ .function_expression = fidx });
     } else {
         if(try self.tryConsume(.@":_ch")) |_| {
             type_expr = ast.ExprIndex.toOpt(try self.parseExpression(0));
@@ -736,7 +736,7 @@ fn parseTypeBody(self: *@This()) !ast.StmtIndex.OptIndex {
                 }
 
                 _ = try self.expect(.@",_ch");
-                _ = try decl_builder.insert(.{.value = .{ .field_decl = .{
+                _ = decl_builder.insert(.{.value = .{ .field_decl = .{
                     .identifier = self.toAstIdent(ident),
                     .type = type_expr,
                     .init_value = init_expr,

@@ -22,5 +22,5 @@ pub var source_files: SourceFileList = undefined;
 pub var path_map = std.StringHashMap(SourceIndex.Index).init(std.heap.page_allocator);
 
 pub fn init() !void {
-    source_files = try SourceFileList.init(std.heap.page_allocator);
+    source_files = try SourceFileList.init(std.heap.page_allocator, 0x100);
 }

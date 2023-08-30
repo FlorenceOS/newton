@@ -593,9 +593,9 @@ pub var function_params: FunctionParamList = undefined;
 pub var type_init_values: TypeInitValueList = undefined;
 
 pub fn init() !void {
-    expressions = try ExpressionList.init(std.heap.page_allocator);
-    statements = try StatementList.init(std.heap.page_allocator);
-    functions = try FunctionList.init(std.heap.page_allocator);
-    function_params = try FunctionParamList.init(std.heap.page_allocator);
-    type_init_values = try TypeInitValueList.init(std.heap.page_allocator);
+    expressions = try ExpressionList.init(std.heap.page_allocator, 0x100000);
+    statements = try StatementList.init(std.heap.page_allocator, 0x100000);
+    functions = try FunctionList.init(std.heap.page_allocator, 0x1000);
+    function_params = try FunctionParamList.init(std.heap.page_allocator, 0x10000);
+    type_init_values = try TypeInitValueList.init(std.heap.page_allocator, 0x10000);
 }

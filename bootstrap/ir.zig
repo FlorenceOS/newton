@@ -566,7 +566,7 @@ fn addPhiOperands(sema_decl: sema.DeclIndex.Index, block_idx: BlockIndex.Index, 
     while(edges.getOpt(current_pred_edge)) |edge| {
         const eidx = edges.getIndex(edge);
 
-        const new_operand = try phi_operands.insert(.{
+        const new_operand = phi_operands.insert(.{
             .edge = eidx,
             .decl = try readVariable(edge.source_block, sema_decl),
             .next = init_operand,
@@ -1510,7 +1510,7 @@ pub fn insertBefore(before: DeclIndex.Index, instr: DeclInstr) !DeclIndex.Index 
     const retval = blk: {
         const bdecl = decls.get(before);
 
-        break :blk try decls.insert(.{
+        break :blk decls.insert(.{
             .next = DeclIndex.toOpt(before),
             .prev = bdecl.prev,
             .block = bdecl.block,
@@ -1544,7 +1544,7 @@ fn appendToBlock(
         return insertBefore(DeclIndex.unwrap(block.last_decl).?, instr);
     }
 
-    const retval = try decls.insert(.{
+    const retval = decls.insert(.{
         .block = block_idx,
         .instr = instr,
         .sema_decl = .none,
@@ -1572,7 +1572,7 @@ fn addEdge(
 
     std.debug.assert(!target_block.is_sealed);
 
-    const retval = try edges.insert(.{
+    const retval = edges.insert(.{
         .source_block = source_idx,
         .target_block = target_idx,
         .next = target_block.first_predecessor,
@@ -1624,7 +1624,7 @@ const IRWriter = struct {
     fn attemptInlineFunctionCommit(self: *@This(), function: sema.InstantiatedFunction) !DeclIndex.Index {
         const callee = sema.values.get(function.function_value);
 
-        const return_block = try blocks.insert(.{});
+        const return_block = blocks.insert(.{});
         const return_phi = try appendToBlock(return_block, .{.phi = .none});
 
         const old_return_phi = self.return_phi_node;
@@ -1742,7 +1742,7 @@ const IRWriter = struct {
                     if(will_inline) {
                         decls.get(copy).sema_decl = sema.DeclIndex.toOpt(arg.function_arg.param_decl);
                     }
-                    _ = try builder.insert(.{.value = copy });
+                    _ = builder.insert(.{.value = copy });
                 }
                 if(fcall.callee == .instantiation and fcall.callee.instantiation.function_value == .syscall_func) {
                     return self.emit(.{.syscall = builder.first});
@@ -1897,14 +1897,14 @@ const IRWriter = struct {
                     }});
                     try blocks.get(self.basic_block).filled();
 
-                    const taken_entry = try blocks.insert(.{});
-                    const not_taken_entry = try blocks.insert(.{});
+                    const taken_entry = blocks.insert(.{});
+                    const not_taken_entry = blocks.insert(.{});
                     decls.get(if_branch).instr.@"if".taken = try addEdge(self.basic_block, taken_entry);
                     try blocks.get(taken_entry).seal();
                     decls.get(if_branch).instr.@"if".not_taken = try addEdge(self.basic_block, not_taken_entry);
                     try blocks.get(not_taken_entry).seal();
 
-                    const if_exit = try blocks.insert(.{});
+                    const if_exit = blocks.insert(.{});
                     const taken_exit = try self.writeBlockStatementIntoBlock(if_stmt.taken.first_stmt, taken_entry);
                     if(if_stmt.taken.reaches_end) {
                         const taken_exit_branch = try self.emit(.{.goto = undefined});
@@ -1924,11 +1924,11 @@ const IRWriter = struct {
                 },
                 .loop_statement => |loop| {
                     const loop_enter_branch = try self.emit(.{.goto = undefined});
-                    const loop_body_entry = try blocks.insert(.{});
+                    const loop_body_entry = blocks.insert(.{});
                     decls.get(loop_enter_branch).instr.goto = try addEdge(self.basic_block, loop_body_entry);
                     try blocks.get(self.basic_block).filled();
 
-                    const exit_block = try blocks.insert(.{});
+                    const exit_block = blocks.insert(.{});
                     stmt.ir_block = BlockIndex.toOpt(exit_block);
                     const loop_body_end = try self.writeBlockStatementIntoBlock(loop.body.first_stmt, loop_body_entry);
                     try blocks.get(exit_block).seal();
@@ -1954,7 +1954,7 @@ const IRWriter = struct {
 
                     const phi_decl = decls.get(self.return_phi_node);
                     const exit_edge = try addEdge(self.basic_block, phi_decl.block);
-                    phi_decl.instr.phi = PhiOperandIndex.toOpt(try phi_operands.insert(.{
+                    phi_decl.instr.phi = PhiOperandIndex.toOpt(phi_operands.insert(.{
                         .edge = exit_edge,
                         .decl = value,
                         .next = phi_decl.instr.phi,
@@ -1971,7 +1971,7 @@ const IRWriter = struct {
 pub fn writeFunction(sema_func: sema.InstantiatedFunction) !BlockIndex.Index {
     const callee = &sema.values.get(sema_func.function_value).function;
     const func = &callee.instantiations.items[sema_func.instantiation];
-    const first_basic_block = try blocks.insert(.{});
+    const first_basic_block = blocks.insert(.{});
     const enter_decl = try appendToBlock(first_basic_block, .{.enter_function = undefined});
     try blocks.get(first_basic_block).seal();
 
@@ -1988,7 +1988,7 @@ pub fn writeFunction(sema_func: sema.InstantiatedFunction) !BlockIndex.Index {
         decls.get(param).sema_decl = curr_param;
     }
 
-    const exit_block = try blocks.insert(.{});
+    const exit_block = blocks.insert(.{});
     const phi = try appendToBlock(exit_block, .{.phi = .none});
     const exit_return = try appendToBlock(exit_block, .{.leave_function = .{.restore_stack = false, .value = phi}});
 
@@ -2161,9 +2161,9 @@ pub var phi_operands: PhiOperandIndex.List(PhiOperand) = undefined;
 pub var function_arguments: FunctionArgumentIndex.List(FunctionArgument) = undefined;
 
 pub fn init() !void {
-    decls = try DeclIndex.List(Decl).init(std.heap.page_allocator);
-    blocks = try BlockIndex.List(BasicBlock).init(std.heap.page_allocator);
-    edges = try BlockEdgeIndex.List(InstructionToBlockEdge).init(std.heap.page_allocator);
-    phi_operands = try PhiOperandIndex.List(PhiOperand).init(std.heap.page_allocator);
-    function_arguments = try FunctionArgumentIndex.List(FunctionArgument).init(std.heap.page_allocator);
+    decls = try DeclIndex.List(Decl).init(std.heap.page_allocator, 0x100000);
+    blocks = try BlockIndex.List(BasicBlock).init(std.heap.page_allocator, 0x10000);
+    edges = try BlockEdgeIndex.List(InstructionToBlockEdge).init(std.heap.page_allocator, 0x10000);
+    phi_operands = try PhiOperandIndex.List(PhiOperand).init(std.heap.page_allocator, 0x100000);
+    function_arguments = try FunctionArgumentIndex.List(FunctionArgument).init(std.heap.page_allocator, 0x100000);
 }
