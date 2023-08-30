@@ -285,6 +285,7 @@ fn isPointerCompatible(value_type: *Type, target_type: *Type) bool {
             var target_type_param_idx = func.params;
             while(type_init_values.getOpt(value_type_param_idx)) |value_type_param| : (value_type_param_idx = value_type_param.next) {
                 const target_type_param = type_init_values.getOpt(target_type_param_idx) orelse return false;
+                target_type_param_idx = target_type_param.next;
                 if(!isPointerCompatible(types.get(values.get(target_type_param.value).type_idx), types.get(values.get(value_type_param.value).type_idx))) return false;
             }
             return true;
