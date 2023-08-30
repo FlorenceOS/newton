@@ -69,8 +69,9 @@ var token_column: std.containers.PinnedVector(u32, MAX_TOKENS) = undefined;
 var token_offset: std.containers.PinnedVector(u32, MAX_TOKENS) = undefined;
 
 // TODO add array initializers
-var token_handlers: [256]Handler = undefined;
-var digit_value: [256]u8 = undefined;
+var token_handlers: [0x100]Handler = undefined;
+var digit_value: [0x100]u8 = undefined;
+var is_ident_char: [0x100]bool = undefined;
 
 fn fill_handlers(start: u64, end: u64, handler: Handler) inline void {
     var curr_h = token_handlers[start].&;
@@ -100,6 +101,24 @@ fn init() void {
 
     fill_handlers(0, 0x100, badchar_handler.&);
 
+    {
+        var ch: u32 = 0;
+        loop(ch <= 0xFF) {
+            is_ident_char[ch] = false;
+            ch += 1;
+        }
+        ch = 'a';
+        loop(ch <= 'z') {
+            is_ident_char[ch] = true;
+            ch += 1;
+        }
+        ch = 'A';
+        loop(ch <= 'Z') {
+            is_ident_char[ch] = true;
+            ch += 1;
+        }
+        is_ident_char['_'] = true;
+    }
     const ident_h = ident_handler.&;
     fill_handlers('a', 'z' + 1, ident_h);
     fill_handlers('A', 'Z' + 1, ident_h);
@@ -128,7 +147,6 @@ fn init() void {
             ch += 1;
         }
     }
-
     fill_handlers('0', '9' + 1, fn (context: *TokenizationContext, ch: u8) void {
         context.add_token(TokenType.int_literal);
         var base: u8 = 10;
@@ -203,7 +221,7 @@ fn ident_handler(context: *TokenizationContext) void {
     context.add_token_advance(TokenType.identifier);
     loop {
         const c = context.peek(0);
-        if((('a' <= c) && (c <= 'z')) || (('A' <= c) && (c <= 'Z')) || (c == '_')) {
+        if(is_ident_char[c]) {
             context.advance(1);
         } else {
             break;
