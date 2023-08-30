@@ -319,6 +319,11 @@ fn promote(vidx: *ValueIndex.Index, target_tidx: TypeIndex.Index, is_assign: boo
         switch(value_ty.*) {
             .comptime_int, .unsigned_int, .signed_int => {
                 if(is_assign) return error.IncompatibleTypes;
+                switch(value_ty.*) {
+                    .unsigned_int => try promote(vidx, .pointer_int, true),
+                    .signed_int => @panic("TODO"),
+                    else => {},
+                }
                 vidx.* = try Value.fromExpression(
                     expressions.insert(.{.multiply = .{
                         .lhs = vidx.*,
