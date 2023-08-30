@@ -206,15 +206,15 @@ fn tokenize_one_token(context: *TokenizationContext) inline void {
 }
 
 fn token_length(token_idx: u32) u32 {
-    const old_offset = token_offset.ptr[token_idx];
-    const file = token_file.ptr[token_idx];
+    const old_offset = token_offset.get(token_idx).*;
+    const file = token_file.get(token_idx).*;
 
     var context = TokenizationContext{
         .file = file,
-        .line = token_line.ptr[token_idx],
-        .column = token_column.ptr[token_idx],
+        .line = token_line.get(token_idx).*,
+        .column = token_column.get(token_idx).*,
         .offset = old_offset,
-        .file_data = source_files.source_files.ptr[file].file_data,
+        .file_data = source_files.source_files.get(file).file_data,
     };
 
     tokenize_one_token(context.&);
@@ -228,7 +228,7 @@ fn tokenize_file(file: u32) void {
         .line = 1,
         .column = 1,
         .offset = 0,
-        .file_data = source_files.source_files.ptr[file].file_data,
+        .file_data = source_files.source_files.get(file).file_data,
     };
 
     loop {

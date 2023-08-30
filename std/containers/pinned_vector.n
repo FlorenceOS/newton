@@ -5,48 +5,58 @@
 ///     This is only recommended if you know what you're doing.
 const syscalls = @import("../os/syscalls.n");
 
+const GenericVector = struct {
+    ptr: usize,
+    size: u32,
+    committed_size: u32,
+
+    fn init(self: *@This(), bytes: usize) void {
+        self.ptr = syscalls.mmap(
+            0,
+            bytes,
+            syscalls.PROT.READ | syscalls.PROT.WRITE,
+            syscalls.MAP.PRIVATE | syscalls.MAP.ANONYMOUS,
+            0,
+            0,
+        );
+        self.size = 0;
+        self.committed_size = 0;
+    }
+
+    fn madvise(self: *const @This(), offset: u64, size: u64, advice: u32) inline void {
+        syscalls.madvise(self.ptr + offset, size, advice);
+    }
+
+    fn clear_and_keep_commit(self: *@This()) inline void {
+        self.size = 0;
+    }
+};
+
 fn PinnedVector(comptime T: type, comptime capacity: u32) type {
     return struct {
-        ptr: *T,
-        size: u32,
-        committed_size: u32,
+        gen: GenericVector,
 
         fn init(self: *@This()) inline void {
-            self.ptr = @int_to_ptr(*T, syscalls.mmap(
-                0,
-                @size_of(T) * capacity,
-                syscalls.PROT.READ | syscalls.PROT.WRITE,
-                syscalls.MAP.PRIVATE | syscalls.MAP.ANONYMOUS,
-                0,
-                0,
-            ));
-            self.size = 0;
-            self.committed_size = 0;
+            self.gen.init(@size_of(T) * capacity);
         }
 
         fn deinit(self: *@This()) inline void {
             syscalls.munmap(
-                @ptr_to_int(self.ptr),
+                self.gen.ptr,
                 @size_of(T) * capacity,
             );
         }
 
-        fn check_size(size: u32) inline void {
-            if(size > capacity) {
-                // TODO: Return an error or something when we have that
-            }
-        }
-
         fn append_assume_capacity(self: *@This(), value: T) u32 {
-            self.ptr[self.size] = value;
+            self.get(self.gen.size).* = value;
             return self.add();
         }
 
         fn add(self: *@This()) u32 {
-            const retval = self.size;
-            self.size += 1;
-            if(self.size > self.committed_size) {
-                self.committed_size = self.size;
+            const retval = self.gen.size;
+            self.gen.size += 1;
+            if(self.gen.size > self.gen.committed_size) {
+                self.gen.committed_size = self.gen.size;
             }
             return retval;
         }
@@ -55,41 +65,53 @@ fn PinnedVector(comptime T: type, comptime capacity: u32) type {
             return (items * @size_of(T) + 0xFFF) & ~0xFFF;
         }
 
-        fn madvise(self: *@This(), offset: u64, size: u64, advice: u32) inline void {
-            syscalls.madvise(@ptr_to_int(self.ptr) + offset, size, advice);
-        }
-
         fn uncommit_unused_pages(self: *@This()) void {
-            const fut_pages = items_to_pages(self.size);
-            const cur_pages = items_to_pages(self.committed_size);
+            const fut_pages = items_to_pages(self.gen.size);
+            const cur_pages = items_to_pages(self.gen.committed_size);
 
             if(cur_pages > fut_pages) {
-                self.madvise(fut_pages, cur_pages - fut_pages, syscalls.MADV.DONTNEED);
-                self.committed_size = self.size;
+                self.gen.madvise(fut_pages, cur_pages - fut_pages, syscalls.MADV.DONTNEED);
+                self.gen.committed_size = self.gen.size;
             }
         }
 
         fn commit_total_capacity(self: *@This(), new_commit: u32) void {
-            const cur_pages = items_to_pages(self.committed_size);
+            const cur_pages = items_to_pages(self.gen.committed_size);
             const fut_pages = items_to_pages(new_commit);
 
             if(fut_pages > cur_pages) {
-                self.madvise(cur_pages, fut_pages - cur_pages, syscalls.MADV.WILLNEED);
-                self.committed_size = new_commit;
+                self.gen.madvise(cur_pages, fut_pages - cur_pages, syscalls.MADV.WILLNEED);
+                self.gen.committed_size = new_commit;
             }
         }
 
         fn commit_free_capacity(self: *@This(), free_capacity: u32) inline void {
-            self.commit_total_capacity(free_capacity + self.size);
+            self.commit_total_capacity(free_capacity + self.gen.size);
         }
 
         fn clear_and_keep_commit(self: *@This()) inline void {
-            self.size = 0;
+            self.gen.clear_and_keep_commit();
         }
 
         fn clear_and_uncommit(self: *@This()) inline void {
             self.clear_and_keep_commit();
             self.uncommit_unused_pages();
+        }
+
+        fn get(self: *@This(), idx: u32) inline *T {
+            return @int_to_ptr(*T, self.gen.ptr) + idx;
+        }
+
+        fn ptr(self: *@This()) *T {
+            return self.get(0);
+        }
+
+        fn size(self: *@This()) inline u32 {
+            return self.gen.size;
+        }
+
+        fn committed_size(self: *@This()) inline u32 {
+            return self.gen.committed_size;
         }
     };
 }

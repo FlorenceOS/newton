@@ -26,7 +26,7 @@ fn open_file(dirfd: u32, filename: *const u8) u32 {
         0,
     );
     std.os.syscalls.madvise(data, padded_file_size, std.os.syscalls.MADV.SEQUENTIAL);
-    source_files.ptr[retval] = .{
+    source_files.get(retval).* = .{
         .file_data = @int_to_ptr(*const u8, data),
         .absolute_file_path = std.os.fd_path(file_fd),
         .file_fd = file_fd,
