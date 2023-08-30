@@ -23,6 +23,22 @@ const GenericVector = struct {
         self.committed_size = 0;
     }
 
+    fn deinit(self: *@This(), bytes: usize) void {
+        syscalls.munmap(
+            self.ptr,
+            bytes,
+        );
+    }
+
+    fn add(self: *@This()) u32 {
+        const retval = self.size;
+        self.size += 1;
+        if(self.size > self.committed_size) {
+            self.committed_size = self.size;
+        }
+        return retval;
+    }
+
     fn madvise(self: *const @This(), offset: u64, size: u64, advice: u32) inline void {
         syscalls.madvise(self.ptr + offset, size, advice);
     }
@@ -41,10 +57,7 @@ fn PinnedVector(comptime T: type, comptime capacity: u32) type {
         }
 
         fn deinit(self: *@This()) inline void {
-            syscalls.munmap(
-                self.gen.ptr,
-                @size_of(T) * capacity,
-            );
+            self.gen.deinit(@size_of(T) * capacity);
         }
 
         fn append_assume_capacity(self: *@This(), value: T) u32 {
@@ -52,13 +65,8 @@ fn PinnedVector(comptime T: type, comptime capacity: u32) type {
             return self.add();
         }
 
-        fn add(self: *@This()) u32 {
-            const retval = self.gen.size;
-            self.gen.size += 1;
-            if(self.gen.size > self.gen.committed_size) {
-                self.gen.committed_size = self.gen.size;
-            }
-            return retval;
+        fn add(self: *@This()) inline u32 {
+            return self.gen.add();
         }
 
         fn items_to_pages(items: u64) inline u64 {
