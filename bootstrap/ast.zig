@@ -108,6 +108,7 @@ pub const ExpressionNode = union(enum) {
     int_literal: SourceRef,
     char_literal: SourceRef,
     string_literal: SourceRef,
+    enum_literal: SourceRef,
     bool_literal: bool,
 
     parenthesized: Uop,
@@ -297,6 +298,7 @@ fn dumpNode(node: anytype, indent_level: usize) anyerror!void {
         },
         *ExpressionNode => switch(node.*) {
             .identifier, .int_literal, .char_literal, .string_literal => |ident| std.debug.print("{s}", .{try ident.toSlice()}),
+            .enum_literal => |ident| std.debug.print(".{s}", .{try ident.toSlice()}),
             .bool_literal => |value| std.debug.print("{}", .{value}),
             .void, .anyopaque, .bool, .type, .undefined, .noreturn => std.debug.print("{s}", .{@tagName(node.*)}),
             .pointer_int_unsigned => std.debug.print("usize", .{}),

@@ -119,8 +119,8 @@ fn commonType(lhs_ty: TypeIndex.Index, rhs_ty: TypeIndex.Index) !TypeIndex.Index
     const lhs = types.get(lhs_ty);
     const rhs = types.get(rhs_ty);
     if(std.meta.eql(lhs.*, rhs.*)) return lhs_ty;
-    if(lhs.* == .comptime_int) return rhs_ty;
-    if(rhs.* == .comptime_int) return lhs_ty;
+    if(lhs.* == .comptime_int or lhs.* == .type_of_value) return rhs_ty;
+    if(rhs.* == .comptime_int or rhs.* == .type_of_value) return lhs_ty;
 
     if(lhs.* == .unsigned_int) {
         std.debug.assert(rhs.* == .unsigned_int);
@@ -312,6 +312,19 @@ fn promote(vidx: *ValueIndex.Index, target_tidx: TypeIndex.Index, is_assign: boo
     if(value.* == .undefined) {
         vidx.* = values.addDedupLinear(.{.undefined = target_tidx});
         return;
+    }
+
+    if(value.* == .enum_literal) {
+        if(ty.* == .enum_idx) {
+            const variant_name = try value.enum_literal.toSlice();
+            const sema_enum = enums.get(ty.enum_idx);
+            if(try scopes.get(sema_enum.scope).lookupDecl(variant_name)) |decl| {
+                vidx.* = decl.init_value;
+                return;
+            }
+            std.debug.panic("Could not find enum variant '{s}'", .{variant_name});
+        }
+        std.debug.panic("Can't convert {any} to {any}", .{value.*, ty.*});
     }
 
     if(ty.* == .pointer) {
@@ -647,6 +660,8 @@ fn semaASTExpr(
             });
             break :blk init_value;
         },
+
+        .enum_literal => |lit| values.addDedupLinear(.{.enum_literal = lit}),
 
         .bool_literal => |lit| if(lit) .true else .false,
         .void => .void,
@@ -1898,6 +1913,7 @@ pub const Value = union(enum) {
         value: ValueIndex.Index,
         enum_type: EnumIndex.Index,
     },
+    enum_literal: ast.SourceRef,
     function: Function,
     discard_underscore,
     empty_tuple,
@@ -1946,6 +1962,7 @@ pub const Value = union(enum) {
             .undefined => |t| t orelse .undefined,
             .bool => .bool,
             .comptime_int => .comptime_int,
+            .enum_literal => types.addDedupLinear(.{.type_of_value = values.getIndex(self)}),
             .unsigned_int => |int| types.addDedupLinear(.{.unsigned_int = int.bits}),
             .signed_int => |int| types.addDedupLinear(.{.signed_int = int.bits}),
             .enum_variant => |ev| types.addDedupLinear(.{.enum_idx = ev.enum_type}),

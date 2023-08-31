@@ -1,0 +1,35 @@
+const std = @import("std");
+const test_lib = @import("../test_lib.n");
+
+const Foo = enum {
+    a,
+    b,
+    c,
+    d,
+};
+
+fn bar(value: Foo) void {
+    if (value == .a) {
+        std.print.char('a');
+    }
+    if (.b == value) {
+        std.print.char('b');
+    }
+    if (value == .c) {
+        std.print.char('c');
+    }
+    if (.d == value) {
+        std.print.char('d');
+    }
+}
+
+fn main() noreturn {
+    const b: Foo = .b;
+    const d: Foo = .d;
+    bar(.a);
+    bar(b);
+    bar(.c);
+    bar(d);
+    test_lib.expect_unflushed_output("abcd".&, 4);
+    test_lib.pass_test();
+}

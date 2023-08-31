@@ -480,11 +480,17 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
             break :blk try self.identToAstNode(ident);
         },
 
+        // Enum literal
+        .@"._ch" => blk: {
+            const name = try self.expect(.identifier);
+            break :blk ast.expressions.insert(.{.enum_literal = self.toAstIdent(name)});
+        },
+
         .@".{_ch" => try self.parseTypeInitList(.none),
         .@"{_ch" => try self.parseBlockExpression(.none),
 
         inline
-        .@".._ch", .@",_ch", .@"._ch", .@":_ch", .@";_ch",
+        .@".._ch", .@",_ch", .@":_ch", .@";_ch",
         .@"=_ch", .@"==_ch", .@"!=_ch",
         .@"++_ch", .@"++=_ch",
         .@"+=_ch", .@"-=_ch", .@"*=_ch",
