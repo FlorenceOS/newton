@@ -2,12 +2,14 @@ const std = @import("std");
 
 const source_files = @import("source_files.n");
 const tokenizer = @import("tokenizer.n");
+const parser = @import("parser.n");
 const error = @import("error.n");
 
 fn main() noreturn {
     source_files.init();
-    tokenizer.init();
     const root_file = source_files.open_file(std.os.syscalls.AT.FDCWD, "selfhost/main.n".&);
-    tokenizer.tokenize_file(root_file);
+    tokenizer.init();
+    parser.init();
+    parser.parse_file(root_file);
     std.os.syscalls.exit(0);
 }

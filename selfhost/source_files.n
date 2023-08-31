@@ -5,6 +5,7 @@ const SourceFile = struct {
     absolute_file_path: [std.os.MAX_PATH]u8,
     file_fd: u32,
     dir_fd: u32,
+    top_level_struct: u32,
 };
 
 var source_files: std.containers.PinnedVector(SourceFile, 0x1000) = undefined;
@@ -31,6 +32,7 @@ fn open_file(dirfd: u32, filename: *const u8) u32 {
         .absolute_file_path = std.os.fd_path(file_fd),
         .file_fd = file_fd,
         .dir_fd = undefined,
+        .top_level_struct = -1,
     };
     return retval;
 }

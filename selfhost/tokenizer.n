@@ -10,6 +10,11 @@ const TokenType = enum(u8) {
     int_literal,
     string_literal,
 
+    const_keyword,
+    var_keyword,
+    fn_keyword,
+    comptime_keyword,
+
     opening_curly,
     closing_curly,
     opening_paren,
@@ -18,11 +23,18 @@ const TokenType = enum(u8) {
     semicolon,
     dot,
     comma,
+    colon,
 
+    asterisk,
     ampersand,
-
+    plus,
+    minus,
     equals,
     assign,
+    tilde,
+    slash,
+    percent,
+    plus_plus,
 };
 
 const TokenizationContext = struct {
@@ -42,6 +54,10 @@ const TokenizationContext = struct {
         return self.file_data[offset];
     }
 
+    fn matches(self: *@This(), str: *const u8) bool {
+        return std.mem.equals(u8, str, self.file_data, std.string.len(str));
+    }
+
     fn report_error(self: *@This(), message: *const u8) inline noreturn {
         error.report(self.file, self.line, self.column, self.offset, message);
     }
@@ -54,11 +70,21 @@ const TokenizationContext = struct {
         token_offset.append_assume_capacity(self.offset);
     }
 
-    fn add_token_advance(self: *@This(), tag: TokenType) void {
+    fn add_token_advance(self: *@This(), tag: TokenType, num: u32) void {
         self.add_token(tag);
-        self.advance(1);
+        self.advance(num);
     }
 };
+
+fn report_error_at_token(token: u32, message: *const u8) noreturn {
+    error.report(
+        token_file.get(token).*,
+        token_line.get(token).*,
+        token_column.get(token).*,
+        token_offset.get(token).*,
+        message,
+    );
+}
 
 const Handler = *const fn(*TokenizationContext, u8) void;
 
@@ -88,11 +114,11 @@ fn fill_handlers(start: u64, end: u64, handler: Handler) inline void {
 
 fn register_single_char_token(ch: u8, comptime tt: TokenType) inline void {
     token_handlers[ch] = fn (context: *TokenizationContext) void {
-        context.add_token_advance(tt);
+        context.add_token_advance(tt, 1);
     }.&;
 }
 
-fn init() void {
+fn init() inline void {
     token_type.init();
     token_file.init();
     token_line.init();
@@ -124,6 +150,36 @@ fn init() void {
     fill_handlers('A', 'Z' + 1, ident_h);
     token_handlers['@'] = ident_h;
     token_handlers['_'] = ident_h;
+
+    token_handlers['c'] = fn(context: *TokenizationContext) void {
+        if(context.matches("comptime".&)) {
+            context.add_token_advance(TokenType.comptime_keyword, 8);
+        }
+        else if(context.matches("const".&)) {
+            context.add_token_advance(TokenType.const_keyword, 5);
+        }
+        else {
+            ident_handler(context);
+        }
+    }.&;
+
+    token_handlers['f'] = fn(context: *TokenizationContext) void {
+        if(context.matches("fn".&)) {
+            context.add_token_advance(TokenType.fn_keyword, 2);
+        }
+        else {
+            ident_handler(context);
+        }
+    }.&;
+
+    token_handlers['v'] = fn(context: *TokenizationContext) void {
+        if(context.matches("var".&)) {
+            context.add_token_advance(TokenType.var_keyword, 3);
+        }
+        else {
+            ident_handler(context);
+        }
+    }.&;
 
     {
         var ch: u32 = 0;
@@ -188,18 +244,31 @@ fn init() void {
     register_single_char_token('.', TokenType.dot);
     register_single_char_token(',', TokenType.comma);
     register_single_char_token('&', TokenType.ampersand);
+    register_single_char_token('*', TokenType.asterisk);
+    register_single_char_token('-', TokenType.minus);
+    register_single_char_token('~', TokenType.tilde);
+    register_single_char_token('%', TokenType.percent);
+    register_single_char_token('/', TokenType.slash);
+
+    token_handlers['+'] = fn (context: *TokenizationContext) void {
+        if(context.peek(1) == '+') {
+            context.add_token_advance(TokenType.plus_plus, 2);
+        }
+        else {
+            context.add_token_advance(TokenType.plus, 1);
+        }
+    }.&;
 
     token_handlers['='] = fn (context: *TokenizationContext) void {
         if(context.peek(1) == '=') {
-            context.add_token_advance(TokenType.equals);
-            context.advance(1);
+            context.add_token_advance(TokenType.equals, 2);
         } else {
-            context.add_token_advance(TokenType.assign);
+            context.add_token_advance(TokenType.assign, 1);
         }
     }.&;
 
     token_handlers['"'] = fn (context: *TokenizationContext) void {
-        context.add_token_advance(TokenType.string_literal);
+        context.add_token_advance(TokenType.string_literal, 1);
         loop {
             if(context.peek(0) == '\\') {
                 context.report_error("TODO: String escape".&);
@@ -218,7 +287,7 @@ fn badchar_handler(context: *TokenizationContext) void {
 }
 
 fn ident_handler(context: *TokenizationContext) void {
-    context.add_token_advance(TokenType.identifier);
+    context.add_token_advance(TokenType.identifier, 1);
     loop {
         const c = context.peek(0);
         if(is_ident_char[c]) {

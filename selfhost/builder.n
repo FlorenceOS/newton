@@ -1,0 +1,15 @@
+const Builder = struct {
+    head: u32 = -1,
+    tail: u32 = -1,
+
+    fn add(self: *@This(), new: u32, next_list: *u32) u32 {
+        if(self.head == -1) {
+            self.head = new;
+        }
+        if(self.tail != -1) {
+            next_list[self.tail] = new;
+        }
+        self.tail = new;
+        return new;
+    }
+};

@@ -1,0 +1,335 @@
+const std = @import("std");
+
+const builder = @import("builder.n");
+const error = @import("error.n");
+
+const ExpressionType = enum(u8) {
+    // simple token expressions
+    identifier,
+    int_literal,
+    string_literal,
+
+    // if there is no token (-1), it is a file top-level struct
+    // otherwise, token is the struct/enum/union token
+    // payload 0: first statement in body
+    container_expression,
+
+    // expr_idx - 1 is operand
+    // uops
+    addr_of,
+    deref,
+    unary_plus,
+    unary_minus,
+    unary_bitnot,
+    unary_lognot,
+    pointer_type,
+    force_comptime_eval,
+
+    // payload 0: lhs
+    // expr_idx - 1: rhs
+    // binary operators
+    multiply,
+    divide,
+    modulus,
+    add,
+    subtract,
+    append,
+
+    // payload 0: first argument, other arguments are siblings
+    // expr_idx - 1: callee
+    // token is opening paren
+    function_call,
+};
+
+const StatementType = enum(u8) {
+    // token is var/const/fn token
+    // token + 1 is identifier token
+    // payload 0: type expression (optional)
+    // payload 1: init expression
+    static_declaration,
+
+    // token is identifier
+    // payload 0: type expression
+    // payload 1: init expression (optional)
+    field_declaration,
+};
+
+const MAX_NODES = 0x100000;
+
+// AST Expressions
+var expr_type: std.containers.PinnedVector(ExpressionType, MAX_NODES) = undefined;
+var expr_token: std.containers.PinnedVector(u32, MAX_NODES) = undefined;
+var expr_payload: [1]std.containers.PinnedVector(u32, MAX_NODES) = undefined;
+var expr_next_sibling: std.containers.PinnedVector(u32, MAX_NODES) = undefined;
+
+// AST Statements
+var stmt_type: std.containers.PinnedVector(StatementType, MAX_NODES) = undefined;
+var stmt_token: std.containers.PinnedVector(u32, MAX_NODES) = undefined;
+var stmt_payload: [2]std.containers.PinnedVector(u32, MAX_NODES) = undefined;
+var stmt_next_sibling: std.containers.PinnedVector(u32, MAX_NODES) = undefined;
+
+fn init() inline void {
+    expr_type.init();
+    expr_token.init();
+    expr_payload[0].init();
+    expr_next_sibling.init();
+
+    stmt_type.init();
+    stmt_token.init();
+    stmt_payload[0].init();
+    stmt_payload[1].init();
+    stmt_next_sibling.init();
+}
+
+fn add_expr_with_token(tok: u32, tag: ExpressionType) u32 {
+    const retval = expr_type.size();
+    expr_type.append_assume_capacity(tag);
+    expr_token.append_assume_capacity(tok);
+    _ = expr_payload[0].add();
+    _ = expr_next_sibling.add();
+    return retval;
+}
+
+fn add_stmt_with_token(tok: u32, tag: StatementType) u32 {
+    const retval = stmt_type.size();
+    stmt_type.append_assume_capacity(tag);
+    stmt_token.append_assume_capacity(tok);
+    _ = stmt_payload[0].add();
+    _ = stmt_payload[1].add();
+    _ = stmt_next_sibling.add();
+    return retval;
+}
+
+const ParserContext = struct {
+    current_token: u32,
+    end_token: u32,
+
+    fn advance(self: *@This()) inline void {
+        self.current_token += 1;
+    }
+
+    fn remember_advance(self: *@This()) inline u32 {
+        const retval = self.current_token;
+        self.current_token = retval + 1;
+        return retval;
+    }
+
+    fn add_expr_advance(self: *@This(), tag: ExpressionType) inline u32 {
+        self.advance();
+        return add_expr_with_token(self.current_token - 1, tag);
+    }
+
+    fn add_stmt_advance(self: *@This(), tag: StatementType) inline u32 {
+        self.advance();
+        return add_stmt_with_token(self.current_token - 1, tag);
+    }
+
+    fn peek(self: *@This()) inline tokenizer.TokenType {
+        return tokenizer.token_type.get(self.current_token).*;
+    }
+
+    fn report_error(self: *@This(), message: *const u8) inline noreturn {
+        tokenizer.report_error_at_token(self.current_token, message);
+    }
+
+    fn expect(self: *@This(), error_message: *const u8, expected: tokenizer.TokenType) u32 {
+        const retval = self.current_token;
+        if(self.peek() == expected) {
+            self.advance();
+            return retval;
+        } else {
+            self.report_error(error_message);
+        }
+    }
+};
+
+fn parse_primary_expression(context: *ParserContext) u32 {
+    const p = context.peek();
+
+    if(p == tokenizer.TokenType.identifier) {
+        return context.add_expr_advance(ExpressionType.identifier);
+    }
+    else if(p == tokenizer.TokenType.int_literal) {
+        return context.add_expr_advance(ExpressionType.int_literal);
+    }
+    else if(p == tokenizer.TokenType.string_literal) {
+        return context.add_expr_advance(ExpressionType.string_literal);
+    }
+    else if(p == tokenizer.TokenType.plus) {
+        const plus_tok = context.remember_advance();
+        _ = parse_primary_expression(context);
+        return add_expr_with_token(plus_tok, ExpressionType.unary_plus);
+    }
+    else if(p == tokenizer.TokenType.minus) {
+        const minus_tok = context.remember_advance();
+        _ = parse_primary_expression(context);
+        return add_expr_with_token(minus_tok, ExpressionType.unary_minus);
+    }
+    else if(p == tokenizer.TokenType.tilde) {
+        const bitnot_tok = context.remember_advance();
+        _ = parse_primary_expression(context);
+        return add_expr_with_token(bitnot_tok, ExpressionType.unary_bitnot);
+    }
+    else if(p == tokenizer.TokenType.asterisk) {
+        context.report_error("TOOD: Pointer types".&);
+    }
+    else if(p == tokenizer.TokenType.comptime_keyword) {
+        const comptime_tok = context.remember_advance();
+        _ = parse_primary_expression(context);
+        return add_expr_with_token(comptime_tok, ExpressionType.force_comptime_eval);
+    }
+    else {
+        context.report_error("Expected primary expression".&);
+    }
+}
+
+fn parse_primary_with_postfix(context: *ParserContext) u32 {
+    var result = parse_primary_expression(context);
+
+    loop {
+        var p = context.peek();
+        if(p == tokenizer.TokenType.dot) {
+            context.advance();
+            p = context.peek();
+            if(p == tokenizer.TokenType.ampersand) {
+                context.add_expr_advance(ExpressionType.addr_of);
+            }
+            else if(p == tokenizer.TokenType.asterisk) {
+                context.add_expr_advance(ExpressionType.deref);
+            }
+            else {
+                context.report_error("Expected postfix token after '.'".&);
+            }
+        }
+        else if(p == tokenizer.TokenType.opening_paren) {
+            result = context.add_expr_advance(ExpressionType.function_call);
+            var argument_builder = builder.Builder{};
+            loop(context.peek() != tokenizer.TokenType.closing_paren) {
+                argument_builder.add(parse_expression(context), expr_next_sibling.ptr());
+                if(context.peek() != tokenizer.TokenType.comma) {
+                    break;
+                }
+            }
+            context.expect("Expected closing paren after argument list".&, tokenizer.TokenType.closing_paren);
+            expr_payload[0].get(result).* = argument_builder.head;
+        }
+        else {
+            return result;
+        }
+    }
+}
+
+fn parse_expression(context: *ParserContext) u32 {
+    var lhs = parse_primary_with_postfix(context);
+
+    // Binary operators
+    loop {
+        var p = context.peek();
+
+        var operator_precedence: u32 = undefined;
+        var tag: ExpressionType = undefined;
+
+        if(p == tokenizer.TokenType.asterisk) {
+            tag = ExpressionType.multiply;
+            operator_precedence = 3;
+        }
+        else if(p == tokenizer.TokenType.slash) {
+            tag = ExpressionType.divide;
+            operator_precedence = 3;
+        }
+        else if(p == tokenizer.TokenType.percent) {
+            tag = ExpressionType.modulus;
+            operator_precedence = 3;
+        }
+        else if(p == tokenizer.TokenType.plus) {
+            tag = ExpressionType.add;
+            operator_precedence = 4;
+        }
+        else if(p == tokenizer.TokenType.minus) {
+            tag = ExpressionType.subtract;
+            operator_precedence = 4;
+        }
+        else if(p == tokenizer.TokenType.plus_plus) {
+            tag = ExpressionType.append;
+            operator_precedence = 4;
+        }
+        else {
+            return lhs;
+        }
+
+        // TODO: Add the rest of these
+        // const op_prec: usize = switch(op) {
+        //     .@"<<_ch", .@">>_ch" => 5,
+        //     .@"&_ch", .@"^_ch", .@"|_ch" => 6,
+        //     .@"==_ch", .@"!=_ch", .@"<_ch", .@"<=_ch", .@">_ch", .@">=_ch" => 7,
+        //     .@"&&_ch", .@"||_ch" => 8,
+        //     .@".._ch" => 9,
+
+        //     .@"=_ch", .@"++=_ch",
+        //     .@"+=_ch", .@"-=_ch", .@"*=_ch",
+        //     .@"/=_ch", .@"%=_ch",
+        //     .@"|=_ch", .@"&=_ch", .@"^=_ch",
+        //     .@"<<=_ch", .@">>=_ch",
+        //     => 10,
+
+        //     else => unreachable,
+        // };
+
+        // if(op_prec > precedence) {
+        //     return lhs;
+        // }
+
+        // if(op_prec == precedence and op_prec != 10) {
+        //     return lhs;
+        // }
+
+        context.report_error("TODO: Binary operators".&);
+    }
+}
+
+fn parse_container_body(context: *ParserContext) u32 {
+    var decl_builder = builder.Builder{};
+
+    loop {
+        const p = context.peek();
+
+        if(p == tokenizer.TokenType.identifier) {
+            context.report_error("TODO: Container field".&);
+        }
+        else if(p == tokenizer.TokenType.const_keyword || p == tokenizer.TokenType.var_keyword) {
+            const decl = context.add_stmt_advance(StatementType.static_declaration);
+            context.expect("Expected identifier for static declaration".&, tokenizer.TokenType.identifier);
+            if(context.peek() == tokenizer.TokenType.colon) {
+                context.advance();
+                stmt_payload[0].get(decl).* = parse_expression(context);
+            } else {
+                stmt_payload[0].get(decl).* = -1;
+            }
+            context.expect("Expected '=' in static decl".&, tokenizer.TokenType.assign);
+            stmt_payload[1].get(decl).* = parse_expression(context);
+            context.expect("Expected ';' after static decl".&, tokenizer.TokenType.semicolon);
+            decl_builder.add(decl, stmt_next_sibling.ptr());
+        }
+        else if(p == tokenizer.TokenType.fn_keyword) {
+            context.report_error("TODO: Container fn decl".&);
+        }
+        else if(p == tokenizer.TokenType.closing_curly) {
+            return decl_builder.head;
+        }
+        else {
+            context.report_error("Unexpected token in container body".&);
+        }
+    }
+}
+
+fn parse_file(file: u32) u32 {
+    var context: ParserContext = undefined;
+    context.current_token = tokenizer.token_type.size();
+    tokenizer.tokenize_file(file);
+    context.end_token = tokenizer.token_type.size();
+    const toplevel = add_expr_with_token(-1, ExpressionType.container_expression);
+    source_files.source_files.get(file).top_level_struct = toplevel;
+    const first_decl = parse_container_body(context.&);
+    expr_payload[0].get(toplevel).* = first_decl;
+    return toplevel;
+}
