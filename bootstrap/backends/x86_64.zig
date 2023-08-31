@@ -627,11 +627,11 @@ fn writeDecl(writer: *backends.Writer, decl_idx: ir.DeclIndex.Index, uf: rega.Un
         => |op| {
             const imm = std.mem.asBytes(&op.rhs);
             const op_t = decl.instr.getOperationType();
-            if(std.math.cast(i8, op.rhs)) |_| {
+            if(std.math.cast(i8, @as(i64, @bitCast(op.rhs)))) |_| {
                 try writeOperandReg(writer, uf, op_t, op.lhs, 7, &.{if(op_t == .u8) @as(u8, 0x80) else 0x83}, imm[0..1], false);
             } else if(op_t == .u16) {
                 try writeOperandReg(writer, uf, op_t, op.lhs, 7, &.{0x81}, imm[0..2], false);
-            } else if(std.math.cast(i32, op.rhs)) |_| {
+            } else if(std.math.cast(i32, @as(i64, @bitCast(op.rhs)))) |_| {
                 try writeOperandReg(writer, uf, op_t, op.lhs, 7, &.{0x81}, imm[0..4], false);
             } else {
                 @panic(":(");
