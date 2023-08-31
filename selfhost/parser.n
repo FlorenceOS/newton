@@ -194,6 +194,7 @@ fn parse_statement(context: *ParserContext) u32 {
         }
         context.expect("Expected '=' after variable declaration".&, .assign);
         stmt_payload[1].get(result).* = parse_expression(context);
+        context.expect("Expected ';' after variable initialization".&, .semicolon);
         return result;
     }
     // else if(p == .continue_keyword) {
