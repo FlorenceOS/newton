@@ -73,6 +73,12 @@ const StatementType = enum(u8) {
 
     // payload 0: expression
     expression,
+
+    // token is var/const/fn token
+    // token + 1 is identifier token
+    // payload 0: type expression (optional)
+    // payload 1: init expression
+    local_var_decl,
 };
 
 const MAX_NODES = 0x100000;
@@ -177,8 +183,18 @@ fn parse_statement(context: *ParserContext) u32 {
     // else if(p == .case_keyword) {
     //     context.report_error("TODO: Case statement".&);
     // }
-    else if(p == .const_keyword) {
-        context.report_error("TODO: Const statement".&);
+    else if(p == .const_keyword || p == .var_keyword) {
+        const result = context.add_stmt_advance(.local_var_decl);
+        context.expect("Expected local variable name".&, .identifier);
+        if(context.peek() == .colon) {
+            context.advance();
+            stmt_payload[0].get(result).* = parse_expression_with_precedence(context, 0);
+        } else {
+            stmt_payload[0].get(result).* = -1;
+        }
+        context.expect("Expected '=' after variable declaration".&, .assign);
+        stmt_payload[1].get(result).* = parse_expression(context);
+        return result;
     }
     // else if(p == .continue_keyword) {
     //     context.report_error("TODO: Continue statement".&);
