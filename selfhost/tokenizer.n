@@ -144,7 +144,8 @@ fn register_single_char_token(ch: u8, comptime tt: TokenType) inline void {
     }.&;
 }
 
-fn init() inline void {
+// Not inline to reduce compile times, make inline once compiler is faster
+fn init() void {
     token_type.init();
     token_file.init();
     token_line.init();
