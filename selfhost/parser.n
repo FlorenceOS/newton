@@ -162,43 +162,43 @@ const ParserContext = struct {
 
 fn parse_statement(context: *ParserContext) u32 {
     const p = context.peek();
-    if(p == tokenizer.TokenType.opening_curly) {
-        const result = add_stmt_with_token(context.current_token, StatementType.block);
+    if(p == .opening_curly) {
+        const result = add_stmt_with_token(context.current_token, .block);
         stmt_payload[0].get(result).* = parse_block_statement(context);
         return result;
     }
-    else if(p == tokenizer.TokenType.break_keyword) {
+    else if(p == .break_keyword) {
         context.report_error("TODO: Break statement".&);
     }
-    // else if(p == tokenizer.TokenType.case_keyword) {
+    // else if(p == .case_keyword) {
     //     context.report_error("TODO: Case statement".&);
     // }
-    else if(p == tokenizer.TokenType.const_keyword) {
+    else if(p == .const_keyword) {
         context.report_error("TODO: Const statement".&);
     }
-    // else if(p == tokenizer.TokenType.continue_keyword) {
+    // else if(p == .continue_keyword) {
     //     context.report_error("TODO: Continue statement".&);
     // }
-    // else if(p == tokenizer.TokenType.endcase_keyword) {
+    // else if(p == .endcase_keyword) {
     //     context.report_error("TODO: Endcase statement".&);
     // }
-    // else if(p == tokenizer.TokenType.unreachable_keyword) {
+    // else if(p == .unreachable_keyword) {
     //     context.report_error("TODO: Unreachable statement".&);
     // }
-    else if(p == tokenizer.TokenType.if_keyword) {
+    else if(p == .if_keyword) {
         context.report_error("TODO: If statement".&);
     }
-    else if(p == tokenizer.TokenType.loop_keyword) {
+    else if(p == .loop_keyword) {
         context.report_error("TODO: Loop statement".&);
     }
-    else if(p == tokenizer.TokenType.return_keyword) {
+    else if(p == .return_keyword) {
         context.report_error("TODO: Return statement".&);
     }
-    // else if(p == tokenizer.TokenType.switch_keyword) {
+    // else if(p == .switch_keyword) {
     //     context.report_error("TODO: Switch statement".&);
     // }
-    else if(p == tokenizer.TokenType.identifier || p == tokenizer.TokenType.__keyword || p == tokenizer.TokenType.opening_paren) {
-        const result = add_stmt_with_token(-1, StatementType.expression);
+    else if(p == .identifier || p == .__keyword || p == .opening_paren) {
+        const result = add_stmt_with_token(-1, .expression);
         stmt_payload[0].get(result).* = parse_expression(context);
         return result;
     }
@@ -209,53 +209,53 @@ fn parse_statement(context: *ParserContext) u32 {
 
 fn parse_block_statement_body(context: *ParserContext) u32 {
     var stmts = builder.Builder{};
-    loop(context.peek() != tokenizer.TokenType.closing_curly) {
+    loop(context.peek() != .closing_curly) {
         stmts.add(parse_statement(context), stmt_next_sibling.ptr());
     }
     return stmts.head;
 }
 
 fn parse_block_statement(context: *ParserContext) u32 {
-    context.expect("Expected '{' to start block statement".&, tokenizer.TokenType.opening_curly);
+    context.expect("Expected '{' to start block statement".&, .opening_curly);
     const result = parse_block_statement_body(context);
-    context.expect("Expected '}' to start block statement".&, tokenizer.TokenType.closing_curly);
+    context.expect("Expected '}' to start block statement".&, .closing_curly);
     return result;
 }
 
 fn parse_function_expression(context: *ParserContext) u32 {
-    context.expect("Expected '(' before parameter list".&, tokenizer.TokenType.opening_paren);
+    context.expect("Expected '(' before parameter list".&, .opening_paren);
     var param_builder = builder.Builder{};
-    loop(context.peek() != tokenizer.TokenType.closing_paren) {
-        if(context.peek() == tokenizer.TokenType.comptime_keyword) {
+    loop(context.peek() != .closing_paren) {
+        if(context.peek() == .comptime_keyword) {
             context.advance();
         }
         var ident: u32 = -1;
-        if(context.peek() == tokenizer.TokenType.identifier) {
+        if(context.peek() == .identifier) {
             ident = context.remember_advance();
-            context.expect("Expected ':' after function parameter name".&, tokenizer.TokenType.colon);
+            context.expect("Expected ':' after function parameter name".&, .colon);
         }
-        const decl = add_stmt_with_token(ident, StatementType.function_parameter_decl);
+        const decl = add_stmt_with_token(ident, .function_parameter_decl);
         stmt_payload[0].get(decl).* = parse_expression(context);
         param_builder.add(decl, stmt_next_sibling.ptr());
-        if(context.peek() == tokenizer.TokenType.comma) {
+        if(context.peek() == .comma) {
             context.advance();
         } else {
             break;
         }
     }
-    const end_paren_tok = context.expect("Expected ')' after parameter list".&, tokenizer.TokenType.closing_paren);
-    if(context.peek() == tokenizer.TokenType.inline_keyword) {
+    const end_paren_tok = context.expect("Expected ')' after parameter list".&, .closing_paren);
+    if(context.peek() == .inline_keyword) {
         context.advance();
     }
-    if(context.peek() == tokenizer.TokenType.vertical_bar) {
+    if(context.peek() == .vertical_bar) {
         context.advance();
-        context.expect("Expected return location binding name after '|'".&, tokenizer.TokenType.identifier);
-        context.expect("Expected '|' after return location binding name".&, tokenizer.TokenType.vertical_bar);
+        context.expect("Expected return location binding name after '|'".&, .identifier);
+        context.expect("Expected '|' after return location binding name".&, .vertical_bar);
     }
     _ = parse_expression_with_precedence(context, 0);
-    const result = add_expr_with_token(end_paren_tok, ExpressionType.function_expression);
+    const result = add_expr_with_token(end_paren_tok, .function_expression);
     expr_payload[0].get(result).* = param_builder.head;
-    if(context.peek() == tokenizer.TokenType.opening_curly) {
+    if(context.peek() == .opening_curly) {
         expr_payload[1].get(result).* = parse_block_statement(context);
     } else {
         expr_payload[1].get(result).* = -1;
@@ -266,41 +266,41 @@ fn parse_function_expression(context: *ParserContext) u32 {
 fn parse_primary_expression(context: *ParserContext) u32 {
     const p = context.peek();
 
-    if(p == tokenizer.TokenType.identifier) {
-        return context.add_expr_advance(ExpressionType.identifier);
+    if(p == .identifier) {
+        return context.add_expr_advance(.identifier);
     }
-    else if(p == tokenizer.TokenType.int_literal) {
-        return context.add_expr_advance(ExpressionType.int_literal);
+    else if(p == .int_literal) {
+        return context.add_expr_advance(.int_literal);
     }
-    else if(p == tokenizer.TokenType.string_literal) {
-        return context.add_expr_advance(ExpressionType.string_literal);
+    else if(p == .string_literal) {
+        return context.add_expr_advance(.string_literal);
     }
-    else if(p == tokenizer.TokenType.fn_keyword) {
+    else if(p == .fn_keyword) {
         context.advance();
         return parse_function_expression(context);
     }
-    else if(p == tokenizer.TokenType.plus) {
+    else if(p == .plus) {
         const plus_tok = context.remember_advance();
         _ = parse_primary_expression(context);
-        return add_expr_with_token(plus_tok, ExpressionType.unary_plus);
+        return add_expr_with_token(plus_tok, .unary_plus);
     }
-    else if(p == tokenizer.TokenType.minus) {
+    else if(p == .minus) {
         const minus_tok = context.remember_advance();
         _ = parse_primary_expression(context);
-        return add_expr_with_token(minus_tok, ExpressionType.unary_minus);
+        return add_expr_with_token(minus_tok, .unary_minus);
     }
-    else if(p == tokenizer.TokenType.tilde) {
+    else if(p == .tilde) {
         const bitnot_tok = context.remember_advance();
         _ = parse_primary_expression(context);
-        return add_expr_with_token(bitnot_tok, ExpressionType.unary_bitnot);
+        return add_expr_with_token(bitnot_tok, .unary_bitnot);
     }
-    else if(p == tokenizer.TokenType.asterisk) {
+    else if(p == .asterisk) {
         context.report_error("TOOD: Pointer types".&);
     }
-    else if(p == tokenizer.TokenType.comptime_keyword) {
+    else if(p == .comptime_keyword) {
         const comptime_tok = context.remember_advance();
         _ = parse_primary_expression(context);
-        return add_expr_with_token(comptime_tok, ExpressionType.force_comptime_eval);
+        return add_expr_with_token(comptime_tok, .force_comptime_eval);
     }
     else {
         context.report_error("Expected primary expression".&);
@@ -312,29 +312,29 @@ fn parse_primary_with_postfix(context: *ParserContext) u32 {
 
     loop {
         var p = context.peek();
-        if(p == tokenizer.TokenType.dot) {
+        if(p == .dot) {
             context.advance();
             p = context.peek();
-            if(p == tokenizer.TokenType.ampersand) {
-                context.add_expr_advance(ExpressionType.addr_of);
+            if(p == .ampersand) {
+                context.add_expr_advance(.addr_of);
             }
-            else if(p == tokenizer.TokenType.asterisk) {
-                context.add_expr_advance(ExpressionType.deref);
+            else if(p == .asterisk) {
+                context.add_expr_advance(.deref);
             }
             else {
                 context.report_error("Expected postfix token after '.'".&);
             }
         }
-        else if(p == tokenizer.TokenType.opening_paren) {
-            result = context.add_expr_advance(ExpressionType.function_call);
+        else if(p == .opening_paren) {
+            result = context.add_expr_advance(.function_call);
             var argument_builder = builder.Builder{};
-            loop(context.peek() != tokenizer.TokenType.closing_paren) {
+            loop(context.peek() != .closing_paren) {
                 argument_builder.add(parse_expression(context), expr_next_sibling.ptr());
-                if(context.peek() != tokenizer.TokenType.comma) {
+                if(context.peek() != .comma) {
                     break;
                 }
             }
-            context.expect("Expected ')' after argument list".&, tokenizer.TokenType.closing_paren);
+            context.expect("Expected ')' after argument list".&, .closing_paren);
             expr_payload[0].get(result).* = argument_builder.head;
         }
         else {
@@ -353,28 +353,28 @@ fn parse_expression_with_precedence(context: *ParserContext, precedence: u32) u3
         var operator_precedence: u32 = undefined;
         var tag: ExpressionType = undefined;
 
-        if(p == tokenizer.TokenType.asterisk) {
-            tag = ExpressionType.multiply;
+        if(p == .asterisk) {
+            tag = .multiply;
             operator_precedence = 3;
         }
-        else if(p == tokenizer.TokenType.slash) {
-            tag = ExpressionType.divide;
+        else if(p == .slash) {
+            tag = .divide;
             operator_precedence = 3;
         }
-        else if(p == tokenizer.TokenType.percent) {
-            tag = ExpressionType.modulus;
+        else if(p == .percent) {
+            tag = .modulus;
             operator_precedence = 3;
         }
-        else if(p == tokenizer.TokenType.plus) {
-            tag = ExpressionType.add;
+        else if(p == .plus) {
+            tag = .add;
             operator_precedence = 4;
         }
-        else if(p == tokenizer.TokenType.minus) {
-            tag = ExpressionType.subtract;
+        else if(p == .minus) {
+            tag = .subtract;
             operator_precedence = 4;
         }
-        else if(p == tokenizer.TokenType.plus_plus) {
-            tag = ExpressionType.append;
+        else if(p == .plus_plus) {
+            tag = .append;
             operator_precedence = 4;
         }
         // TODO: Add the rest of these
@@ -422,31 +422,31 @@ fn parse_container_body(context: *ParserContext) u32 {
     loop {
         const p = context.peek();
 
-        if(p == tokenizer.TokenType.identifier) {
+        if(p == .identifier) {
             context.report_error("TODO: Container field".&);
         }
-        else if(p == tokenizer.TokenType.const_keyword || p == tokenizer.TokenType.var_keyword) {
-            const decl = context.add_stmt_advance(StatementType.static_declaration);
-            context.expect("Expected identifier for static declaration".&, tokenizer.TokenType.identifier);
-            if(context.peek() == tokenizer.TokenType.colon) {
+        else if(p == .const_keyword || p == .var_keyword) {
+            const decl = context.add_stmt_advance(.static_declaration);
+            context.expect("Expected identifier for static declaration".&, .identifier);
+            if(context.peek() == .colon) {
                 context.advance();
                 stmt_payload[0].get(decl).* = parse_expression(context);
             } else {
                 stmt_payload[0].get(decl).* = -1;
             }
-            context.expect("Expected '=' in static decl".&, tokenizer.TokenType.assign);
+            context.expect("Expected '=' in static decl".&, .assign);
             stmt_payload[1].get(decl).* = parse_expression(context);
-            context.expect("Expected ';' after static decl".&, tokenizer.TokenType.semicolon);
+            context.expect("Expected ';' after static decl".&, .semicolon);
             decl_builder.add(decl, stmt_next_sibling.ptr());
         }
-        else if(p == tokenizer.TokenType.fn_keyword) {
-            const decl = context.add_stmt_advance(StatementType.static_declaration);
-            context.expect("Expected identifier for fn decl".&, tokenizer.TokenType.identifier);
+        else if(p == .fn_keyword) {
+            const decl = context.add_stmt_advance(.static_declaration);
+            context.expect("Expected identifier for fn decl".&, .identifier);
             stmt_payload[0].get(decl).* = -1;
             stmt_payload[1].get(decl).* = parse_function_expression(context);
             decl_builder.add(decl, stmt_next_sibling.ptr());
         }
-        else if(p == tokenizer.TokenType.closing_curly) {
+        else if(p == .closing_curly) {
             return decl_builder.head;
         }
         else {
@@ -460,7 +460,7 @@ fn parse_file(file: u32) u32 {
     context.current_token = tokenizer.token_type.size();
     tokenizer.tokenize_file(file);
     context.end_token = tokenizer.token_type.size();
-    const toplevel = add_expr_with_token(-1, ExpressionType.container_expression);
+    const toplevel = add_expr_with_token(-1, .container_expression);
     source_files.source_files.get(file).top_level_struct = toplevel;
     const first_decl = parse_container_body(context.&);
     expr_payload[0].get(toplevel).* = first_decl;

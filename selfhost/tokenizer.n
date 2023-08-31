@@ -180,13 +180,13 @@ fn init() inline void {
         if(is_ident_char[context.peek(1)]) {
             ident_handler(context);
         } else {
-            context.add_token_advance(TokenType.__keyword, 1);
+            context.add_token_advance(.__keyword, 1);
         }
     }.&;
 
     token_handlers['b'] = fn(context: *TokenizationContext) void {
         if(context.matches("break".&)) {
-            context.add_token_advance(TokenType.break_keyword, 5);
+            context.add_token_advance(.break_keyword, 5);
         }
         else {
             ident_handler(context);
@@ -195,10 +195,10 @@ fn init() inline void {
 
     token_handlers['c'] = fn(context: *TokenizationContext) void {
         if(context.matches("comptime".&)) {
-            context.add_token_advance(TokenType.comptime_keyword, 8);
+            context.add_token_advance(.comptime_keyword, 8);
         }
         else if(context.matches("const".&)) {
-            context.add_token_advance(TokenType.const_keyword, 5);
+            context.add_token_advance(.const_keyword, 5);
         }
         else {
             ident_handler(context);
@@ -207,7 +207,7 @@ fn init() inline void {
 
     token_handlers['f'] = fn(context: *TokenizationContext) void {
         if(context.matches("fn".&)) {
-            context.add_token_advance(TokenType.fn_keyword, 2);
+            context.add_token_advance(.fn_keyword, 2);
         }
         else {
             ident_handler(context);
@@ -216,10 +216,10 @@ fn init() inline void {
 
     token_handlers['i'] = fn(context: *TokenizationContext) void {
         if(context.matches("inline".&)) {
-            context.add_token_advance(TokenType.inline_keyword, 6);
+            context.add_token_advance(.inline_keyword, 6);
         }
         if(context.matches("if".&)) {
-            context.add_token_advance(TokenType.if_keyword, 2);
+            context.add_token_advance(.if_keyword, 2);
         }
         else {
             ident_handler(context);
@@ -228,7 +228,7 @@ fn init() inline void {
 
     token_handlers['l'] = fn(context: *TokenizationContext) void {
         if(context.matches("loop".&)) {
-            context.add_token_advance(TokenType.loop_keyword, 4);
+            context.add_token_advance(.loop_keyword, 4);
         }
         else {
             ident_handler(context);
@@ -237,7 +237,7 @@ fn init() inline void {
 
     token_handlers['r'] = fn(context: *TokenizationContext) void {
         if(context.matches("return".&)) {
-            context.add_token_advance(TokenType.return_keyword, 6);
+            context.add_token_advance(.return_keyword, 6);
         }
         else {
             ident_handler(context);
@@ -246,7 +246,7 @@ fn init() inline void {
 
     token_handlers['v'] = fn(context: *TokenizationContext) void {
         if(context.matches("var".&)) {
-            context.add_token_advance(TokenType.var_keyword, 3);
+            context.add_token_advance(.var_keyword, 3);
         }
         else {
             ident_handler(context);
@@ -276,7 +276,7 @@ fn init() inline void {
         }
     }
     fill_handlers('0', '9' + 1, fn (context: *TokenizationContext, ch: u8) void {
-        context.add_token(TokenType.int_literal);
+        context.add_token(.int_literal);
         var base: u8 = 10;
         if(ch == '0') {
             const next = context.peek(1);
@@ -308,40 +308,40 @@ fn init() inline void {
         context.file_data += 1;
     }.&;
 
-    register_single_char_token('{', TokenType.opening_curly);
-    register_single_char_token('}', TokenType.closing_curly);
-    register_single_char_token('(', TokenType.opening_paren);
-    register_single_char_token(')', TokenType.closing_paren);
-    register_single_char_token(';', TokenType.semicolon);
-    register_single_char_token('.', TokenType.dot);
-    register_single_char_token(',', TokenType.comma);
-    register_single_char_token('&', TokenType.ampersand);
-    register_single_char_token('*', TokenType.asterisk);
-    register_single_char_token('-', TokenType.minus);
-    register_single_char_token('~', TokenType.tilde);
-    register_single_char_token('%', TokenType.percent);
-    register_single_char_token('/', TokenType.slash);
-    register_single_char_token('|', TokenType.vertical_bar);
+    register_single_char_token('{', .opening_curly);
+    register_single_char_token('}', .closing_curly);
+    register_single_char_token('(', .opening_paren);
+    register_single_char_token(')', .closing_paren);
+    register_single_char_token(';', .semicolon);
+    register_single_char_token('.', .dot);
+    register_single_char_token(',', .comma);
+    register_single_char_token('&', .ampersand);
+    register_single_char_token('*', .asterisk);
+    register_single_char_token('-', .minus);
+    register_single_char_token('~', .tilde);
+    register_single_char_token('%', .percent);
+    register_single_char_token('/', .slash);
+    register_single_char_token('|', .vertical_bar);
 
     token_handlers['+'] = fn (context: *TokenizationContext) void {
         if(context.peek(1) == '+') {
-            context.add_token_advance(TokenType.plus_plus, 2);
+            context.add_token_advance(.plus_plus, 2);
         }
         else {
-            context.add_token_advance(TokenType.plus, 1);
+            context.add_token_advance(.plus, 1);
         }
     }.&;
 
     token_handlers['='] = fn (context: *TokenizationContext) void {
         if(context.peek(1) == '=') {
-            context.add_token_advance(TokenType.equals, 2);
+            context.add_token_advance(.equals, 2);
         } else {
-            context.add_token_advance(TokenType.assign, 1);
+            context.add_token_advance(.assign, 1);
         }
     }.&;
 
     token_handlers['"'] = fn (context: *TokenizationContext) void {
-        context.add_token_advance(TokenType.string_literal, 1);
+        context.add_token_advance(.string_literal, 1);
         loop {
             if(context.peek(0) == '\\') {
                 context.report_error("TODO: String escape".&);
@@ -360,7 +360,7 @@ fn badchar_handler(context: *TokenizationContext) void {
 }
 
 fn ident_handler(context: *TokenizationContext) void {
-    context.add_token_advance(TokenType.identifier, 1);
+    context.add_token_advance(.identifier, 1);
     loop {
         const c = context.peek(0);
         if(is_ident_char[c]) {
