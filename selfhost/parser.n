@@ -219,7 +219,7 @@ fn parse_primary_with_postfix(context: *ParserContext) u32 {
     }
 }
 
-fn parse_expression(context: *ParserContext) u32 {
+fn parse_expression_with_precedence(context: *ParserContext, precedence: u32) u32 {
     var lhs = parse_primary_with_postfix(context);
 
     // Binary operators
@@ -253,10 +253,6 @@ fn parse_expression(context: *ParserContext) u32 {
             tag = ExpressionType.append;
             operator_precedence = 4;
         }
-        else {
-            return lhs;
-        }
-
         // TODO: Add the rest of these
         // const op_prec: usize = switch(op) {
         //     .@"<<_ch", .@">>_ch" => 5,
@@ -271,20 +267,29 @@ fn parse_expression(context: *ParserContext) u32 {
         //     .@"|=_ch", .@"&=_ch", .@"^=_ch",
         //     .@"<<=_ch", .@">>=_ch",
         //     => 10,
-
-        //     else => unreachable,
         // };
+        else {
+            return lhs;
+        }
 
-        // if(op_prec > precedence) {
-        //     return lhs;
-        // }
+        if(operator_precedence > precedence) {
+            return lhs;
+        }
+        if(operator_precedence == precedence && operator_precedence != 10) {
+            return lhs;
+        }
 
-        // if(op_prec == precedence and op_prec != 10) {
-        //     return lhs;
-        // }
-
-        context.report_error("TODO: Binary operators".&);
+        const operand_token = context.remember_advance();
+        const old_lhs = lhs;
+        _ = old_lhs.&; // Hack to put old_lhs on stack, we're out of registers
+        _ = parse_expression_with_precedence(context, operator_precedence);
+        lhs = add_expr_with_token(operand_token, tag);
+        expr_payload[0].get(lhs).* = old_lhs;
     }
+}
+
+fn parse_expression(context: *ParserContext) inline u32 {
+    return parse_expression_with_precedence(context, 99);
 }
 
 fn parse_container_body(context: *ParserContext) u32 {
