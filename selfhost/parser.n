@@ -438,7 +438,7 @@ fn parse_container_body(context: *ParserContext) u32 {
             context.expect("Expected identifier for static declaration".&, .identifier);
             if(context.peek() == .colon) {
                 context.advance();
-                stmt_payload[0].get(decl).* = parse_expression(context);
+                stmt_payload[0].get(decl).* = parse_expression_with_precedence(context, 0);
             } else {
                 stmt_payload[0].get(decl).* = -1;
             }
