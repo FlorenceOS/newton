@@ -354,7 +354,9 @@ fn parse_primary_with_postfix(context: *ParserContext) u32 {
             var argument_builder = builder.Builder{};
             loop(context.peek() != .closing_paren) {
                 argument_builder.add(parse_expression(context), expr_next_sibling.ptr());
-                if(context.peek() != .comma) {
+                if(context.peek() == .comma) {
+                    context.advance();
+                } else {
                     break;
                 }
             }
