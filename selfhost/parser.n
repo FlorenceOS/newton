@@ -45,6 +45,10 @@ const ExpressionType = enum(u8) {
     // expr_idx - 1: return type
     // token: end paren token (before attribute list)
     function_expression,
+
+    // expr_idx - 1: expression accessed
+    // token: identifier accessed
+    member_access,
 };
 
 const StatementType = enum(u8) {
@@ -320,6 +324,9 @@ fn parse_primary_with_postfix(context: *ParserContext) u32 {
             }
             else if(p == .asterisk) {
                 context.add_expr_advance(.deref);
+            }
+            else if(p == .identifier) {
+                context.add_expr_advance(.member_access);
             }
             else {
                 context.report_error("Expected postfix token after '.'".&);
