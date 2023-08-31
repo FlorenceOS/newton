@@ -129,7 +129,7 @@ fn fill_handlers(start: u64, end: u64, handler: Handler) inline void {
     var curr_h = token_handlers[start].&;
     const end_h = token_handlers[end].&;
     loop {
-        if(curr_h < end_h) {
+        if(curr_h <= end_h) {
             curr_h.* = handler;
             curr_h += 1;
         } else {
@@ -151,7 +151,7 @@ fn init() inline void {
     token_column.init();
     token_offset.init();
 
-    fill_handlers(0, 0x100, badchar_handler.&);
+    fill_handlers(0, 0xFF, badchar_handler.&);
 
     {
         var ch: u32 = 0;
@@ -172,8 +172,8 @@ fn init() inline void {
         is_ident_char['_'] = true;
     }
     const ident_h = ident_handler.&;
-    fill_handlers('a', 'z' + 1, ident_h);
-    fill_handlers('A', 'Z' + 1, ident_h);
+    fill_handlers('a', 'z', ident_h);
+    fill_handlers('A', 'Z', ident_h);
     token_handlers['@'] = ident_h;
 
     token_handlers['_'] = fn(context: *TokenizationContext) void {
@@ -275,7 +275,7 @@ fn init() inline void {
             ch += 1;
         }
     }
-    fill_handlers('0', '9' + 1, fn (context: *TokenizationContext, ch: u8) void {
+    fill_handlers('0', '9', fn (context: *TokenizationContext, ch: u8) void {
         context.add_token(.int_literal);
         var base: u8 = 10;
         if(ch == '0') {
