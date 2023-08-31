@@ -204,6 +204,7 @@ fn parse_statement(context: *ParserContext) u32 {
     else if(p == .identifier || p == .__keyword || p == .opening_paren) {
         const result = add_stmt_with_token(-1, .expression);
         stmt_payload[0].get(result).* = parse_expression(context);
+        context.expect("Expected ';' after expression statement".&, .semicolon);
         return result;
     }
     else {
