@@ -10,10 +10,35 @@ const TokenType = enum(u8) {
     int_literal,
     string_literal,
 
-    const_keyword,
-    var_keyword,
-    fn_keyword,
+    break_keyword,
+    //case_keyword,
     comptime_keyword,
+    const_keyword,
+    //continue_keyword,
+    //else_keyword,
+    //endcase_keyword,
+    //enum_keyword,
+    //false_keyword,
+    fn_keyword,
+    if_keyword,
+    inline_keyword,
+    loop_keyword,
+    //noreturn_keyword,
+    return_keyword,
+    //struct_keyword,
+    //switch_keyword,
+    //true_keyword,
+    //undefined_keyword,
+    //union_keyword,
+    //unreachable_keyword,
+    var_keyword,
+    //volatile_keyword,
+    __keyword,
+
+    //bool_keyword,
+    //type_keyword,
+    //void_keyword,
+    //anyopaque_keyword,
 
     opening_curly,
     closing_curly,
@@ -35,6 +60,7 @@ const TokenType = enum(u8) {
     slash,
     percent,
     plus_plus,
+    vertical_bar,
 };
 
 const TokenizationContext = struct {
@@ -149,7 +175,23 @@ fn init() inline void {
     fill_handlers('a', 'z' + 1, ident_h);
     fill_handlers('A', 'Z' + 1, ident_h);
     token_handlers['@'] = ident_h;
-    token_handlers['_'] = ident_h;
+
+    token_handlers['_'] = fn(context: *TokenizationContext) void {
+        if(is_ident_char[context.peek(1)]) {
+            ident_handler(context);
+        } else {
+            context.add_token_advance(TokenType.__keyword, 1);
+        }
+    }.&;
+
+    token_handlers['b'] = fn(context: *TokenizationContext) void {
+        if(context.matches("break".&)) {
+            context.add_token_advance(TokenType.break_keyword, 5);
+        }
+        else {
+            ident_handler(context);
+        }
+    }.&;
 
     token_handlers['c'] = fn(context: *TokenizationContext) void {
         if(context.matches("comptime".&)) {
@@ -166,6 +208,36 @@ fn init() inline void {
     token_handlers['f'] = fn(context: *TokenizationContext) void {
         if(context.matches("fn".&)) {
             context.add_token_advance(TokenType.fn_keyword, 2);
+        }
+        else {
+            ident_handler(context);
+        }
+    }.&;
+
+    token_handlers['i'] = fn(context: *TokenizationContext) void {
+        if(context.matches("inline".&)) {
+            context.add_token_advance(TokenType.inline_keyword, 6);
+        }
+        if(context.matches("if".&)) {
+            context.add_token_advance(TokenType.if_keyword, 2);
+        }
+        else {
+            ident_handler(context);
+        }
+    }.&;
+
+    token_handlers['l'] = fn(context: *TokenizationContext) void {
+        if(context.matches("loop".&)) {
+            context.add_token_advance(TokenType.loop_keyword, 4);
+        }
+        else {
+            ident_handler(context);
+        }
+    }.&;
+
+    token_handlers['r'] = fn(context: *TokenizationContext) void {
+        if(context.matches("return".&)) {
+            context.add_token_advance(TokenType.return_keyword, 6);
         }
         else {
             ident_handler(context);
@@ -249,6 +321,7 @@ fn init() inline void {
     register_single_char_token('~', TokenType.tilde);
     register_single_char_token('%', TokenType.percent);
     register_single_char_token('/', TokenType.slash);
+    register_single_char_token('|', TokenType.vertical_bar);
 
     token_handlers['+'] = fn (context: *TokenizationContext) void {
         if(context.peek(1) == '+') {
