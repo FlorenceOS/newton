@@ -107,11 +107,11 @@ fn PinnedVector(comptime T: type, comptime capacity: u32) type {
         }
 
         fn get(self: *@This(), idx: u32) inline *T {
-            return @int_to_ptr(*T, self.gen.ptr) + idx;
+            return self.ptr() + idx;
         }
 
-        fn ptr(self: *@This()) *T {
-            return self.get(0);
+        fn ptr(self: *@This()) inline *T {
+            return @int_to_ptr(*T, self.gen.ptr);
         }
 
         fn size(self: *@This()) inline u32 {
