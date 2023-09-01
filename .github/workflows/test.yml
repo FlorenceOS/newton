@@ -15,7 +15,7 @@ jobs:
         run: zig/zig build run -- selfhost/main.n
       - name: Disassemble the built binary
         run: objdump -d -M intel a.out
-      - name: Run the built binary
-        run: strace ./a.out
       - name: Run the test cases
         run: ./tests.sh
+      - name: Run the built binary
+        run: strace ./a.out
