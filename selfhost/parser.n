@@ -473,7 +473,7 @@ fn parse_container_body(context: *ParserContext) u32 {
             stmt_payload[1].get(decl).* = parse_function_expression(context);
             decl_builder.add(decl, stmt_next_sibling.ptr());
         }
-        else if(p == .closing_curly) {
+        else if(p == .closing_curly || p == .end_of_file) {
             return decl_builder.head;
         }
         else {
