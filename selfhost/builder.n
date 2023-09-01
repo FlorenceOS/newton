@@ -10,5 +10,17 @@ const Builder = struct {
             next_list[self.tail] = new;
         }
         self.tail = new;
+        next_list[new] = -1;
+    }
+
+    fn append_list(self: *@This(), new: u32, next_list: *u32) void {
+        if(self.head == -1) {
+            self.head = new;
+        }
+        if(self.tail != -1) {
+            next_list[self.tail] = new;
+        }
+        // We no longer have a valid tail and cannot append anything else
+        self.tail = -2;
     }
 };

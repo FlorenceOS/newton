@@ -40,8 +40,7 @@ const ExpressionType = enum(u8) {
     // token is opening paren
     function_call,
 
-    // payload 0: first argument decl
-    // payload 1: first statement in block body
+    // payload 0: list of parameter decl statements followed by statements in the block body
     // expr_idx - 1: return type
     // token: end paren token (before attribute list)
     function_expression,
@@ -86,7 +85,7 @@ const MAX_NODES = 0x100000;
 // AST Expressions
 var expr_type: std.containers.PinnedVector(ExpressionType, MAX_NODES) = undefined;
 var expr_token: std.containers.PinnedVector(u32, MAX_NODES) = undefined;
-var expr_payload: [1]std.containers.PinnedVector(u32, MAX_NODES) = undefined;
+var expr_payload: std.containers.PinnedVector(u32, MAX_NODES) = undefined;
 var expr_next_sibling: std.containers.PinnedVector(u32, MAX_NODES) = undefined;
 
 // AST Statements
@@ -98,7 +97,7 @@ var stmt_next_sibling: std.containers.PinnedVector(u32, MAX_NODES) = undefined;
 fn init() inline void {
     expr_type.init();
     expr_token.init();
-    expr_payload[0].init();
+    expr_payload.init();
     expr_next_sibling.init();
 
     stmt_type.init();
@@ -112,7 +111,7 @@ fn add_expr_with_token(tok: u32, tag: ExpressionType) u32 {
     const retval = expr_type.size();
     expr_type.append_assume_capacity(tag);
     expr_token.append_assume_capacity(tok);
-    _ = expr_payload[0].add();
+    _ = expr_payload.add();
     _ = expr_next_sibling.add();
     return retval;
 }
@@ -246,7 +245,7 @@ fn parse_block_statement(context: *ParserContext) u32 {
 
 fn parse_function_expression(context: *ParserContext) u32 {
     context.expect("Expected '(' before parameter list".&, .opening_paren);
-    var param_builder = builder.Builder{};
+    var stmt_builder = builder.Builder{};
     loop(context.peek() != .closing_paren) {
         if(context.peek() == .comptime_keyword) {
             context.advance();
@@ -258,7 +257,7 @@ fn parse_function_expression(context: *ParserContext) u32 {
         }
         const decl = add_stmt_with_token(ident, .function_parameter_decl);
         stmt_payload[0].get(decl).* = parse_expression(context);
-        param_builder.add(decl, stmt_next_sibling.ptr());
+        stmt_builder.add(decl, stmt_next_sibling.ptr());
         if(context.peek() == .comma) {
             context.advance();
         } else {
@@ -276,12 +275,10 @@ fn parse_function_expression(context: *ParserContext) u32 {
     }
     _ = parse_expression_with_precedence(context, 0);
     const result = add_expr_with_token(end_paren_tok, .function_expression);
-    expr_payload[0].get(result).* = param_builder.head;
     if(context.peek() == .opening_curly) {
-        expr_payload[1].get(result).* = parse_block_statement(context);
-    } else {
-        expr_payload[1].get(result).* = -1;
+        stmt_builder.append_list(parse_block_statement(context), stmt_next_sibling.ptr());
     }
+    expr_payload.get(result).* = stmt_builder.head;
     return result;
 }
 
@@ -362,7 +359,7 @@ fn parse_primary_with_postfix(context: *ParserContext) u32 {
                 }
             }
             context.expect("Expected ')' after argument list".&, .closing_paren);
-            expr_payload[0].get(result).* = argument_builder.head;
+            expr_payload.get(result).* = argument_builder.head;
         }
         else {
             return result;
@@ -435,7 +432,7 @@ fn parse_expression_with_precedence(context: *ParserContext, precedence: u32) u3
         _ = old_lhs.&; // Hack to put old_lhs on stack, we're out of registers
         _ = parse_expression_with_precedence(context, operator_precedence);
         lhs = add_expr_with_token(operand_token, tag);
-        expr_payload[0].get(lhs).* = old_lhs;
+        expr_payload.get(lhs).* = old_lhs;
     }
 }
 
@@ -490,6 +487,6 @@ fn parse_file(file: u32) u32 {
     const toplevel = add_expr_with_token(-1, .container_expression);
     source_files.source_files.get(file).top_level_struct = toplevel;
     const first_decl = parse_container_body(context.&);
-    expr_payload[0].get(toplevel).* = first_decl;
+    expr_payload.get(toplevel).* = first_decl;
     return toplevel;
 }
