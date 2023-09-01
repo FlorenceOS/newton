@@ -316,7 +316,8 @@ fn promote(vidx: *ValueIndex.Index, target_tidx: TypeIndex.Index, is_assign: boo
 
     if(value.* == .enum_literal) {
         if(ty.* == .enum_idx) {
-            const variant_name = try value.enum_literal.toSlice();
+            const token = try value.enum_literal.retokenize();
+            const variant_name = token.identifier_value();
             const sema_enum = enums.get(ty.enum_idx);
             if(try scopes.get(sema_enum.scope).lookupDecl(variant_name)) |decl| {
                 vidx.* = decl.init_value;
