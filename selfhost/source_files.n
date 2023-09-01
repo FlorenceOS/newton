@@ -17,6 +17,8 @@ fn init() inline void {
 fn open_file(dirfd: u32, filename: *const u8) u32 {
     const retval = source_files.add();
     const file_fd = @truncate(u32, std.os.syscalls.openat(dirfd, filename, 0, undefined));
+    const dir_name = std.os.dir_name(filename);
+    const dir_fd = @truncate(u32, std.os.syscalls.openat(dirfd, dir_name[0].&, 0, undefined));
     const padded_file_size = (std.os.syscalls.lseek(file_fd, 0, std.os.syscalls.SEEK.END) + 0x1000) & ~0xFFF;
     const data = std.os.syscalls.mmap(
         0,
@@ -31,7 +33,7 @@ fn open_file(dirfd: u32, filename: *const u8) u32 {
         .file_data = @int_to_ptr(*const u8, data),
         .absolute_file_path = std.os.fd_path(file_fd),
         .file_fd = file_fd,
-        .dir_fd = undefined,
+        .dir_fd = dir_fd,
         .top_level_struct = -1,
     };
     return retval;
