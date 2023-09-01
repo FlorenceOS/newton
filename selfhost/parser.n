@@ -246,6 +246,8 @@ fn parse_block_statement(context: *ParserContext) u32 {
 fn parse_function_expression(context: *ParserContext) u32 {
     context.expect("Expected '(' before parameter list".&, .opening_paren);
     var stmt_builder = builder.Builder{};
+    // Workaround for https://github.com/FlorenceOS/newton/issues/15
+    const stmt_builder_hack = stmt_builder.&;
     loop(context.peek() != .closing_paren) {
         if(context.peek() == .comptime_keyword) {
             context.advance();
@@ -257,7 +259,7 @@ fn parse_function_expression(context: *ParserContext) u32 {
         }
         const decl = add_stmt_with_token(ident, .function_parameter_decl);
         stmt_payload[0].get(decl).* = parse_expression(context);
-        stmt_builder.add(decl, stmt_next_sibling.ptr());
+        stmt_builder_hack.add(decl, stmt_next_sibling.ptr());
         if(context.peek() == .comma) {
             context.advance();
         } else {
@@ -276,9 +278,9 @@ fn parse_function_expression(context: *ParserContext) u32 {
     _ = parse_expression_with_precedence(context, 0);
     const result = add_expr_with_token(end_paren_tok, .function_expression);
     if(context.peek() == .opening_curly) {
-        stmt_builder.append_list(parse_block_statement(context), stmt_next_sibling.ptr());
+        stmt_builder_hack.append_list(parse_block_statement(context), stmt_next_sibling.ptr());
     }
-    expr_payload.get(result).* = stmt_builder.head;
+    expr_payload.get(result).* = stmt_builder_hack.head;
     return result;
 }
 
