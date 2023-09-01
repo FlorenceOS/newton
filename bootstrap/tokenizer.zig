@@ -224,10 +224,10 @@ fn keywordOrIdent(input: *[*:0]const u8) !Token {
     }
 
     if(std.mem.eql(u8, input.*[0..2], "@\"")) {
+        const body_start: [*]const u8 = @ptrCast(input.*);
         var value = std.ArrayList(u8).init(gpa.allocator());
         input.* += 2;
 
-        const body_start: [*]const u8 = @ptrCast(input.*);
         while(input.*[0] != '"') {
             try value.append(try parseLiteralChar(input));
         }
@@ -235,7 +235,7 @@ fn keywordOrIdent(input: *[*:0]const u8) !Token {
         input.* += 1; // Also skip end quote
 
         return Token{ .identifier = .{
-            .body = body_start[0..(@intFromPtr(input.*) - 1) - @intFromPtr(body_start)],
+            .body = body_start[0..@intFromPtr(input.*) - @intFromPtr(body_start)],
             .value = try value.toOwnedSlice(),
             .owned = true,
         } };
