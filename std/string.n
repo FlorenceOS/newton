@@ -20,10 +20,8 @@ fn write_u32_decimal(value: u32) inline |out_buf| [11]u8 {
 
 fn len(string: *const u8) u64 {
     var result: u64 = 0;
-    loop {
-        if (string[result] == 0) {
-            return result;
-        }
+    loop(string[result] != 0) {
         result += 1;
     }
+    return result;
 }

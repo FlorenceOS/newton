@@ -13,10 +13,7 @@ fn swap(comptime T: type, a: *T, b: *T) inline void {
 }
 
 fn reverse_range(comptime T: type, beg: *T, end: *T) void {
-    loop {
-        if(beg >= end) {
-            return;
-        }
+    loop(beg < end) {
         swap_no_check_equal(T, beg, end);
         beg += 1;
         end -= 1;
@@ -29,10 +26,7 @@ fn reverse(comptime T: type, ptr: *T, len: u64) inline void {
 
 fn copy(dest: *u8, src: *const u8, len: u64) void {
     var offset: u64 = 0;
-    loop {
-        if(offset == len) {
-            return;
-        }
+    loop(offset < len) {
         dest[offset] = src[offset];
         offset += 1;
     }
@@ -48,13 +42,11 @@ fn output_value(comptime T: type, ptr: *const T) inline |out_buf| T {
 
 fn equals(comptime T: type, lhs: *const T, rhs: *const T, len: u64) bool {
     var i: u64 = 0;
-    loop {
-        if(i == len) {
-            return true;
-        }
+    loop(i < len) {
         if(lhs[i] != rhs[i]) {
             return false;
         }
         i += 1;
     }
+    return true;
 }

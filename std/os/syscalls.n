@@ -21,11 +21,8 @@ fn read(fd: u32, buf: *u8, size: u64) inline u64 {
 }
 
 fn read_all(fd: u32, buf: *u8, size: u64) u64 {
-    loop {
+    loop(size > 0) {
         const bytes_read = read(fd, buf, size);
-        if(bytes_read == size) {
-            return;
-        }
         size -= bytes_read;
         buf += bytes_read;
     }
@@ -36,11 +33,8 @@ fn write(fd: u32, buf: *const u8, size: u64) inline u64 {
 }
 
 fn write_all(fd: u32, buf: *const u8, size: u64) void {
-    loop {
+    loop(size > 0) {
         const written = write(fd, buf, size);
-        if(written == size) {
-            return;
-        }
         size -= written;
         buf += written;
     }

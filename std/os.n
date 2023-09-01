@@ -21,38 +21,26 @@ fn dir_name(path: *const u8) |out_buf| [MAX_PATH]u8 {
         return;
     }
     var i = string.len(path) - 1;
-    loop {
-        // TODO: Implement logical_and
-        if (path[i] == '/') {
-            i -= 1;
-        } else {
-            break;
-        }
+    loop(path[i] == '/') {
+        i -= 1;
     }
     if(i == 0) {
         std.mem.copy(@int_to_ptr(*u8, @ptr_to_int(out_buf)), "/".&, 2);
         return;
     }
-    loop {
-        if (path[i] != '/') {
-            i -= 1;
-        } else {
-            break;
-        }
+    loop(path[i] != '/') {
+        i -= 1;
     }
     if(i == 0) {
         std.mem.copy(@int_to_ptr(*u8, @ptr_to_int(out_buf)), ".".&, 2);
         return;
     }
-    loop {
-        if (path[i] == '/') {
-            i -= 1;
-        } else {
-            std.mem.copy(@int_to_ptr(*u8, @ptr_to_int(out_buf)), path, i + 1);
-            out_buf.*[i + 1] = 0;
-            return;
-        }
+    loop(path[i] == '/') {
+        i -= 1;
     }
+    std.mem.copy(@int_to_ptr(*u8, @ptr_to_int(out_buf)), path, i + 1);
+    out_buf.*[i + 1] = 0;
+    return;
 }
 
 fn self_path() |out_buf| [MAX_PATH]u8 {
