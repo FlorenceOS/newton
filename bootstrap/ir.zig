@@ -800,7 +800,8 @@ fn deduplicateDecls(alloc: std.mem.Allocator, fn_blocks: *BlockList) !bool {
         var current_decl = blocks.get(block).first_decl;
         while(decls.getOpt(current_decl)) |decl| : (current_decl = decl.next) {
             switch(decl.instr) {
-                .stack_ref, .global_ref, .addr_of,
+                // FIXME: Workaround for https://github.com/FlorenceOS/newton/issues/15
+                .stack_ref, .global_ref,
 
                 .add, .sub, .multiply, .divide, .modulus,
                 .shift_left, .shift_right, .bit_and, .bit_or, .bit_xor,

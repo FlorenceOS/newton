@@ -404,14 +404,12 @@ fn tokenize_file(file: u32) void {
         .offset = 0,
         .file_data = source_files.source_files.get(file).file_data,
     };
-    // Workaround for https://github.com/FlorenceOS/newton/issues/15
-    const context_hack = context.&;
 
     loop {
         if(context.peek(0) == 0) {
             context.add_token(.end_of_file);
             return;
         }
-        tokenize_one_token(context_hack);
+        tokenize_one_token(context.&);
     }
 }
