@@ -171,7 +171,7 @@ const ParserContext = struct {
 
 fn parse_statement(context: *ParserContext) u32 {
     const p = context.peek();
-    if(p == .opening_curly) {
+    if(p == .@"{") {
         const result = add_stmt_with_token(context.current_token, .block);
         stmt_payload[0].get(result).* = parse_block_statement(context);
         return result;
@@ -185,15 +185,15 @@ fn parse_statement(context: *ParserContext) u32 {
     else if(p == .const_keyword || p == .var_keyword) {
         const result = context.add_stmt_advance(.local_var_decl);
         context.expect("Expected local variable name".&, .identifier);
-        if(context.peek() == .colon) {
+        if(context.peek() == .@":") {
             context.advance();
             stmt_payload[0].get(result).* = parse_expression_with_precedence(context, 0);
         } else {
             stmt_payload[0].get(result).* = -1;
         }
-        context.expect("Expected '=' after variable declaration".&, .assign);
+        context.expect("Expected '=' after variable declaration".&, .@"=");
         stmt_payload[1].get(result).* = parse_expression(context);
-        context.expect("Expected ';' after variable initialization".&, .semicolon);
+        context.expect("Expected ';' after variable initialization".&, .@";");
         return result;
     }
     // else if(p == .continue_keyword) {
@@ -217,10 +217,10 @@ fn parse_statement(context: *ParserContext) u32 {
     // else if(p == .switch_keyword) {
     //     context.report_error("TODO: Switch statement".&);
     // }
-    else if(p == .identifier || p == .__keyword || p == .opening_paren) {
+    else if(p == .identifier || p == .__keyword || p == .@"(") {
         const result = add_stmt_with_token(-1, .expression);
         stmt_payload[0].get(result).* = parse_expression(context);
-        context.expect("Expected ';' after expression statement".&, .semicolon);
+        context.expect("Expected ';' after expression statement".&, .@";");
         return result;
     }
     else {
@@ -230,52 +230,52 @@ fn parse_statement(context: *ParserContext) u32 {
 
 fn parse_block_statement_body(context: *ParserContext) u32 {
     var stmts = builder.Builder{};
-    loop(context.peek() != .closing_curly) {
+    loop(context.peek() != .@"}") {
         stmts.add(parse_statement(context), stmt_next_sibling.ptr());
     }
     return stmts.head;
 }
 
 fn parse_block_statement(context: *ParserContext) u32 {
-    context.expect("Expected '{' to start block statement".&, .opening_curly);
+    context.expect("Expected '{' to start block statement".&, .@"{");
     const result = parse_block_statement_body(context);
-    context.expect("Expected '}' to start block statement".&, .closing_curly);
+    context.expect("Expected '}' to start block statement".&, .@"}");
     return result;
 }
 
 fn parse_function_expression(context: *ParserContext) u32 {
-    context.expect("Expected '(' before parameter list".&, .opening_paren);
+    context.expect("Expected '(' before parameter list".&, .@"(");
     var stmt_builder = builder.Builder{};
-    loop(context.peek() != .closing_paren) {
+    loop(context.peek() != .@")") {
         if(context.peek() == .comptime_keyword) {
             context.advance();
         }
         var ident: u32 = -1;
         if(context.peek() == .identifier) {
             ident = context.remember_advance();
-            context.expect("Expected ':' after function parameter name".&, .colon);
+            context.expect("Expected ':' after function parameter name".&, .@":");
         }
         const decl = add_stmt_with_token(ident, .function_parameter_decl);
         stmt_payload[0].get(decl).* = parse_expression(context);
         stmt_builder.add(decl, stmt_next_sibling.ptr());
-        if(context.peek() == .comma) {
+        if(context.peek() == .@",") {
             context.advance();
         } else {
             break;
         }
     }
-    const end_paren_tok = context.expect("Expected ')' after parameter list".&, .closing_paren);
+    const end_paren_tok = context.expect("Expected ')' after parameter list".&, .@")");
     if(context.peek() == .inline_keyword) {
         context.advance();
     }
-    if(context.peek() == .vertical_bar) {
+    if(context.peek() == .@"|") {
         context.advance();
         context.expect("Expected return location binding name after '|'".&, .identifier);
-        context.expect("Expected '|' after return location binding name".&, .vertical_bar);
+        context.expect("Expected '|' after return location binding name".&, .@"|");
     }
     _ = parse_expression_with_precedence(context, 0);
     const result = add_expr_with_token(end_paren_tok, .function_expression);
-    if(context.peek() == .opening_curly) {
+    if(context.peek() == .@"{") {
         stmt_builder.append_list(parse_block_statement(context), stmt_next_sibling.ptr());
     }
     expr_payload.get(result).* = stmt_builder.head;
@@ -298,22 +298,22 @@ fn parse_primary_expression(context: *ParserContext) u32 {
         context.advance();
         return parse_function_expression(context);
     }
-    else if(p == .plus) {
+    else if(p == .@"+") {
         const plus_tok = context.remember_advance();
         _ = parse_primary_expression(context);
         return add_expr_with_token(plus_tok, .unary_plus);
     }
-    else if(p == .minus) {
+    else if(p == .@"-") {
         const minus_tok = context.remember_advance();
         _ = parse_primary_expression(context);
         return add_expr_with_token(minus_tok, .unary_minus);
     }
-    else if(p == .tilde) {
+    else if(p == .@"~") {
         const bitnot_tok = context.remember_advance();
         _ = parse_primary_expression(context);
         return add_expr_with_token(bitnot_tok, .unary_bitnot);
     }
-    else if(p == .asterisk) {
+    else if(p == .@"*") {
         context.report_error("TOOD: Pointer types".&);
     }
     else if(p == .comptime_keyword) {
@@ -331,13 +331,13 @@ fn parse_primary_with_postfix(context: *ParserContext) u32 {
 
     loop {
         var p = context.peek();
-        if(p == .dot) {
+        if(p == .@".") {
             context.advance();
             p = context.peek();
-            if(p == .ampersand) {
+            if(p == .@"&") {
                 context.add_expr_advance(.addr_of);
             }
-            else if(p == .asterisk) {
+            else if(p == .@"*") {
                 context.add_expr_advance(.deref);
             }
             else if(p == .identifier) {
@@ -347,18 +347,18 @@ fn parse_primary_with_postfix(context: *ParserContext) u32 {
                 context.report_error("Expected postfix token after '.'".&);
             }
         }
-        else if(p == .opening_paren) {
+        else if(p == .@"(") {
             result = context.add_expr_advance(.function_call);
             var argument_builder = builder.Builder{};
-            loop(context.peek() != .closing_paren) {
+            loop(context.peek() != .@")") {
                 argument_builder.add(parse_expression(context), expr_next_sibling.ptr());
-                if(context.peek() == .comma) {
+                if(context.peek() == .@",") {
                     context.advance();
                 } else {
                     break;
                 }
             }
-            context.expect("Expected ')' after argument list".&, .closing_paren);
+            context.expect("Expected ')' after argument list".&, .@")");
             expr_payload.get(result).* = argument_builder.head;
         }
         else {
@@ -377,27 +377,27 @@ fn parse_expression_with_precedence(context: *ParserContext, precedence: u32) u3
         var operator_precedence: u32 = undefined;
         var tag: ExpressionType = undefined;
 
-        if(p == .asterisk) {
+        if(p == .@"*") {
             tag = .multiply;
             operator_precedence = 3;
         }
-        else if(p == .slash) {
+        else if(p == .@"/") {
             tag = .divide;
             operator_precedence = 3;
         }
-        else if(p == .percent) {
+        else if(p == .@"%") {
             tag = .modulus;
             operator_precedence = 3;
         }
-        else if(p == .plus) {
+        else if(p == .@"+") {
             tag = .add;
             operator_precedence = 4;
         }
-        else if(p == .minus) {
+        else if(p == .@"-") {
             tag = .subtract;
             operator_precedence = 4;
         }
-        else if(p == .plus_plus) {
+        else if(p == .@"++") {
             tag = .append;
             operator_precedence = 4;
         }
@@ -452,15 +452,15 @@ fn parse_container_body(context: *ParserContext) u32 {
         else if(p == .const_keyword || p == .var_keyword) {
             const decl = context.add_stmt_advance(.static_declaration);
             context.expect("Expected identifier for static declaration".&, .identifier);
-            if(context.peek() == .colon) {
+            if(context.peek() == .@":") {
                 context.advance();
                 stmt_payload[0].get(decl).* = parse_expression_with_precedence(context, 0);
             } else {
                 stmt_payload[0].get(decl).* = -1;
             }
-            context.expect("Expected '=' in static decl".&, .assign);
+            context.expect("Expected '=' in static decl".&, .@"=");
             stmt_payload[1].get(decl).* = parse_expression(context);
-            context.expect("Expected ';' after static decl".&, .semicolon);
+            context.expect("Expected ';' after static decl".&, .@";");
             decl_builder.add(decl, stmt_next_sibling.ptr());
         }
         else if(p == .fn_keyword) {
@@ -470,7 +470,7 @@ fn parse_container_body(context: *ParserContext) u32 {
             stmt_payload[1].get(decl).* = parse_function_expression(context);
             decl_builder.add(decl, stmt_next_sibling.ptr());
         }
-        else if(p == .closing_curly || p == .end_of_file) {
+        else if(p == .@"}" || p == .end_of_file) {
             return decl_builder.head;
         }
         else {

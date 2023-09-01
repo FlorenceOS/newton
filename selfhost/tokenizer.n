@@ -8,10 +8,12 @@ const MAX_TOKENS = 0x100000;
 const TokenType = enum(u8) {
     end_of_file,
 
+    // Literals
     identifier,
     int_literal,
     string_literal,
 
+    // Keywords
     break_keyword,
     //case_keyword,
     comptime_keyword,
@@ -42,27 +44,56 @@ const TokenType = enum(u8) {
     //void_keyword,
     //anyopaque_keyword,
 
-    opening_curly,
-    closing_curly,
-    opening_paren,
-    closing_paren,
+    // Single- or multi-character tokens
+    @".",
+    @"..",
+    @",",
+    @":",
+    @";",
+    @"~",
 
-    semicolon,
-    dot,
-    comma,
-    colon,
+    @"{",
+    @".{",
+    @"}",
+    @"(",
+    @")",
+    @"[",
+    @"]",
 
-    asterisk,
-    ampersand,
-    plus,
-    minus,
-    equals,
-    assign,
-    tilde,
-    slash,
-    percent,
-    plus_plus,
-    vertical_bar,
+    @"+",
+    @"+=",
+    @"+%=",
+    @"++",
+    @"++=",
+    @"-",
+    @"-=",
+    @"-%=",
+    @"*",
+    @"*=",
+    @"/",
+    @"/=",
+    @"%",
+    @"%=",
+    @"=",
+    @"==",
+    @"!",
+    @"!=",
+    @"<",
+    @"<<",
+    @"<=",
+    @"<<=",
+    @">",
+    @">>",
+    @">=",
+    @">>=",
+    @"&",
+    @"&=",
+    @"&&",
+    @"|",
+    @"|=",
+    @"||",
+    @"^",
+    @"^=",
 };
 
 const TokenizationContext = struct {
@@ -141,7 +172,7 @@ fn fill_handlers(start: u64, end: u64, handler: Handler) inline void {
 }
 
 fn register_single_char_token(ch: u8, comptime tt: TokenType) inline void {
-    token_handlers[ch] = fn (context: *TokenizationContext) void {
+    token_handlers[ch] = fn(context: *TokenizationContext) void {
         context.add_token_advance(tt, 1);
     }.&;
 }
@@ -182,7 +213,8 @@ fn init() void {
     token_handlers['_'] = fn(context: *TokenizationContext) void {
         if(is_ident_char[context.peek(1)]) {
             ident_handler(context);
-        } else {
+        }
+        else {
             context.add_token_advance(.__keyword, 1);
         }
     }.&;
@@ -221,7 +253,7 @@ fn init() void {
         if(context.matches("inline".&)) {
             context.add_token_advance(.inline_keyword, 6);
         }
-        if(context.matches("if".&)) {
+        else if(context.matches("if".&)) {
             context.add_token_advance(.if_keyword, 2);
         }
         else {
@@ -278,7 +310,8 @@ fn init() void {
             ch += 1;
         }
     }
-    fill_handlers('0', '9', fn (context: *TokenizationContext, ch: u8) void {
+
+    fill_handlers('0', '9', fn(context: *TokenizationContext, ch: u8) void {
         context.add_token(.int_literal);
         var base: u8 = 10;
         if(ch == '0') {
@@ -304,46 +337,178 @@ fn init() void {
     token_handlers['\t'] = whitespace_handler;
     token_handlers['\r'] = whitespace_handler;
 
-    token_handlers['\n'] = fn (context: *TokenizationContext) void {
+    token_handlers['\n'] = fn(context: *TokenizationContext) void {
         context.line += 1;
         context.column = 1;
         context.offset += 1;
         context.file_data += 1;
     }.&;
 
-    register_single_char_token('{', .opening_curly);
-    register_single_char_token('}', .closing_curly);
-    register_single_char_token('(', .opening_paren);
-    register_single_char_token(')', .closing_paren);
-    register_single_char_token(';', .semicolon);
-    register_single_char_token('.', .dot);
-    register_single_char_token(',', .comma);
-    register_single_char_token('&', .ampersand);
-    register_single_char_token('*', .asterisk);
-    register_single_char_token('-', .minus);
-    register_single_char_token('~', .tilde);
-    register_single_char_token('%', .percent);
-    register_single_char_token('/', .slash);
-    register_single_char_token('|', .vertical_bar);
+    register_single_char_token(',', .@",");
+    register_single_char_token(':', .@":");
+    register_single_char_token(';', .@";");
+    register_single_char_token('~', .@"~");
+    register_single_char_token('{', .@"{");
+    register_single_char_token('}', .@"}");
+    register_single_char_token('(', .@"(");
+    register_single_char_token(')', .@")");
+    register_single_char_token('[', .@"[");
+    register_single_char_token(']', .@"]");
 
-    token_handlers['+'] = fn (context: *TokenizationContext) void {
-        if(context.peek(1) == '+') {
-            context.add_token_advance(.plus_plus, 2);
+    token_handlers['.'] = fn(context: *TokenizationContext) void {
+        if(context.peek(1) == '.') {
+            context.add_token_advance(.@"..", 2);
         }
         else {
-            context.add_token_advance(.plus, 1);
+            context.add_token_advance(.@".", 1);
         }
     }.&;
 
-    token_handlers['='] = fn (context: *TokenizationContext) void {
+    token_handlers['+'] = fn(context: *TokenizationContext) void {
+        if(context.peek(1) == '+') {
+            if(context.peek(2) == '=') {
+                context.add_token_advance(.@"++=", 3);
+            }
+            else {
+                context.add_token_advance(.@"++", 2);
+            }
+        }
+        else if(context.peek(1) == '%' && context.peek(2) == '=') {
+            context.add_token_advance(.@"+%=", 3);
+        }
+        else if(context.peek(1) == '=') {
+            context.add_token_advance(.@"+=", 2);
+        }
+        else {
+            context.add_token_advance(.@"+", 1);
+        }
+    }.&;
+
+    token_handlers['-'] = fn(context: *TokenizationContext) void {
+        if(context.peek(1) == '%' && context.peek(2) == '=') {
+            context.add_token_advance(.@"-%=", 3);
+        }
+        else if(context.peek(1) == '=') {
+            context.add_token_advance(.@"-=", 2);
+        }
+        else {
+            context.add_token_advance(.@"-", 1);
+        }
+    }.&;
+
+    token_handlers['*'] = fn(context: *TokenizationContext) void {
         if(context.peek(1) == '=') {
-            context.add_token_advance(.equals, 2);
-        } else {
-            context.add_token_advance(.assign, 1);
+            context.add_token_advance(.@"*=", 2);
+        }
+        else {
+            context.add_token_advance(.@"*", 1);
         }
     }.&;
 
-    token_handlers['"'] = fn (context: *TokenizationContext) void {
+    token_handlers['/'] = fn(context: *TokenizationContext) void {
+        if(context.peek(1) == '=') {
+            context.add_token_advance(.@"/=", 2);
+        }
+        else {
+            context.add_token_advance(.@"/", 1);
+        }
+    }.&;
+
+    token_handlers['%'] = fn(context: *TokenizationContext) void {
+        if(context.peek(1) == '=') {
+            context.add_token_advance(.@"%=", 2);
+        }
+        else {
+            context.add_token_advance(.@"%", 1);
+        }
+    }.&;
+
+    token_handlers['='] = fn(context: *TokenizationContext) void {
+        if(context.peek(1) == '=') {
+            context.add_token_advance(.@"==", 2);
+        }
+        else {
+            context.add_token_advance(.@"=", 1);
+        }
+    }.&;
+
+    token_handlers['!'] = fn(context: *TokenizationContext) void {
+        if(context.peek(1) == '=') {
+            context.add_token_advance(.@"!=", 2);
+        }
+        else {
+            context.add_token_advance(.@"!", 1);
+        }
+    }.&;
+
+    token_handlers['<'] = fn(context: *TokenizationContext) void {
+        if(context.peek(1) == '<') {
+            if(context.peek(2) == '=') {
+                context.add_token_advance(.@"<<=", 3);
+            }
+            else {
+                context.add_token_advance(.@"<<", 2);
+            }
+        }
+        else if(context.peek(1) == '=') {
+            context.add_token_advance(.@"<=", 2);
+        }
+        else {
+            context.add_token_advance(.@"<", 1);
+        }
+    }.&;
+
+    token_handlers['>'] = fn(context: *TokenizationContext) void {
+        if(context.peek(1) == '>') {
+            if(context.peek(2) == '=') {
+                context.add_token_advance(.@">>=", 3);
+            }
+            else {
+                context.add_token_advance(.@">>", 2);
+            }
+        }
+        else if(context.peek(1) == '=') {
+            context.add_token_advance(.@">=", 2);
+        }
+        else {
+            context.add_token_advance(.@">", 1);
+        }
+    }.&;
+
+    token_handlers['&'] = fn(context: *TokenizationContext) void {
+        if(context.peek(1) == '&') {
+            context.add_token_advance(.@"&&", 2);
+        }
+        else if(context.peek(1) == '=') {
+            context.add_token_advance(.@"&=", 2);
+        }
+        else {
+            context.add_token_advance(.@"&", 1);
+        }
+    }.&;
+
+    token_handlers['|'] = fn(context: *TokenizationContext) void {
+        if(context.peek(1) == '|') {
+            context.add_token_advance(.@"||", 2);
+        }
+        else if(context.peek(1) == '=') {
+            context.add_token_advance(.@"|=", 2);
+        }
+        else {
+            context.add_token_advance(.@"|", 1);
+        }
+    }.&;
+
+    token_handlers['^'] = fn(context: *TokenizationContext) void {
+        if(context.peek(1) == '=') {
+            context.add_token_advance(.@"^=", 2);
+        }
+        else {
+            context.add_token_advance(.@"^", 1);
+        }
+    }.&;
+
+    token_handlers['"'] = fn(context: *TokenizationContext) void {
         context.add_token_advance(.string_literal, 1);
         loop {
             if(context.peek(0) == '\\') {
