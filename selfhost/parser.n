@@ -27,13 +27,8 @@ const ExpressionType = enum(u8) {
 
     // payload 0: lhs
     // expr_idx - 1: rhs
-    // binary operators
-    multiply,
-    divide,
-    modulus,
-    add,
-    subtract,
-    append,
+    // token is the binary operator
+    binary,
 
     // payload 0: first argument, other arguments are siblings
     // expr_idx - 1: callee
@@ -372,50 +367,34 @@ fn parse_expression_with_precedence(context: *ParserContext, precedence: u32) u3
 
     // Binary operators
     loop {
-        var p = context.peek();
+        const p = context.peek();
 
         var operator_precedence: u32 = undefined;
-        var tag: ExpressionType = undefined;
 
-        if(p == .@"*") {
-            tag = .multiply;
+        if(p == .@"*" || p == .@"/" || p == .@"%") {
             operator_precedence = 3;
         }
-        else if(p == .@"/") {
-            tag = .divide;
-            operator_precedence = 3;
-        }
-        else if(p == .@"%") {
-            tag = .modulus;
-            operator_precedence = 3;
-        }
-        else if(p == .@"+") {
-            tag = .add;
+        else if(p == .@"+" || p == .@"-" || p == .@"++") {
             operator_precedence = 4;
         }
-        else if(p == .@"-") {
-            tag = .subtract;
-            operator_precedence = 4;
+        else if(p == .@"<<" || p == .@">>") {
+            operator_precedence = 5;
         }
-        else if(p == .@"++") {
-            tag = .append;
-            operator_precedence = 4;
+        else if(p == .@"&" || p == .@"^" || p == .@"|") {
+            operator_precedence = 6;
         }
-        // TODO: Add the rest of these
-        // const op_prec: usize = switch(op) {
-        //     .@"<<_ch", .@">>_ch" => 5,
-        //     .@"&_ch", .@"^_ch", .@"|_ch" => 6,
-        //     .@"==_ch", .@"!=_ch", .@"<_ch", .@"<=_ch", .@">_ch", .@">=_ch" => 7,
-        //     .@"&&_ch", .@"||_ch" => 8,
-        //     .@".._ch" => 9,
-
-        //     .@"=_ch", .@"++=_ch",
-        //     .@"+=_ch", .@"-=_ch", .@"*=_ch",
-        //     .@"/=_ch", .@"%=_ch",
-        //     .@"|=_ch", .@"&=_ch", .@"^=_ch",
-        //     .@"<<=_ch", .@">>=_ch",
-        //     => 10,
-        // };
+        else if(p == .@"==" || p == .@"!=" || p == .@"<" || p == .@"<=" || p == .@">" || p == .@">=") {
+            operator_precedence = 7;
+        }
+        else if(p == .@"&&" || p == .@"||") {
+            operator_precedence = 8;
+        }
+        else if(p == .@"..") {
+            operator_precedence = 9;
+        }
+        else if(p == .@"=" || p == .@"++=" || p == .@"+=" || p == .@"-=" || p == .@"*=" || p == .@"/=" || p == .@"%=" || p == .@"|=" || p == .@"^=" || p == .@"&=" || p == .@"<<=" || p == .@">>=") {
+            operator_precedence = 10;
+        }
         else {
             return lhs;
         }
@@ -423,6 +402,7 @@ fn parse_expression_with_precedence(context: *ParserContext, precedence: u32) u3
         if(operator_precedence > precedence) {
             return lhs;
         }
+        // (prec == 10) <=> (assoc == rtl)
         if(operator_precedence == precedence && operator_precedence != 10) {
             return lhs;
         }
@@ -431,7 +411,7 @@ fn parse_expression_with_precedence(context: *ParserContext, precedence: u32) u3
         const old_lhs = lhs;
         _ = old_lhs.&; // Hack to put old_lhs on stack, we're out of registers
         _ = parse_expression_with_precedence(context, operator_precedence);
-        lhs = add_expr_with_token(operand_token, tag);
+        lhs = add_expr_with_token(operand_token, .binary);
         expr_payload.get(lhs).* = old_lhs;
     }
 }
