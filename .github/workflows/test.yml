@@ -11,11 +11,13 @@ jobs:
           wget https://ziglang.org/builds/zig-linux-x86_64-0.11.0-dev.3970+7a8002a5c.tar.xz
           tar xf zig-linux-x86_64-0.11.0-dev.3970+7a8002a5c.tar.xz
           mv zig-linux-x86_64-0.11.0-dev.3970+7a8002a5c zig
+      - name: Build bootstrap compiler
+        run: zig/zig build
+      - name: Run the test cases
+        run: ./tests.sh
       - name: Build self-hosted compiler
         run: zig/zig build run -- selfhost/main.n
       - name: Disassemble the built binary
         run: objdump -d -M intel a.out
-      - name: Run the test cases
-        run: ./tests.sh
       - name: Run the built binary
         run: strace ./a.out
