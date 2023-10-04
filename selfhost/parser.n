@@ -165,9 +165,6 @@ fn parse_statement(context: *ParserContext) u32 {
     // // else if(p == .endcase_keyword) {
     // //     context.report_error("TODO: Endcase statement".&);
     // // }
-    // // else if(p == .unreachable_keyword) {
-    // //     context.report_error("TODO: Unreachable statement".&);
-    // // }
     // else if(p == .if_keyword) {
     //     context.report_error("TODO: If statement".&);
     // }
@@ -270,6 +267,9 @@ fn parse_primary_expression(context: *ParserContext) u32 {
     }
     else if(p == .continue_keyword) {
         return context.add_advance(.continue_expr);
+    }
+    else if(p == .unreachable_keyword) {
+        return context.add_advance(.unreachable_expr);
     }
     else if(p == .@"{") {
         const result = add_with_token(context.current_token, .block);
