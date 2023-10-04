@@ -3,7 +3,6 @@ const std = @import("std");
 const source_files = @import("source_files.n");
 const tokenizer = @import("tokenizer.n");
 const parser = @import("parser.n");
-const error = @import("error.n");
 
 fn main() noreturn {
     source_files.init();

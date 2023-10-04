@@ -3,7 +3,7 @@ const std = @import("std");
 const builder = @import("builder.n");
 const error = @import("error.n");
 
-const ExpressionType = enum(u8) {
+const NodeType = enum(u8) {
     // simple token expressions
     identifier,
     int_literal,
@@ -11,10 +11,10 @@ const ExpressionType = enum(u8) {
 
     // if there is no token (-1), it is a file top-level struct
     // otherwise, token is the struct/enum/union token
-    // payload 0: first statement in body
+    // payload: first declaration in body list
     container_expression,
 
-    // expr_idx - 1 is operand
+    // idx - 1 is operand
     // uops
     addr_of,
     deref,
@@ -25,99 +25,72 @@ const ExpressionType = enum(u8) {
     pointer_type,
     force_comptime_eval,
 
-    // payload 0: lhs
-    // expr_idx - 1: rhs
+    // payload: lhs
+    // idx - 1: rhs
     // token is the binary operator
     binary,
 
-    // payload 0: first argument, other arguments are siblings
-    // expr_idx - 1: callee
+    // payload: first argument, other arguments are siblings
+    // idx - 1: callee
     // token is opening paren
     function_call,
 
-    // payload 0: list of parameter decl statements followed by statements in the block body
-    // expr_idx - 1: return type
+    // payload: list of parameter decls followed by nodes in the block body
+    // idx - 1: return type
     // token: end paren token (before attribute list)
     function_expression,
 
-    // expr_idx - 1: expression accessed
+    // idx - 1: expression accessed
     // token: identifier accessed
     member_access,
-};
 
-const StatementType = enum(u8) {
     // token is var/const/fn token
     // token + 1 is identifier token
-    // payload 0: type expression (optional)
-    // payload 1: init expression
+    // idx - 1: init expression
+    // payload: type expression (optional)
     static_declaration,
 
     // token is identifier
-    // payload 0: type expression
-    // payload 1: init expression (optional)
+    // idx - 1: type expression
+    // payload: init expression (optional)
     field_declaration,
 
     // token is identifer (optional)
     // before token are any attribute keywords
-    // payload 0: type expression
+    // idx - 1: type expression
     function_parameter_decl,
 
-    // payload 0: first child statement
+    // payload: first child node
     block,
-
-    // payload 0: expression
-    expression,
 
     // token is var/const/fn token
     // token + 1 is identifier token
-    // payload 0: type expression (optional)
-    // payload 1: init expression
+    // payload: type expression (optional)
+    // idx - 1: init expression
     local_var_decl,
 };
 
 const MAX_NODES = 0x100000;
 
 // AST Expressions
-var expr_type: std.containers.PinnedVector(ExpressionType, MAX_NODES) = undefined;
-var expr_token: std.containers.PinnedVector(u32, MAX_NODES) = undefined;
-var expr_payload: std.containers.PinnedVector(u32, MAX_NODES) = undefined;
-var expr_next_sibling: std.containers.PinnedVector(u32, MAX_NODES) = undefined;
-
-// AST Statements
-var stmt_type: std.containers.PinnedVector(StatementType, MAX_NODES) = undefined;
-var stmt_token: std.containers.PinnedVector(u32, MAX_NODES) = undefined;
-var stmt_payload: [2]std.containers.PinnedVector(u32, MAX_NODES) = undefined;
-var stmt_next_sibling: std.containers.PinnedVector(u32, MAX_NODES) = undefined;
+var node_type: std.containers.PinnedVector(NodeType, MAX_NODES) = undefined;
+var node_token: std.containers.PinnedVector(u32, MAX_NODES) = undefined;
+var node_payload: std.containers.PinnedVector(u32, MAX_NODES) = undefined;
+var node_next: std.containers.PinnedVector(u32, MAX_NODES) = undefined;
 
 fn init() inline void {
-    expr_type.init();
-    expr_token.init();
-    expr_payload.init();
-    expr_next_sibling.init();
-
-    stmt_type.init();
-    stmt_token.init();
-    stmt_payload[0].init();
-    stmt_payload[1].init();
-    stmt_next_sibling.init();
+    node_type.init();
+    node_token.init();
+    node_payload.init();
+    node_next.init();
 }
 
-fn add_expr_with_token(tok: u32, tag: ExpressionType) u32 {
-    const retval = expr_type.size();
-    expr_type.append_assume_capacity(tag);
-    expr_token.append_assume_capacity(tok);
-    _ = expr_payload.add();
-    _ = expr_next_sibling.add();
-    return retval;
-}
-
-fn add_stmt_with_token(tok: u32, tag: StatementType) u32 {
-    const retval = stmt_type.size();
-    stmt_type.append_assume_capacity(tag);
-    stmt_token.append_assume_capacity(tok);
-    _ = stmt_payload[0].add();
-    _ = stmt_payload[1].add();
-    _ = stmt_next_sibling.add();
+fn add_with_token(tok: u32, tag: NodeType) u32 {
+    const retval = node_type.size();
+    node_type.append_assume_capacity(tag);
+    node_token.append_assume_capacity(tok);
+    node_payload.add();
+    node_next.add();
     return retval;
 }
 
@@ -135,14 +108,9 @@ const ParserContext = struct {
         return retval;
     }
 
-    fn add_expr_advance(self: *@This(), tag: ExpressionType) inline u32 {
+    fn add_advance(self: *@This(), tag: NodeType) inline u32 {
         self.advance();
-        return add_expr_with_token(self.current_token - 1, tag);
-    }
-
-    fn add_stmt_advance(self: *@This(), tag: StatementType) inline u32 {
-        self.advance();
-        return add_stmt_with_token(self.current_token - 1, tag);
+        return add_with_token(self.current_token - 1, tag);
     }
 
     fn peek(self: *@This()) inline tokenizer.TokenType {
@@ -166,74 +134,75 @@ const ParserContext = struct {
 
 fn parse_statement(context: *ParserContext) u32 {
     const p = context.peek();
-    if(p == .@"{") {
-        const result = add_stmt_with_token(context.current_token, .block);
-        stmt_payload[0].get(result).* = parse_block_statement(context);
-        return result;
-    }
-    else if(p == .break_keyword) {
-        context.report_error("TODO: Break statement".&);
-    }
-    // else if(p == .case_keyword) {
-    //     context.report_error("TODO: Case statement".&);
-    // }
-    else if(p == .const_keyword || p == .var_keyword) {
-        const result = context.add_stmt_advance(.local_var_decl);
+    if(p == .const_keyword || p == .var_keyword) {
+        const token = context.remember_advance();
         context.expect("Expected local variable name".&, .identifier);
+        var type_expr: u32 = undefined;
         if(context.peek() == .@":") {
             context.advance();
-            stmt_payload[0].get(result).* = parse_expression_with_precedence(context, 0);
+            type_expr = parse_expression_with_precedence(context, 0);
         } else {
-            stmt_payload[0].get(result).* = -1;
+            type_expr = -1;
         }
         context.expect("Expected '=' after variable declaration".&, .@"=");
-        stmt_payload[1].get(result).* = parse_expression(context);
+        parse_expression(context);
         context.expect("Expected ';' after variable initialization".&, .@";");
+        const result = add_with_token(token, .local_var_decl);
+        node_payload.get(result).* = type_expr;
         return result;
-    }
-    // else if(p == .continue_keyword) {
-    //     context.report_error("TODO: Continue statement".&);
-    // }
-    // else if(p == .endcase_keyword) {
-    //     context.report_error("TODO: Endcase statement".&);
-    // }
-    // else if(p == .unreachable_keyword) {
-    //     context.report_error("TODO: Unreachable statement".&);
-    // }
-    else if(p == .if_keyword) {
-        context.report_error("TODO: If statement".&);
-    }
-    else if(p == .loop_keyword) {
-        context.report_error("TODO: Loop statement".&);
-    }
-    else if(p == .return_keyword) {
-        context.report_error("TODO: Return statement".&);
-    }
-    // else if(p == .switch_keyword) {
-    //     context.report_error("TODO: Switch statement".&);
-    // }
-    else if(p == .identifier || p == .__keyword || p == .@"(") {
-        const result = add_stmt_with_token(-1, .expression);
-        stmt_payload[0].get(result).* = parse_expression(context);
+    } else {
+        const result = parse_expression(context);
         context.expect("Expected ';' after expression statement".&, .@";");
         return result;
     }
-    else {
-        context.report_error("Unknown statement".&);
-    }
+    // if(p == .@"{") {
+    //     const result = add_with_token(context.current_token, .block);
+    //     stmt_payload[0].get(result).* = parse_block(context);
+    //     return result;
+    // }
+    // else if(p == .break_keyword) {
+    //     context.report_error("TODO: Break statement".&);
+    // }
+    // // else if(p == .case_keyword) {
+    // //     context.report_error("TODO: Case statement".&);
+    // // }
+    // // else if(p == .continue_keyword) {
+    // //     context.report_error("TODO: Continue statement".&);
+    // // }
+    // // else if(p == .endcase_keyword) {
+    // //     context.report_error("TODO: Endcase statement".&);
+    // // }
+    // // else if(p == .unreachable_keyword) {
+    // //     context.report_error("TODO: Unreachable statement".&);
+    // // }
+    // else if(p == .if_keyword) {
+    //     context.report_error("TODO: If statement".&);
+    // }
+    // else if(p == .loop_keyword) {
+    //     context.report_error("TODO: Loop statement".&);
+    // }
+    // else if(p == .return_keyword) {
+    //     context.report_error("TODO: Return statement".&);
+    // }
+    // // else if(p == .switch_keyword) {
+    // //     context.report_error("TODO: Switch statement".&);
+    // // }
+    // else {
+    //     context.report_error("Unknown statement".&);
+    // }
 }
 
-fn parse_block_statement_body(context: *ParserContext) u32 {
+fn parse_block_body(context: *ParserContext) u32 {
     var stmts = builder.Builder{};
     loop(context.peek() != .@"}") {
-        stmts.add(parse_statement(context), stmt_next_sibling.ptr());
+        stmts.add(parse_statement(context), node_next.ptr());
     }
     return stmts.head;
 }
 
-fn parse_block_statement(context: *ParserContext) u32 {
+fn parse_block(context: *ParserContext) u32 {
     context.expect("Expected '{' to start block statement".&, .@"{");
-    const result = parse_block_statement_body(context);
+    const result = parse_block_body(context);
     context.expect("Expected '}' to start block statement".&, .@"}");
     return result;
 }
@@ -248,11 +217,15 @@ fn parse_function_expression(context: *ParserContext) u32 {
         var ident: u32 = -1;
         if(context.peek() == .identifier) {
             ident = context.remember_advance();
-            context.expect("Expected ':' after function parameter name".&, .@":");
         }
-        const decl = add_stmt_with_token(ident, .function_parameter_decl);
-        stmt_payload[0].get(decl).* = parse_expression(context);
-        stmt_builder.add(decl, stmt_next_sibling.ptr());
+        if(node_type.get(ident).* == .identifier && context.peek() == .@":") {
+            context.advance();
+            parse_expression(context);
+        } else {
+            ident = -1;
+        }
+        const decl = add_with_token(ident, .function_parameter_decl);
+        stmt_builder.add(decl, node_next.ptr());
         if(context.peek() == .@",") {
             context.advance();
         } else {
@@ -269,11 +242,11 @@ fn parse_function_expression(context: *ParserContext) u32 {
         context.expect("Expected '|' after return location binding name".&, .@"|");
     }
     _ = parse_expression_with_precedence(context, 0);
-    const result = add_expr_with_token(end_paren_tok, .function_expression);
+    const result = add_with_token(end_paren_tok, .function_expression);
     if(context.peek() == .@"{") {
-        stmt_builder.append_list(parse_block_statement(context), stmt_next_sibling.ptr());
+        stmt_builder.append_list(parse_block(context), node_next.ptr());
     }
-    expr_payload.get(result).* = stmt_builder.head;
+    node_payload.get(result).* = stmt_builder.head;
     return result;
 }
 
@@ -281,13 +254,13 @@ fn parse_primary_expression(context: *ParserContext) u32 {
     const p = context.peek();
 
     if(p == .identifier) {
-        return context.add_expr_advance(.identifier);
+        return context.add_advance(.identifier);
     }
     else if(p == .int_literal) {
-        return context.add_expr_advance(.int_literal);
+        return context.add_advance(.int_literal);
     }
     else if(p == .string_literal) {
-        return context.add_expr_advance(.string_literal);
+        return context.add_advance(.string_literal);
     }
     else if(p == .fn_keyword) {
         context.advance();
@@ -296,17 +269,17 @@ fn parse_primary_expression(context: *ParserContext) u32 {
     else if(p == .@"+") {
         const plus_tok = context.remember_advance();
         _ = parse_primary_expression(context);
-        return add_expr_with_token(plus_tok, .unary_plus);
+        return add_with_token(plus_tok, .unary_plus);
     }
     else if(p == .@"-") {
         const minus_tok = context.remember_advance();
         _ = parse_primary_expression(context);
-        return add_expr_with_token(minus_tok, .unary_minus);
+        return add_with_token(minus_tok, .unary_minus);
     }
     else if(p == .@"~") {
         const bitnot_tok = context.remember_advance();
         _ = parse_primary_expression(context);
-        return add_expr_with_token(bitnot_tok, .unary_bitnot);
+        return add_with_token(bitnot_tok, .unary_bitnot);
     }
     else if(p == .@"*") {
         context.report_error("TOOD: Pointer types".&);
@@ -314,7 +287,7 @@ fn parse_primary_expression(context: *ParserContext) u32 {
     else if(p == .comptime_keyword) {
         const comptime_tok = context.remember_advance();
         _ = parse_primary_expression(context);
-        return add_expr_with_token(comptime_tok, .force_comptime_eval);
+        return add_with_token(comptime_tok, .force_comptime_eval);
     }
     else {
         context.report_error("Expected primary expression".&);
@@ -330,23 +303,23 @@ fn parse_primary_with_postfix(context: *ParserContext) u32 {
             context.advance();
             p = context.peek();
             if(p == .@"&") {
-                context.add_expr_advance(.addr_of);
+                context.add_advance(.addr_of);
             }
             else if(p == .@"*") {
-                context.add_expr_advance(.deref);
+                context.add_advance(.deref);
             }
             else if(p == .identifier) {
-                context.add_expr_advance(.member_access);
+                context.add_advance(.member_access);
             }
             else {
                 context.report_error("Expected postfix token after '.'".&);
             }
         }
         else if(p == .@"(") {
-            result = context.add_expr_advance(.function_call);
+            result = context.add_advance(.function_call);
             var argument_builder = builder.Builder{};
             loop(context.peek() != .@")") {
-                argument_builder.add(parse_expression(context), expr_next_sibling.ptr());
+                argument_builder.add(parse_expression(context), node_next.ptr());
                 if(context.peek() == .@",") {
                     context.advance();
                 } else {
@@ -354,7 +327,7 @@ fn parse_primary_with_postfix(context: *ParserContext) u32 {
                 }
             }
             context.expect("Expected ')' after argument list".&, .@")");
-            expr_payload.get(result).* = argument_builder.head;
+            node_payload.get(result).* = argument_builder.head;
         }
         else {
             return result;
@@ -411,8 +384,8 @@ fn parse_expression_with_precedence(context: *ParserContext, precedence: u32) u3
         const old_lhs = lhs;
         _ = old_lhs.&; // Hack to put old_lhs on stack, we're out of registers
         _ = parse_expression_with_precedence(context, operator_precedence);
-        lhs = add_expr_with_token(operand_token, .binary);
-        expr_payload.get(lhs).* = old_lhs;
+        lhs = add_with_token(operand_token, .binary);
+        node_payload.get(lhs).* = old_lhs;
     }
 }
 
@@ -430,25 +403,29 @@ fn parse_container_body(context: *ParserContext) u32 {
             context.report_error("TODO: Container field".&);
         }
         else if(p == .const_keyword || p == .var_keyword) {
-            const decl = context.add_stmt_advance(.static_declaration);
+            const token = context.remember_advance();
             context.expect("Expected identifier for static declaration".&, .identifier);
+            var type_expr: u32 = undefined;
             if(context.peek() == .@":") {
                 context.advance();
-                stmt_payload[0].get(decl).* = parse_expression_with_precedence(context, 0);
+                type_expr = parse_expression_with_precedence(context, 0);
             } else {
-                stmt_payload[0].get(decl).* = -1;
+                type_expr = -1;
             }
             context.expect("Expected '=' in static decl".&, .@"=");
-            stmt_payload[1].get(decl).* = parse_expression(context);
+            parse_expression(context);
             context.expect("Expected ';' after static decl".&, .@";");
-            decl_builder.add(decl, stmt_next_sibling.ptr());
+            const decl = add_with_token(token, .static_declaration);
+            node_payload.get(decl).* = type_expr;
+            decl_builder.add(decl, node_next.ptr());
         }
         else if(p == .fn_keyword) {
-            const decl = context.add_stmt_advance(.static_declaration);
+            const token = context.remember_advance();
             context.expect("Expected identifier for fn decl".&, .identifier);
-            stmt_payload[0].get(decl).* = -1;
-            stmt_payload[1].get(decl).* = parse_function_expression(context);
-            decl_builder.add(decl, stmt_next_sibling.ptr());
+            parse_function_expression(context);
+            const decl = add_with_token(token, .static_declaration);
+            node_payload.get(decl).* = -1;
+            decl_builder.add(decl, node_next.ptr());
         }
         else if(p == .@"}" || p == .end_of_file) {
             return decl_builder.head;
@@ -464,9 +441,9 @@ fn parse_file(file: u32) u32 {
     context.current_token = tokenizer.token_type.size();
     tokenizer.tokenize_file(file);
     context.end_token = tokenizer.token_type.size();
-    const toplevel = add_expr_with_token(-1, .container_expression);
+    const toplevel = add_with_token(-1, .container_expression);
     source_files.source_files.get(file).top_level_struct = toplevel;
     const first_decl = parse_container_body(context.&);
-    expr_payload.get(toplevel).* = first_decl;
+    node_payload.get(toplevel).* = first_decl;
     return toplevel;
 }
