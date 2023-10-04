@@ -409,6 +409,15 @@ fn init() void {
         if(context.peek(1) == '=') {
             context.add_token_advance(.@"/=", 2);
         }
+        else if(context.peek(1) == '/') {
+            loop {
+                const ch = context.peek(0);
+                if(ch == 0 || ch == '\n') {
+                    return;
+                }
+                context.advance(1);
+            }
+        }
         else {
             context.add_token_advance(.@"/", 1);
         }
