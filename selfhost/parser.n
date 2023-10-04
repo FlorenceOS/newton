@@ -38,6 +38,10 @@ const NodeType = enum(u8) {
     // payload: loop body
     @"loop",
 
+    // idx - 1: condition
+    // payload: while body
+    @"while",
+
     // token is the keyword
     // payload is optional value
     return_expr,
@@ -295,6 +299,15 @@ fn parse_primary_expression(context: *ParserContext, require: bool, precedence: 
     else if(p == .loop_keyword) {
         const result = context.add_advance(.@"loop");
         node_payload.get(result).* = parse_block(context);
+        return result;
+    }
+    else if(p == .while_keyword) {
+        const token = context.advance();
+        context.expect("Expected '(' after 'while'".&, .@"(");
+        parse_expression(context);
+        const result = add_with_token(token, .@"while");
+        context.expect("Expected ')' after while condition".&, .@")");
+        node_payload.get(result).* = parse_expression_with_precedence(context, true, precedence);
         return result;
     }
     else if(p == .@"{") {

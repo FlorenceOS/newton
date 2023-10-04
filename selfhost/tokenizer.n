@@ -37,6 +37,7 @@ const TokenType = enum(u8) {
     unreachable_keyword,
     var_keyword,
     //volatile_keyword,
+    while_keyword,
     __keyword,
 
     //bool_keyword,
@@ -306,6 +307,15 @@ fn init() void {
     token_handlers['v'] = fn(context: *TokenizationContext) void {
         if(context.matches("var".&)) {
             context.add_token_advance(.var_keyword, 3);
+        }
+        else {
+            ident_handler(context);
+        }
+    }.&;
+
+    token_handlers['w'] = fn(context: *TokenizationContext) void {
+        if(context.matches("while".&)) {
+            context.add_token_advance(.while_keyword, 5);
         }
         else {
             ident_handler(context);
