@@ -26,6 +26,8 @@ const NodeType = enum(u8) {
     force_comptime_eval,
     discard,
 
+    break_expr,
+
     // payload: lhs
     // idx - 1: rhs
     // token is the binary operator
@@ -157,9 +159,6 @@ fn parse_statement(context: *ParserContext) u32 {
         context.expect("Expected ';' after expression statement".&, .@";");
         return result;
     }
-    // else if(p == .break_keyword) {
-    //     context.report_error("TODO: Break statement".&);
-    // }
     // // else if(p == .case_keyword) {
     // //     context.report_error("TODO: Case statement".&);
     // // }
@@ -268,6 +267,9 @@ fn parse_primary_expression(context: *ParserContext) u32 {
     else if(p == .fn_keyword) {
         context.advance();
         return parse_function_expression(context);
+    }
+    else if(p == .break_keyword) {
+        return context.add_advance(.break_expr);
     }
     else if(p == .@"{") {
         const result = add_with_token(context.current_token, .block);
