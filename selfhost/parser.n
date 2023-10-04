@@ -162,9 +162,6 @@ fn parse_statement(context: *ParserContext) u32 {
     // // else if(p == .case_keyword) {
     // //     context.report_error("TODO: Case statement".&);
     // // }
-    // // else if(p == .continue_keyword) {
-    // //     context.report_error("TODO: Continue statement".&);
-    // // }
     // // else if(p == .endcase_keyword) {
     // //     context.report_error("TODO: Endcase statement".&);
     // // }
@@ -270,6 +267,9 @@ fn parse_primary_expression(context: *ParserContext) u32 {
     }
     else if(p == .break_keyword) {
         return context.add_advance(.break_expr);
+    }
+    else if(p == .continue_keyword) {
+        return context.add_advance(.continue_expr);
     }
     else if(p == .@"{") {
         const result = add_with_token(context.current_token, .block);
