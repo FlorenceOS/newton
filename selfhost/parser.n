@@ -268,6 +268,9 @@ fn parse_primary_expression(context: *ParserContext) u32 {
     else if(p == .continue_keyword) {
         return context.add_advance(.continue_expr);
     }
+    else if(p == .undefined_keyword) {
+        return context.add_advance(.undefined_expr);
+    }
     else if(p == .unreachable_keyword) {
         return context.add_advance(.unreachable_expr);
     }
