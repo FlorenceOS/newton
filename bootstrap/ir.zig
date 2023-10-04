@@ -1285,6 +1285,26 @@ fn eliminateConstantExpressions(decl_idx: DeclIndex.Index) !bool {
                 return true;
             }
         },
+        .zero_extend, .sign_extend => |cast| {
+            const value = decls.get(cast.value);
+            if(value.instr == .load_int_constant) {
+                var new_value = value.instr.load_int_constant;
+                const mask: u64 = switch(new_value.type) {
+                    .u8 => 0xFF,
+                    .u16 => 0xFFFF,
+                    .u32 => 0xFFFFFFFF,
+                    .u64 => unreachable,
+                };
+                new_value.value &= mask;
+                if(decl.instr == .sign_extend) {
+                    if((new_value.value & ((mask + 1) >> 1)) != 0) {
+                        new_value.value |= ~mask;
+                    }
+                }
+                decl.instr = .{.load_int_constant = new_value};
+                return true;
+            }
+        },
         else => {},
     }
     return false;
