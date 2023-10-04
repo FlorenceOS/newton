@@ -241,9 +241,7 @@ fn parse_primary_expression(context: *ParserContext, require: bool, precedence: 
     if(p == .identifier) {
         if(tokenizer.token_type.get(context.current_token + 1).* == .@":") {
             context.current_token += 2;
-            const result = add_with_token(context.current_token, .block);
-            node_payload.get(result).* = parse_block(context);
-            return result;
+            return parse_primary_expression(context, require, precedence);
         }
         return context.add_advance(.identifier);
     }
