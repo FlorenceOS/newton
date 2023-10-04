@@ -38,7 +38,11 @@ const NodeType = enum(u8) {
     // payload: loop body
     @"loop",
 
-    //break_expr,
+    // token is the keyword
+    // payload is optional value
+    return_expr,
+    // for break specifically, if token + 1 is ':', then token + 2 is the block identifier to break
+    break_expr,
 
     // payload: lhs
     // idx - 1: rhs
@@ -148,7 +152,7 @@ fn parse_statement(context: *ParserContext) u32 {
         var type_expr: u32 = undefined;
         if(context.peek() == .@":") {
             context.advance();
-            type_expr = parse_expression_with_precedence(context, 0);
+            type_expr = parse_expression_with_precedence(context, true, 0);
         } else {
             type_expr = -1;
         }
@@ -222,7 +226,7 @@ fn parse_function_expression(context: *ParserContext) u32 {
         context.expect("Expected return location binding name after '|'".&, .identifier);
         context.expect("Expected '|' after return location binding name".&, .@"|");
     }
-    _ = parse_expression_with_precedence(context, 0);
+    _ = parse_expression_with_precedence(context, true, 0);
     const result = add_with_token(end_paren_tok, .function_expression);
     if(context.peek() == .@"{") {
         stmt_builder.append_list(parse_block(context), node_next.ptr());
@@ -231,7 +235,7 @@ fn parse_function_expression(context: *ParserContext) u32 {
     return result;
 }
 
-fn parse_primary_expression(context: *ParserContext) u32 {
+fn parse_primary_expression(context: *ParserContext, require: bool, precedence: u32) u32 {
     const p = context.peek();
 
     if(p == .identifier) {
@@ -253,9 +257,20 @@ fn parse_primary_expression(context: *ParserContext) u32 {
         context.advance();
         return parse_function_expression(context);
     }
-    //else if(p == .break_keyword) {
-    //    return context.add_advance(.break_expr);
-    //}
+    else if(p == .break_keyword) {
+        const retval = context.add_advance(.break_expr);
+        if(context.peek() == .@":") {
+            context.advance();
+            context.expect("Expected identifier after ':' in break expression".&, .identifier);
+        }
+        node_payload.get(retval).* = parse_expression_with_precedence(context, false, precedence);
+        return retval;
+    }
+    else if(p == .return_keyword) {
+        const retval = context.add_advance(.return_expr);
+        node_payload.get(retval).* = parse_expression_with_precedence(context, false, precedence);
+        return retval;
+    }
     else if(p == .continue_keyword) {
         return context.add_advance(.continue_expr);
     }
@@ -291,17 +306,17 @@ fn parse_primary_expression(context: *ParserContext) u32 {
     }
     else if(p == .@"+") {
         const plus_tok = context.advance();
-        _ = parse_primary_expression(context);
+        _ = parse_primary_expression(context, true, precedence);
         return add_with_token(plus_tok, .unary_plus);
     }
     else if(p == .@"-") {
         const minus_tok = context.advance();
-        _ = parse_primary_expression(context);
+        _ = parse_primary_expression(context, true, precedence);
         return add_with_token(minus_tok, .unary_minus);
     }
     else if(p == .@"~") {
         const bitnot_tok = context.advance();
-        _ = parse_primary_expression(context);
+        _ = parse_primary_expression(context, true, precedence);
         return add_with_token(bitnot_tok, .unary_bitnot);
     }
     else if(p == .@"*") {
@@ -309,16 +324,23 @@ fn parse_primary_expression(context: *ParserContext) u32 {
     }
     else if(p == .comptime_keyword) {
         const comptime_tok = context.advance();
-        _ = parse_primary_expression(context);
+        _ = parse_primary_expression(context, true, precedence);
         return add_with_token(comptime_tok, .force_comptime_eval);
     }
     else {
-        context.report_error("Expected primary expression".&);
+        if(require) {
+            context.report_error("Expected primary expression".&);
+        } else {
+            return -1;
+        }
     }
 }
 
-fn parse_primary_with_postfix(context: *ParserContext) u32 {
-    var result = parse_primary_expression(context);
+fn parse_primary_with_postfix(context: *ParserContext, require: bool, precedence: u32) u32 {
+    var result = parse_primary_expression(context, require, precedence);
+    if(result == -1) {
+        return result;
+    }
 
     loop {
         var p = context.peek();
@@ -358,8 +380,11 @@ fn parse_primary_with_postfix(context: *ParserContext) u32 {
     }
 }
 
-fn parse_expression_with_precedence(context: *ParserContext, precedence: u32) u32 {
-    var lhs = parse_primary_with_postfix(context);
+fn parse_expression_with_precedence(context: *ParserContext, require: bool, precedence: u32) u32 {
+    var lhs = parse_primary_with_postfix(context, require, precedence);
+    if(lhs == -1) {
+        return lhs;
+    }
 
     // Binary operators
     loop {
@@ -406,14 +431,14 @@ fn parse_expression_with_precedence(context: *ParserContext, precedence: u32) u3
         const operand_token = context.advance();
         const old_lhs = lhs;
         _ = old_lhs.&; // Hack to put old_lhs on stack, we're out of registers
-        _ = parse_expression_with_precedence(context, operator_precedence);
+        _ = parse_expression_with_precedence(context, true, operator_precedence);
         lhs = add_with_token(operand_token, .binary);
         node_payload.get(lhs).* = old_lhs;
     }
 }
 
 fn parse_expression(context: *ParserContext) inline u32 {
-    return parse_expression_with_precedence(context, 99);
+    return parse_expression_with_precedence(context, true, 99);
 }
 
 fn parse_container_body(context: *ParserContext) u32 {
@@ -431,7 +456,7 @@ fn parse_container_body(context: *ParserContext) u32 {
             var type_expr: u32 = undefined;
             if(context.peek() == .@":") {
                 context.advance();
-                type_expr = parse_expression_with_precedence(context, 0);
+                type_expr = parse_expression_with_precedence(context, true, 0);
             } else {
                 type_expr = -1;
             }
