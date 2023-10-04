@@ -24,6 +24,7 @@ const NodeType = enum(u8) {
     unary_lognot,
     pointer_type,
     force_comptime_eval,
+    discard,
 
     // payload: lhs
     // idx - 1: rhs
@@ -143,6 +144,12 @@ fn parse_statement(context: *ParserContext) u32 {
         const result = add_with_token(token, .local_var_decl);
         node_payload.get(result).* = type_expr;
         return result;
+    } else if(p == .__keyword) {
+        const token = context.advance();
+        context.expect("Expected '=' after '_'".&, .@"=");
+        parse_expression(context);
+        context.expect("Expected ';' after expression to discard".&, .@";");
+        return add_with_token(token, .discard);
     } else {
         const result = parse_expression(context);
         context.expect("Expected ';' after expression statement".&, .@";");
