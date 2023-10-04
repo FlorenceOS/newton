@@ -27,7 +27,6 @@ const NodeType = enum(u8) {
     discard,
 
     // keyword expressions
-    break_expr,
     continue_expr,
     undefined_expr,
     unreachable_expr,
@@ -38,6 +37,8 @@ const NodeType = enum(u8) {
 
     // payload: loop body
     @"loop",
+
+    //break_expr,
 
     // payload: lhs
     // idx - 1: rhs
@@ -270,9 +271,9 @@ fn parse_primary_expression(context: *ParserContext) u32 {
         context.advance();
         return parse_function_expression(context);
     }
-    else if(p == .break_keyword) {
-        return context.add_advance(.break_expr);
-    }
+    //else if(p == .break_keyword) {
+    //    return context.add_advance(.break_expr);
+    //}
     else if(p == .continue_keyword) {
         return context.add_advance(.continue_expr);
     }
