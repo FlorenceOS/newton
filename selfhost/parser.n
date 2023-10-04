@@ -36,6 +36,9 @@ const NodeType = enum(u8) {
     // payload: list of branch nodes (1 - 2 in list, true cond first)
     @"if",
 
+    // payload: loop body
+    @"loop",
+
     // payload: lhs
     // idx - 1: rhs
     // token is the binary operator
@@ -291,6 +294,11 @@ fn parse_primary_expression(context: *ParserContext) u32 {
             branch_builder.add(parse_expression(context), node_next.ptr());
         }
         node_payload.get(result).* = branch_builder.head;
+        return result;
+    }
+    else if(p == .loop_keyword) {
+        const result = context.add_advance(.@"loop");
+        node_payload.get(result).* = parse_block(context);
         return result;
     }
     else if(p == .@"{") {
