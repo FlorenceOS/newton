@@ -155,11 +155,6 @@ fn parse_statement(context: *ParserContext) u32 {
         context.expect("Expected ';' after expression statement".&, .@";");
         return result;
     }
-    // if(p == .@"{") {
-    //     const result = add_with_token(context.current_token, .block);
-    //     stmt_payload[0].get(result).* = parse_block(context);
-    //     return result;
-    // }
     // else if(p == .break_keyword) {
     //     context.report_error("TODO: Break statement".&);
     // }
@@ -254,6 +249,12 @@ fn parse_primary_expression(context: *ParserContext) u32 {
     const p = context.peek();
 
     if(p == .identifier) {
+        if(tokenizer.token_type.get(context.current_token + 1).* == .@":") {
+            context.current_token += 2;
+            const result = add_with_token(context.current_token, .block);
+            node_payload.get(result).* = parse_block(context);
+            return result;
+        }
         return context.add_advance(.identifier);
     }
     else if(p == .int_literal) {
@@ -265,6 +266,11 @@ fn parse_primary_expression(context: *ParserContext) u32 {
     else if(p == .fn_keyword) {
         context.advance();
         return parse_function_expression(context);
+    }
+    else if(p == .@"{") {
+        const result = add_with_token(context.current_token, .block);
+        node_payload.get(result).* = parse_block(context);
+        return result;
     }
     else if(p == .@"+") {
         const plus_tok = context.advance();
