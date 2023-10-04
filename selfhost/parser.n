@@ -171,24 +171,6 @@ fn parse_statement(context: *ParserContext) u32 {
         context.expect("Expected ';' after expression statement".&, .@";");
         return result;
     }
-    // // else if(p == .case_keyword) {
-    // //     context.report_error("TODO: Case statement".&);
-    // // }
-    // // else if(p == .endcase_keyword) {
-    // //     context.report_error("TODO: Endcase statement".&);
-    // // }
-    // else if(p == .loop_keyword) {
-    //     context.report_error("TODO: Loop statement".&);
-    // }
-    // else if(p == .return_keyword) {
-    //     context.report_error("TODO: Return statement".&);
-    // }
-    // // else if(p == .switch_keyword) {
-    // //     context.report_error("TODO: Switch statement".&);
-    // // }
-    // else {
-    //     context.report_error("Unknown statement".&);
-    // }
 }
 
 fn parse_block_body(context: *ParserContext) u32 {
