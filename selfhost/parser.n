@@ -32,6 +32,10 @@ const NodeType = enum(u8) {
     undefined_expr,
     unreachable_expr,
 
+    // idx - 1: condition
+    // payload: list of branch nodes (1 - 2 in list, true cond first)
+    @"if",
+
     // payload: lhs
     // idx - 1: rhs
     // token is the binary operator
@@ -169,9 +173,6 @@ fn parse_statement(context: *ParserContext) u32 {
     // // else if(p == .endcase_keyword) {
     // //     context.report_error("TODO: Endcase statement".&);
     // // }
-    // else if(p == .if_keyword) {
-    //     context.report_error("TODO: If statement".&);
-    // }
     // else if(p == .loop_keyword) {
     //     context.report_error("TODO: Loop statement".&);
     // }
@@ -277,6 +278,20 @@ fn parse_primary_expression(context: *ParserContext) u32 {
     }
     else if(p == .unreachable_keyword) {
         return context.add_advance(.unreachable_expr);
+    }
+    else if(p == .if_keyword) {
+        const token = context.advance();
+        context.expect("Expected '(' after 'if'".&, .@"(");
+        parse_expression(context);
+        const result = add_with_token(token, .@"if");
+        context.expect("Expected ')' after if condition".&, .@")");
+        var branch_builder = builder.Builder{};
+        branch_builder.add(parse_expression(context), node_next.ptr());
+        if(context.peek() == .else_keyword) {
+            branch_builder.add(parse_expression(context), node_next.ptr());
+        }
+        node_payload.get(result).* = branch_builder.head;
+        return result;
     }
     else if(p == .@"{") {
         const result = add_with_token(context.current_token, .block);

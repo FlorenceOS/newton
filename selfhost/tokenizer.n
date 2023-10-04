@@ -19,7 +19,7 @@ const TokenType = enum(u8) {
     comptime_keyword,
     const_keyword,
     continue_keyword,
-    //else_keyword,
+    else_keyword,
     //endcase_keyword,
     //enum_keyword,
     //false_keyword,
@@ -237,6 +237,15 @@ fn init() void {
         }
         else if(context.matches("continue".&)) {
             context.add_token_advance(.continue_keyword, 8);
+        }
+        else {
+            ident_handler(context);
+        }
+    }.&;
+
+    token_handlers['e'] = fn(context: *TokenizationContext) void {
+        if(context.matches("else".&)) {
+            context.add_token_advance(.else_keyword, 4);
         }
         else {
             ident_handler(context);
