@@ -435,7 +435,6 @@ fn parse_file(file: u32) u32 {
     tokenizer.tokenize_file(file);
     context.end_token = tokenizer.token_type.size();
     const toplevel = add_with_token(-1, .container_expression);
-    source_files.source_files.get(file).top_level_struct = toplevel;
     const first_decl = parse_container_body(context.&);
     node_payload.get(toplevel).* = first_decl;
     return toplevel;

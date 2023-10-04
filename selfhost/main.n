@@ -6,7 +6,8 @@ const parser = @import("parser.n");
 
 fn main() noreturn {
     source_files.init();
-    const root_file = source_files.open_file(std.os.syscalls.AT.FDCWD, "selfhost/main.n".&);
+    _ = source_files.add_named_file(std.os.syscalls.AT.FDCWD, "std/lib.n".&, "std".&);
+    const root_file = source_files.add_named_file(std.os.syscalls.AT.FDCWD, "selfhost/main.n".&, "root".&);
     tokenizer.init();
     parser.init();
     parser.parse_file(root_file);

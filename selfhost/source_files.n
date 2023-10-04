@@ -1,8 +1,11 @@
 const std = @import("std");
 
+const MAX_ALIAS = 16;
+
 const SourceFile = struct {
     file_data: *const u8,
     absolute_file_path: [std.os.MAX_PATH]u8,
+    alias: [MAX_ALIAS]u8,
     file_fd: u32,
     dir_fd: u32,
     top_level_struct: u32,
@@ -32,9 +35,16 @@ fn open_file(dirfd: u32, filename: *const u8) u32 {
     source_files.get(retval).* = .{
         .file_data = @int_to_ptr(*const u8, data),
         .absolute_file_path = std.os.fd_path(file_fd),
+        .alias = std.mem.zeroes(u8, MAX_ALIAS),
         .file_fd = file_fd,
         .dir_fd = dir_fd,
         .top_level_struct = -1,
     };
     return retval;
+}
+
+fn add_named_file(dirfd: u32, filename: *const u8, alias: *const u8) u32 {
+    const result = open_file(dirfd, filename);
+    std.mem.copy(source_files.get(result).alias[0].&, alias, std.string.len(alias));
+    return result;
 }
