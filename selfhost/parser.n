@@ -98,19 +98,14 @@ const ParserContext = struct {
     current_token: u32,
     end_token: u32,
 
-    fn advance(self: *@This()) inline void {
-        self.current_token += 1;
-    }
-
-    fn remember_advance(self: *@This()) inline u32 {
+    fn advance(self: *@This()) inline u32 {
         const retval = self.current_token;
         self.current_token = retval + 1;
         return retval;
     }
 
     fn add_advance(self: *@This(), tag: NodeType) inline u32 {
-        self.advance();
-        return add_with_token(self.current_token - 1, tag);
+        return add_with_token(self.advance(), tag);
     }
 
     fn peek(self: *@This()) inline tokenizer.TokenType {
@@ -122,10 +117,8 @@ const ParserContext = struct {
     }
 
     fn expect(self: *@This(), error_message: *const u8, expected: tokenizer.TokenType) u32 {
-        const retval = self.current_token;
         if(self.peek() == expected) {
-            self.advance();
-            return retval;
+            return self.advance();
         } else {
             self.report_error(error_message);
         }
@@ -135,7 +128,7 @@ const ParserContext = struct {
 fn parse_statement(context: *ParserContext) u32 {
     const p = context.peek();
     if(p == .const_keyword || p == .var_keyword) {
-        const token = context.remember_advance();
+        const token = context.advance();
         context.expect("Expected local variable name".&, .identifier);
         var type_expr: u32 = undefined;
         if(context.peek() == .@":") {
@@ -216,7 +209,7 @@ fn parse_function_expression(context: *ParserContext) u32 {
         }
         var ident: u32 = -1;
         if(context.peek() == .identifier) {
-            ident = context.remember_advance();
+            ident = context.advance();
         }
         if(node_type.get(ident).* == .identifier && context.peek() == .@":") {
             context.advance();
@@ -267,17 +260,17 @@ fn parse_primary_expression(context: *ParserContext) u32 {
         return parse_function_expression(context);
     }
     else if(p == .@"+") {
-        const plus_tok = context.remember_advance();
+        const plus_tok = context.advance();
         _ = parse_primary_expression(context);
         return add_with_token(plus_tok, .unary_plus);
     }
     else if(p == .@"-") {
-        const minus_tok = context.remember_advance();
+        const minus_tok = context.advance();
         _ = parse_primary_expression(context);
         return add_with_token(minus_tok, .unary_minus);
     }
     else if(p == .@"~") {
-        const bitnot_tok = context.remember_advance();
+        const bitnot_tok = context.advance();
         _ = parse_primary_expression(context);
         return add_with_token(bitnot_tok, .unary_bitnot);
     }
@@ -285,7 +278,7 @@ fn parse_primary_expression(context: *ParserContext) u32 {
         context.report_error("TOOD: Pointer types".&);
     }
     else if(p == .comptime_keyword) {
-        const comptime_tok = context.remember_advance();
+        const comptime_tok = context.advance();
         _ = parse_primary_expression(context);
         return add_with_token(comptime_tok, .force_comptime_eval);
     }
@@ -380,7 +373,7 @@ fn parse_expression_with_precedence(context: *ParserContext, precedence: u32) u3
             return lhs;
         }
 
-        const operand_token = context.remember_advance();
+        const operand_token = context.advance();
         const old_lhs = lhs;
         _ = old_lhs.&; // Hack to put old_lhs on stack, we're out of registers
         _ = parse_expression_with_precedence(context, operator_precedence);
@@ -403,7 +396,7 @@ fn parse_container_body(context: *ParserContext) u32 {
             context.report_error("TODO: Container field".&);
         }
         else if(p == .const_keyword || p == .var_keyword) {
-            const token = context.remember_advance();
+            const token = context.advance();
             context.expect("Expected identifier for static declaration".&, .identifier);
             var type_expr: u32 = undefined;
             if(context.peek() == .@":") {
@@ -420,7 +413,7 @@ fn parse_container_body(context: *ParserContext) u32 {
             decl_builder.add(decl, node_next.ptr());
         }
         else if(p == .fn_keyword) {
-            const token = context.remember_advance();
+            const token = context.advance();
             context.expect("Expected identifier for fn decl".&, .identifier);
             parse_function_expression(context);
             const decl = add_with_token(token, .static_declaration);
