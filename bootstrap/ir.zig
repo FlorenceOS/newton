@@ -2070,7 +2070,14 @@ const IRWriter = struct {
                 taken_block,
                 not_taken_block,
             ),
-            else => unreachable,
+            else => {
+                const cond = try self.writeValue(value_idx);
+                _ = try self.emit(.{.@"if" = .{
+                    .condition = cond,
+                    .taken = try addEdge(self.basic_block, taken_block),
+                    .not_taken = try addEdge(self.basic_block, not_taken_block),
+                }});
+            },
         }
     }
 };
