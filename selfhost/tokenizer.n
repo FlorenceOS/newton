@@ -190,17 +190,17 @@ fn init() void {
 
     {
         var ch: u32 = 0;
-        loop(ch <= 0xFF) {
+        while(ch <= 0xFF) {
             is_ident_char[ch] = false;
             ch += 1;
         }
         ch = 'a';
-        loop(ch <= 'z') {
+        while(ch <= 'z') {
             is_ident_char[ch] = true;
             ch += 1;
         }
         ch = 'A';
-        loop(ch <= 'Z') {
+        while(ch <= 'Z') {
             is_ident_char[ch] = true;
             ch += 1;
         }
@@ -324,22 +324,22 @@ fn init() void {
 
     {
         var ch: u32 = 0;
-        loop(ch <= 0xFF) {
+        while(ch <= 0xFF) {
             digit_value[ch] = 0xFF;
             ch += 1;
         }
         ch = '0';
-        loop(ch <= '9') {
+        while(ch <= '9') {
             digit_value[ch] = @truncate(u8, ch) - '0';
             ch += 1;
         }
         ch = 'a';
-        loop(ch <= 'f') {
+        while(ch <= 'f') {
             digit_value[ch] = @truncate(u8, ch) - 'a';
             ch += 1;
         }
         ch = 'A';
-        loop(ch <= 'F') {
+        while(ch <= 'F') {
             digit_value[ch] = @truncate(u8, ch) - 'A';
             ch += 1;
         }
@@ -359,7 +359,7 @@ fn init() void {
                 base = 2;
             }
         }
-        loop(digit_value[context.peek(0)] < base) {
+        while(digit_value[context.peek(0)] < base) {
             context.advance(1);
         }
     }.&);

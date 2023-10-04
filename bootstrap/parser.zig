@@ -239,15 +239,21 @@ fn parseStatement(self: *@This()) anyerror!ast.StmtIndex.Index {
         },
         .loop_keyword => {
             _ = try self.tokenize();
-            const condition = if ((try self.peekToken()) == .@"(_ch") blk: {
-                _ = try self.tokenize();
-                const res = try self.parseExpression(null);
-                _ = try self.expect(.@")_ch");
-                break :blk ast.ExprIndex.toOpt(res);
-            } else .none;
             const body = try self.parseBlockStatement();
             return ast.statements.insert(.{.value = .{
                 .loop_statement = .{
+                    .first_child = body,
+                },
+            }});
+        },
+        .while_keyword => {
+            _ = try self.tokenize();
+            _ = try self.expect(.@"(_ch");
+            const condition = try self.parseExpression(null);
+            _ = try self.expect(.@")_ch");
+            const body = try self.parseBlockStatement();
+            return ast.statements.insert(.{.value = .{
+                .while_statement = .{
                     .condition = condition,
                     .first_child = body,
                 },
@@ -356,6 +362,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
         .continue_keyword => @panic("TODO: Continue expressions"),
         .endcase_keyword => @panic("TODO: Endcase expressions"),
         .if_keyword => @panic("TODO: If expressions"),
+        .while_keyword => @panic("TODO: While expressions"),
         .loop_keyword => @panic("TODO: Loop expressions"),
         .switch_keyword => @panic("TODO: Switch expressions"),
         .unreachable_keyword => return .@"unreachable",
@@ -679,7 +686,7 @@ fn parseExpression(self: *@This(), precedence_in: ?usize) anyerror!ast.ExprIndex
             .@":_ch", .@"~_ch", .@"!_ch",
             .break_keyword, .case_keyword, .const_keyword, .continue_keyword,
             .else_keyword, .endcase_keyword, .enum_keyword, .fn_keyword,
-            .if_keyword, .loop_keyword, .return_keyword, .struct_keyword,
+            .if_keyword, .loop_keyword, .while_keyword, .return_keyword, .struct_keyword,
             .switch_keyword, .var_keyword, .volatile_keyword, .__keyword, .bool_keyword,
             .type_keyword, .void_keyword, .anyopaque_keyword,
             .end_of_file, .true_keyword, .false_keyword, .undefined_keyword, .comptime_keyword,

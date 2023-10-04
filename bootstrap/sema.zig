@@ -523,19 +523,33 @@ fn analyzeStatementChain(
                 const body_scope = scopes.insert(.{
                     .outer_scope = ScopeIndex.toOpt(block_scope_idx),
                 });
-                const condition = if(ast.ExprIndex.unwrap(loop.condition)) |loop_cond_idx| blk: {
-                    break :blk ValueIndex.toOpt(try semaASTExpr(block_scope_idx, loop_cond_idx, false, .bool, null));
-                } else .none;
-                const loop_stmt_idx = stmt_builder.insert(.{.value = .{.loop_statement = .{.condition = condition, .body = undefined, .breaks = false}}});
+                const loop_stmt_idx = stmt_builder.insert(.{.value = .{.loop_statement = .{.body = undefined, .breaks = false}}});
                 const body = try analyzeStatementChain(body_scope, loop.first_child, return_type, StatementIndex.toOpt(loop_stmt_idx));
                 const loop_stmt = statements.get(loop_stmt_idx);
                 loop_stmt.value.loop_statement.body = body;
-                reaches_end = loop_stmt.value.loop_statement.breaks or condition != .none;
+                reaches_end = loop_stmt.value.loop_statement.breaks;
+            },
+            .while_statement => |loop| {
+                const body_scope = scopes.insert(.{
+                    .outer_scope = ScopeIndex.toOpt(block_scope_idx),
+                });
+                const condition = try semaASTExpr(block_scope_idx, loop.condition, false, .bool, null);
+                const while_stmt_idx = stmt_builder.insert(.{.value = .{.while_statement = .{.condition = condition, .body = undefined, .breaks = false}}});
+                const body = try analyzeStatementChain(body_scope, loop.first_child, return_type, StatementIndex.toOpt(while_stmt_idx));
+                statements.get(while_stmt_idx).value.while_statement.body = body;
+                reaches_end = true;
             },
             .break_statement => {
                 if(StatementIndex.unwrap(current_break_block)) |break_block| {
                     reaches_end = false;
-                    statements.get(break_block).value.loop_statement.breaks = true;
+                    switch(statements.get(break_block).value) {
+                        inline
+                        .loop_statement, .while_statement
+                        => |*stmt| {
+                            stmt.breaks = true;
+                        },
+                        else => unreachable,
+                    }
                     _ = stmt_builder.insert(.{.value = .{.break_statement = break_block}});
                 } else {
                     return error.BreakOutsideLoop;
@@ -2446,8 +2460,12 @@ pub const Statement = struct {
             taken: Block,
             not_taken: Block,
         },
+        while_statement: struct {
+            condition: ValueIndex.Index,
+            body: Block,
+            breaks: bool,
+        },
         loop_statement: struct {
-            condition: ValueIndex.OptIndex,
             body: Block,
             breaks: bool,
         },

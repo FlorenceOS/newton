@@ -183,7 +183,7 @@ fn parse_statement(context: *ParserContext) u32 {
 
 fn parse_block_body(context: *ParserContext) u32 {
     var stmts = builder.Builder{};
-    loop(context.peek() != .@"}") {
+    while(context.peek() != .@"}") {
         stmts.add(parse_statement(context), node_next.ptr());
     }
     return stmts.head;
@@ -199,7 +199,7 @@ fn parse_block(context: *ParserContext) u32 {
 fn parse_function_expression(context: *ParserContext) u32 {
     context.expect("Expected '(' before parameter list".&, .@"(");
     var stmt_builder = builder.Builder{};
-    loop(context.peek() != .@")") {
+    while(context.peek() != .@")") {
         if(context.peek() == .comptime_keyword) {
             context.advance();
         }
@@ -374,7 +374,7 @@ fn parse_primary_with_postfix(context: *ParserContext, require: bool, precedence
         else if(p == .@"(") {
             result = context.add_advance(.function_call);
             var argument_builder = builder.Builder{};
-            loop(context.peek() != .@")") {
+            while(context.peek() != .@")") {
                 argument_builder.add(parse_expression(context), node_next.ptr());
                 if(context.peek() == .@",") {
                     context.advance();

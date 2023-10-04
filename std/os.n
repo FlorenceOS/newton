@@ -21,21 +21,21 @@ fn dir_name(path: *const u8) |out_buf| [MAX_PATH]u8 {
         return;
     }
     var i = string.len(path) - 1;
-    loop(path[i] == '/') {
+    while(path[i] == '/') {
         i -= 1;
     }
     if(i == 0) {
         std.mem.copy(@int_to_ptr(*u8, @ptr_to_int(out_buf)), "/".&, 2);
         return;
     }
-    loop(path[i] != '/') {
+    while(path[i] != '/') {
         i -= 1;
     }
     if(i == 0) {
         std.mem.copy(@int_to_ptr(*u8, @ptr_to_int(out_buf)), ".".&, 2);
         return;
     }
-    loop(path[i] == '/') {
+    while(path[i] == '/') {
         i -= 1;
     }
     std.mem.copy(@int_to_ptr(*u8, @ptr_to_int(out_buf)), path, i + 1);

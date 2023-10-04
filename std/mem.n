@@ -13,7 +13,7 @@ fn swap(comptime T: type, a: *T, b: *T) inline void {
 }
 
 fn reverse_range(comptime T: type, beg: *T, end: *T) void {
-    loop(beg < end) {
+    while(beg < end) {
         swap_no_check_equal(T, beg, end);
         beg += 1;
         end -= 1;
@@ -26,7 +26,7 @@ fn reverse(comptime T: type, ptr: *T, len: u64) inline void {
 
 fn copy(dest: *u8, src: *const u8, len: u64) void {
     var offset: u64 = 0;
-    loop(offset < len) {
+    while(offset < len) {
         dest[offset] = src[offset];
         offset += 1;
     }
@@ -34,7 +34,7 @@ fn copy(dest: *u8, src: *const u8, len: u64) void {
 
 fn set(dest: *u8, value: u8, len: u64) void {
     var offset: u64 = 0;
-    loop(offset < len) {
+    while(offset < len) {
         dest[offset] = value;
         offset += 1;
     }
@@ -54,7 +54,7 @@ fn zeroes(comptime T: type, comptime len: u64) inline |out_buf| [len]T {
 
 fn equals(comptime T: type, lhs: *const T, rhs: *const T, len: u64) bool {
     var i: u64 = 0;
-    loop(i < len) {
+    while(i < len) {
         if(lhs[i] != rhs[i]) {
             return false;
         }

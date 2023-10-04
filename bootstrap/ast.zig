@@ -230,7 +230,10 @@ pub const StatementNode = struct {
             first_not_taken: StmtIndex.OptIndex,
         },
         loop_statement: struct {
-            condition: ExprIndex.OptIndex,
+            first_child: StmtIndex.OptIndex,
+        },
+        while_statement: struct {
+            condition: ExprIndex.Index,
             first_child: StmtIndex.OptIndex,
         },
         switch_statement: struct {
@@ -533,13 +536,14 @@ fn dumpNode(node: anytype, indent_level: usize) anyerror!void {
                     try dumpStatementChain(stmt.first_not_taken, indent_level);
                 }
             },
+            .while_statement => |stmt| {
+                std.debug.print("while (", .{});
+                try dumpNode(expressions.get(stmt.condition), indent_level);
+                std.debug.print(") ", .{});
+                try dumpStatementChain(stmt.first_child, indent_level);
+            },
             .loop_statement => |stmt| {
                 std.debug.print("loop ", .{});
-                if(ExprIndex.unwrap(stmt.condition)) |cond_idx| {
-                    std.debug.print("(", .{});
-                    try dumpNode(expressions.get(cond_idx), indent_level);
-                    std.debug.print(") ", .{});
-                }
                 try dumpStatementChain(stmt.first_child, indent_level);
             },
             .break_statement => |stmt| {

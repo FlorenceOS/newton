@@ -120,6 +120,7 @@ pub const Token = union(enum) {
     unreachable_keyword,
     var_keyword,
     volatile_keyword,
+    while_keyword,
     __keyword,
 
 
