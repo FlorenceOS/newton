@@ -26,7 +26,11 @@ const NodeType = enum(u8) {
     force_comptime_eval,
     discard,
 
+    // keyword expressions
     break_expr,
+    continue_expr,
+    undefined_expr,
+    unreachable_expr,
 
     // payload: lhs
     // idx - 1: rhs

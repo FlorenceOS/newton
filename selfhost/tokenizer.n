@@ -18,7 +18,7 @@ const TokenType = enum(u8) {
     //case_keyword,
     comptime_keyword,
     const_keyword,
-    //continue_keyword,
+    continue_keyword,
     //else_keyword,
     //endcase_keyword,
     //enum_keyword,
@@ -32,9 +32,9 @@ const TokenType = enum(u8) {
     //struct_keyword,
     //switch_keyword,
     //true_keyword,
-    //undefined_keyword,
+    undefined_keyword,
     //union_keyword,
-    //unreachable_keyword,
+    unreachable_keyword,
     var_keyword,
     //volatile_keyword,
     __keyword,
@@ -235,6 +235,9 @@ fn init() void {
         else if(context.matches("const".&)) {
             context.add_token_advance(.const_keyword, 5);
         }
+        else if(context.matches("continue".&)) {
+            context.add_token_advance(.continue_keyword, 8);
+        }
         else {
             ident_handler(context);
         }
@@ -273,6 +276,18 @@ fn init() void {
     token_handlers['r'] = fn(context: *TokenizationContext) void {
         if(context.matches("return".&)) {
             context.add_token_advance(.return_keyword, 6);
+        }
+        else {
+            ident_handler(context);
+        }
+    }.&;
+
+    token_handlers['u'] = fn(context: *TokenizationContext) void {
+        if(context.matches("undefined".&)) {
+            context.add_token_advance(.undefined_keyword, 9);
+        }
+        else if(context.matches("unreachable".&)) {
+            context.add_token_advance(.unreachable_keyword, 11);
         }
         else {
             ident_handler(context);
