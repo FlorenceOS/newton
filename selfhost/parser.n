@@ -23,13 +23,13 @@ const NodeType = enum(u8) {
     unary_bitnot,
     unary_lognot,
     pointer_type,
-    force_comptime_eval,
+    @"comptime",
     discard,
 
     // keyword expressions
-    continue_expr,
-    undefined_expr,
-    unreachable_expr,
+    @"continue",
+    @"undefined",
+    @"unreachable",
 
     // idx - 1: condition
     // payload: list of branch nodes (1 - 2 in list, true cond first)
@@ -44,9 +44,9 @@ const NodeType = enum(u8) {
 
     // token is the keyword
     // payload is optional value
-    return_expr,
+    @"return",
     // for break specifically, if token + 1 is ':', then token + 2 is the block identifier to break
-    break_expr,
+    @"break",
 
     // payload: lhs
     // idx - 1: rhs
@@ -260,7 +260,7 @@ fn parse_primary_expression(context: *ParserContext, require: bool, precedence: 
         return parse_function_expression(context);
     }
     else if(p == .break_keyword) {
-        const retval = context.add_advance(.break_expr);
+        const retval = context.add_advance(.@"break");
         if(context.peek() == .@":") {
             context.advance();
             context.expect("Expected identifier after ':' in break expression".&, .identifier);
@@ -269,18 +269,18 @@ fn parse_primary_expression(context: *ParserContext, require: bool, precedence: 
         return retval;
     }
     else if(p == .return_keyword) {
-        const retval = context.add_advance(.return_expr);
+        const retval = context.add_advance(.@"return");
         node_payload.get(retval).* = parse_expression_with_precedence(context, false, precedence);
         return retval;
     }
     else if(p == .continue_keyword) {
-        return context.add_advance(.continue_expr);
+        return context.add_advance(.@"continue");
     }
     else if(p == .undefined_keyword) {
-        return context.add_advance(.undefined_expr);
+        return context.add_advance(.@"undefined");
     }
     else if(p == .unreachable_keyword) {
-        return context.add_advance(.unreachable_expr);
+        return context.add_advance(.@"unreachable");
     }
     else if(p == .if_keyword) {
         const token = context.advance();
@@ -336,7 +336,7 @@ fn parse_primary_expression(context: *ParserContext, require: bool, precedence: 
     else if(p == .comptime_keyword) {
         const comptime_tok = context.advance();
         _ = parse_primary_expression(context, true, precedence);
-        return add_with_token(comptime_tok, .force_comptime_eval);
+        return add_with_token(comptime_tok, .@"comptime");
     }
     else {
         if(require) {
