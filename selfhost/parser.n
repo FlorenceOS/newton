@@ -287,13 +287,19 @@ fn parse_primary_expression(context: *ParserContext, require: bool, precedence: 
         return context.add_advance(.@"unreachable");
     }
     else if(p == .struct_keyword || p == .union_keyword || p == .enum_keyword) {
-        const retval = context.add_advance(.container_expression);
+        const token = context.advance();
         context.expect("Expected '{' before container body".&, .@"{");
         var is_enum = false;
         // TODO: Make == a proper value so that we don't have to do this shit
         if(p == .enum_keyword) {
             is_enum = true;
+            if(context.peek() == .@"(") {
+                context.advance();
+                parse_expression(context);
+                context.expect("Expected ')' after enum tag type".&, .@")");
+            }
         }
+        const retval = add_with_token(token, .container_expression);
         node_payload.get(retval).* = parse_container_body(context, is_enum);
         context.expect("Expected '}' before container body".&, .@"}");
         return retval;
