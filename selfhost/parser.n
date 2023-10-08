@@ -452,14 +452,25 @@ fn parse_expression(context: *ParserContext) inline u32 {
     return parse_expression_with_precedence(context, true, 99);
 }
 
-fn parse_container_body(context: *ParserContext) u32 {
+fn parse_container_body(context: *ParserContext, is_enum: bool) u32 {
     var decl_builder = builder.Builder{};
 
     loop {
         const p = context.peek();
 
         if(p == .identifier) {
-            context.report_error("TODO: Container field".&);
+            const ident = context.advance();
+            if(!is_enum) {
+                context.expect("Expected ':' after field identifier", .@":");
+                parse_expression_with_precedence(context, true, 0);
+            }
+            const decl = add_with_token(ident, .field_declaration);
+            if(context.peek() == .@"=") {
+                node_payload.get(decl).* = parse_expression(context);
+            } else {
+                node_payload.get(decl).* = -1;
+            }
+            decl_builder.add(decl, node_next.ptr());
         }
         else if(p == .const_keyword || p == .var_keyword) {
             const token = context.advance();
@@ -501,7 +512,7 @@ fn parse_file(file: u32) u32 {
     tokenizer.tokenize_file(file);
     context.end_token = tokenizer.token_type.size();
     const toplevel = add_with_token(-1, .container_expression);
-    const first_decl = parse_container_body(context.&);
+    const first_decl = parse_container_body(context.&, false);
     node_payload.get(toplevel).* = first_decl;
     return toplevel;
 }
