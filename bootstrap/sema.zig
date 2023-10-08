@@ -2095,7 +2095,7 @@ pub const Struct = struct {
     }
 
     pub fn getAlignment(self: *@This()) anyerror!u32 {
-        var alignment: u32 = 0;
+        var alignment: u32 = 1;
         var curr_field = self.first_field;
         while(container_fields.getOpt(curr_field)) |field| : (curr_field = field.next) {
             const field_type = types.get(try values.get(field.init_value).getType());
