@@ -297,6 +297,18 @@ fn init() void {
         else if(context.match_kw("if".&)) {
             context.add_token_advance(.if_keyword, 2);
         }
+        else if(context.match_kw("i8".&)) {
+            context.add_token_advance(.@"i8", 2);
+        }
+        else if(context.match_kw("i16".&)) {
+            context.add_token_advance(.@"i16", 3);
+        }
+        else if(context.match_kw("i32".&)) {
+            context.add_token_advance(.@"i32", 3);
+        }
+        else if(context.match_kw("i64".&)) {
+            context.add_token_advance(.@"i64", 3);
+        }
         else {
             ident_handler(context);
         }
@@ -344,6 +356,18 @@ fn init() void {
         }
         else if(context.match_kw("unreachable".&)) {
             context.add_token_advance(.unreachable_keyword, 11);
+        }
+        else if(context.match_kw("u8".&)) {
+            context.add_token_advance(.@"u8", 2);
+        }
+        else if(context.match_kw("u16".&)) {
+            context.add_token_advance(.@"u16", 3);
+        }
+        else if(context.match_kw("u32".&)) {
+            context.add_token_advance(.@"u32", 3);
+        }
+        else if(context.match_kw("u64".&)) {
+            context.add_token_advance(.@"u64", 3);
         }
         else {
             ident_handler(context);
