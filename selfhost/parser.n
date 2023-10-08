@@ -286,7 +286,7 @@ fn parse_primary_expression(context: *ParserContext, require: bool, precedence: 
     else if(p == .unreachable_keyword) {
         return context.add_advance(.@"unreachable");
     }
-    else if(p == .struct_keyword || p == .union_keyword || p == .enum_keyword) {
+    else if(.enum_keyword <= p && p <= .union_keyword) {
         const token = context.advance();
         var is_enum = false;
         // TODO: Make == a proper value so that we don't have to do this shit
