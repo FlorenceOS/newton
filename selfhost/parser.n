@@ -8,6 +8,7 @@ const NodeType = enum(u8) {
     identifier,
     int_literal,
     string_literal,
+    primitive,
 
     // if there is no token (-1), it is a file top-level struct
     // otherwise, token is the struct/enum/union token
@@ -248,6 +249,9 @@ fn parse_primary_expression(context: *ParserContext, require: bool, precedence: 
             return parse_primary_expression(context, require, precedence);
         }
         return context.add_advance(.identifier);
+    }
+    else if(.bool_keyword <= p && p <= .i64) {
+        return context.add_advance(.primitive);
     }
     else if(p == .int_literal) {
         return context.add_advance(.int_literal);
