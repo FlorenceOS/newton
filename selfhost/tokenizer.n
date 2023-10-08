@@ -123,8 +123,15 @@ const TokenizationContext = struct {
         return self.file_data[offset];
     }
 
-    fn matches(self: *@This(), str: *const u8) bool {
-        return std.mem.equals(u8, str, self.file_data, std.string.len(str));
+    fn match_kw(self: *@This(), str: *const u8) bool {
+        const len = std.string.len(str);
+        if(!std.mem.equals(u8, str, self.file_data, len)) {
+            return false;
+        }
+        if(is_ident_char[self.file_data[len]]) {
+            return false;
+        }
+        return true;
     }
 
     fn report_error(self: *@This(), message: *const u8) inline noreturn {
@@ -230,7 +237,7 @@ fn init() void {
     }.&;
 
     token_handlers['a'] = fn(context: *TokenizationContext) void {
-        if(context.matches("anyopaque".&)) {
+        if(context.match_kw("anyopaque".&)) {
             context.add_token_advance(.anyopaque_keyword, 9);
         }
         else {
@@ -239,10 +246,10 @@ fn init() void {
     }.&;
 
     token_handlers['b'] = fn(context: *TokenizationContext) void {
-        if(context.matches("break".&)) {
+        if(context.match_kw("break".&)) {
             context.add_token_advance(.break_keyword, 5);
         }
-        else if(context.matches("bool".&)) {
+        else if(context.match_kw("bool".&)) {
             context.add_token_advance(.bool_keyword, 4);
         }
         else {
@@ -251,13 +258,13 @@ fn init() void {
     }.&;
 
     token_handlers['c'] = fn(context: *TokenizationContext) void {
-        if(context.matches("comptime".&)) {
+        if(context.match_kw("comptime".&)) {
             context.add_token_advance(.comptime_keyword, 8);
         }
-        else if(context.matches("const".&)) {
+        else if(context.match_kw("const".&)) {
             context.add_token_advance(.const_keyword, 5);
         }
-        else if(context.matches("continue".&)) {
+        else if(context.match_kw("continue".&)) {
             context.add_token_advance(.continue_keyword, 8);
         }
         else {
@@ -266,7 +273,7 @@ fn init() void {
     }.&;
 
     token_handlers['e'] = fn(context: *TokenizationContext) void {
-        if(context.matches("else".&)) {
+        if(context.match_kw("else".&)) {
             context.add_token_advance(.else_keyword, 4);
         }
         else {
@@ -275,7 +282,7 @@ fn init() void {
     }.&;
 
     token_handlers['f'] = fn(context: *TokenizationContext) void {
-        if(context.matches("fn".&)) {
+        if(context.match_kw("fn".&)) {
             context.add_token_advance(.fn_keyword, 2);
         }
         else {
@@ -284,10 +291,10 @@ fn init() void {
     }.&;
 
     token_handlers['i'] = fn(context: *TokenizationContext) void {
-        if(context.matches("inline".&)) {
+        if(context.match_kw("inline".&)) {
             context.add_token_advance(.inline_keyword, 6);
         }
-        else if(context.matches("if".&)) {
+        else if(context.match_kw("if".&)) {
             context.add_token_advance(.if_keyword, 2);
         }
         else {
@@ -296,7 +303,7 @@ fn init() void {
     }.&;
 
     token_handlers['l'] = fn(context: *TokenizationContext) void {
-        if(context.matches("loop".&)) {
+        if(context.match_kw("loop".&)) {
             context.add_token_advance(.loop_keyword, 4);
         }
         else {
@@ -305,7 +312,7 @@ fn init() void {
     }.&;
 
     token_handlers['n'] = fn(context: *TokenizationContext) void {
-        if(context.matches("noreturn".&)) {
+        if(context.match_kw("noreturn".&)) {
             context.add_token_advance(.noreturn_keyword, 8);
         }
         else {
@@ -314,7 +321,7 @@ fn init() void {
     }.&;
 
     token_handlers['r'] = fn(context: *TokenizationContext) void {
-        if(context.matches("return".&)) {
+        if(context.match_kw("return".&)) {
             context.add_token_advance(.return_keyword, 6);
         }
         else {
@@ -323,7 +330,7 @@ fn init() void {
     }.&;
 
     token_handlers['t'] = fn(context: *TokenizationContext) void {
-        if(context.matches("type".&)) {
+        if(context.match_kw("type".&)) {
             context.add_token_advance(.type_keyword, 4);
         }
         else {
@@ -332,10 +339,10 @@ fn init() void {
     }.&;
 
     token_handlers['u'] = fn(context: *TokenizationContext) void {
-        if(context.matches("undefined".&)) {
+        if(context.match_kw("undefined".&)) {
             context.add_token_advance(.undefined_keyword, 9);
         }
-        else if(context.matches("unreachable".&)) {
+        else if(context.match_kw("unreachable".&)) {
             context.add_token_advance(.unreachable_keyword, 11);
         }
         else {
@@ -344,10 +351,10 @@ fn init() void {
     }.&;
 
     token_handlers['v'] = fn(context: *TokenizationContext) void {
-        if(context.matches("var".&)) {
+        if(context.match_kw("var".&)) {
             context.add_token_advance(.var_keyword, 3);
         }
-        else if(context.matches("void".&)) {
+        else if(context.match_kw("void".&)) {
             context.add_token_advance(.void_keyword, 4);
         }
         else {
@@ -356,7 +363,7 @@ fn init() void {
     }.&;
 
     token_handlers['w'] = fn(context: *TokenizationContext) void {
-        if(context.matches("while".&)) {
+        if(context.match_kw("while".&)) {
             context.add_token_advance(.while_keyword, 5);
         }
         else {
