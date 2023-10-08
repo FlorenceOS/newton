@@ -168,6 +168,9 @@ fn parse_statement(context: *ParserContext) u32 {
         node_payload.get(result).* = type_expr;
         return result;
     }
+    if(.if_keyword <= p && p <= .while_keyword) {
+        return parse_primary_expression(context, true, -1);
+    }
     else if(p == .__keyword) {
         const token = context.advance();
         context.expect("Expected '=' after '_'".&, .@"=");
@@ -471,7 +474,7 @@ fn parse_expression_with_precedence(context: *ParserContext, require: bool, prec
 }
 
 fn parse_expression(context: *ParserContext) inline u32 {
-    return parse_expression_with_precedence(context, true, 99);
+    return parse_expression_with_precedence(context, true, -1);
 }
 
 fn parse_container_body(context: *ParserContext, is_enum: bool) u32 {
