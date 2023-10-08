@@ -461,7 +461,7 @@ fn parse_container_body(context: *ParserContext, is_enum: bool) u32 {
         if(p == .identifier) {
             const ident = context.advance();
             if(!is_enum) {
-                context.expect("Expected ':' after field identifier", .@":");
+                context.expect("Expected ':' after field identifier".&, .@":");
                 parse_expression_with_precedence(context, true, 0);
             }
             const decl = add_with_token(ident, .field_declaration);
