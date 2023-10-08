@@ -21,18 +21,18 @@ const TokenType = enum(u8) {
     continue_keyword,
     else_keyword,
     //endcase_keyword,
-    //enum_keyword,
+    enum_keyword,
     //false_keyword,
     fn_keyword,
     if_keyword,
     inline_keyword,
     loop_keyword,
     return_keyword,
-    //struct_keyword,
+    struct_keyword,
     //switch_keyword,
     //true_keyword,
     undefined_keyword,
-    //union_keyword,
+    union_keyword,
     unreachable_keyword,
     var_keyword,
     //volatile_keyword,
@@ -276,6 +276,9 @@ fn init() void {
         if(context.match_kw("else".&)) {
             context.add_token_advance(.else_keyword, 4);
         }
+        if(context.match_kw("enum".&)) {
+            context.add_token_advance(.enum_keyword, 4);
+        }
         else {
             ident_handler(context);
         }
@@ -341,6 +344,15 @@ fn init() void {
         }
     }.&;
 
+    token_handlers['s'] = fn(context: *TokenizationContext) void {
+        if(context.match_kw("struct".&)) {
+            context.add_token_advance(.struct_keyword, 6);
+        }
+        else {
+            ident_handler(context);
+        }
+    }.&;
+
     token_handlers['t'] = fn(context: *TokenizationContext) void {
         if(context.match_kw("type".&)) {
             context.add_token_advance(.type_keyword, 4);
@@ -368,6 +380,9 @@ fn init() void {
         }
         else if(context.match_kw("u64".&)) {
             context.add_token_advance(.@"u64", 3);
+        }
+        else if(context.match_kw("union".&)) {
+            context.add_token_advance(.union_keyword, 5);
         }
         else {
             ident_handler(context);

@@ -110,8 +110,8 @@ fn init() inline void {
 }
 
 fn add_with_token(tok: u32, tag: NodeType) u32 {
-    const retval = node_type.size();
-    node_type.append_assume_capacity(tag);
+    const retval = node_type.add();
+    node_type.get(retval).* = tag;
     node_token.append_assume_capacity(tok);
     node_payload.add();
     node_next.add();
@@ -285,6 +285,18 @@ fn parse_primary_expression(context: *ParserContext, require: bool, precedence: 
     }
     else if(p == .unreachable_keyword) {
         return context.add_advance(.@"unreachable");
+    }
+    else if(p == .struct_keyword || p == .union_keyword || p == .enum_keyword) {
+        const retval = context.add_advance(.container_expression);
+        context.expect("Expected '{' before container body".&, .@"{");
+        var is_enum = false;
+        // TODO: Make == a proper value so that we don't have to do this shit
+        if(p == .enum_keyword) {
+            is_enum = true;
+        }
+        node_payload.get(retval).* = parse_container_body(context, is_enum);
+        context.expect("Expected '}' before container body".&, .@"}");
+        return retval;
     }
     else if(p == .if_keyword) {
         const token = context.advance();
