@@ -288,7 +288,6 @@ fn parse_primary_expression(context: *ParserContext, require: bool, precedence: 
     }
     else if(p == .struct_keyword || p == .union_keyword || p == .enum_keyword) {
         const token = context.advance();
-        context.expect("Expected '{' before container body".&, .@"{");
         var is_enum = false;
         // TODO: Make == a proper value so that we don't have to do this shit
         if(p == .enum_keyword) {
@@ -300,6 +299,7 @@ fn parse_primary_expression(context: *ParserContext, require: bool, precedence: 
             }
         }
         const retval = add_with_token(token, .container_expression);
+        context.expect("Expected '{' before container body".&, .@"{");
         node_payload.get(retval).* = parse_container_body(context, is_enum);
         context.expect("Expected '}' before container body".&, .@"}");
         return retval;
