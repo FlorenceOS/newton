@@ -27,7 +27,6 @@ const TokenType = enum(u8) {
     if_keyword,
     inline_keyword,
     loop_keyword,
-    //noreturn_keyword,
     return_keyword,
     //struct_keyword,
     //switch_keyword,
@@ -40,10 +39,11 @@ const TokenType = enum(u8) {
     while_keyword,
     __keyword,
 
-    //bool_keyword,
-    //type_keyword,
-    //void_keyword,
-    //anyopaque_keyword,
+    bool_keyword,
+    type_keyword,
+    void_keyword,
+    noreturn_keyword,
+    anyopaque_keyword,
 
     // Single- or multi-character tokens
     @".",
@@ -220,9 +220,21 @@ fn init() void {
         }
     }.&;
 
+    token_handlers['a'] = fn(context: *TokenizationContext) void {
+        if(context.matches("anyopaque".&)) {
+            context.add_token_advance(.anyopaque_keyword, 9);
+        }
+        else {
+            ident_handler(context);
+        }
+    }.&;
+
     token_handlers['b'] = fn(context: *TokenizationContext) void {
         if(context.matches("break".&)) {
             context.add_token_advance(.break_keyword, 5);
+        }
+        else if(context.matches("bool".&)) {
+            context.add_token_advance(.bool_keyword, 4);
         }
         else {
             ident_handler(context);
@@ -283,9 +295,27 @@ fn init() void {
         }
     }.&;
 
+    token_handlers['n'] = fn(context: *TokenizationContext) void {
+        if(context.matches("noreturn".&)) {
+            context.add_token_advance(.noreturn_keyword, 8);
+        }
+        else {
+            ident_handler(context);
+        }
+    }.&;
+
     token_handlers['r'] = fn(context: *TokenizationContext) void {
         if(context.matches("return".&)) {
             context.add_token_advance(.return_keyword, 6);
+        }
+        else {
+            ident_handler(context);
+        }
+    }.&;
+
+    token_handlers['t'] = fn(context: *TokenizationContext) void {
+        if(context.matches("type".&)) {
+            context.add_token_advance(.type_keyword, 4);
         }
         else {
             ident_handler(context);
@@ -307,6 +337,9 @@ fn init() void {
     token_handlers['v'] = fn(context: *TokenizationContext) void {
         if(context.matches("var".&)) {
             context.add_token_advance(.var_keyword, 3);
+        }
+        else if(context.matches("void".&)) {
+            context.add_token_advance(.void_keyword, 4);
         }
         else {
             ident_handler(context);
