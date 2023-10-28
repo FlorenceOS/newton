@@ -324,7 +324,10 @@ fn movImmToReg(writer: *backends.Writer, op_t: ir.InstrType, dest_reg: u8, value
         const value_bytes = std.mem.asBytes(&i32_value);
         try writeDirect(writer, op_t, &.{0xC6 | boolToU8(op_t != .u8)}, dest_reg, 0, if(op_t == .u8) value_bytes[0..1] else value_bytes, false);
     } else {
-        @panic("TODO");
+        std.debug.assert(dest_reg <= 0x7);
+        try rexPrefix(writer, true, false, false, false, false);
+        try writer.writeInt(u8, 0xB8 | (dest_reg & 0x7));
+        try writer.write(std.mem.asBytes(&value));
     }
 }
 
