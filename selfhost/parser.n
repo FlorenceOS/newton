@@ -74,6 +74,12 @@ const NodeType = enum(u8) {
     // payload: type expression (optional)
     static_declaration,
 
+    // token is var/const/fn token
+    // token + 1 is identifier token
+    // payload: type expression (optional)
+    // idx - 1: init expression
+    local_var_decl,
+
     // token is identifier
     // idx - 1: type expression
     // payload: init expression (optional)
@@ -86,12 +92,6 @@ const NodeType = enum(u8) {
 
     // payload: first child node
     block,
-
-    // token is var/const/fn token
-    // token + 1 is identifier token
-    // payload: type expression (optional)
-    // idx - 1: init expression
-    local_var_decl,
 };
 
 const MAX_NODES = 0x100000;
