@@ -235,10 +235,10 @@ fn parse_function_expression(context: *ParserContext) u32 {
         context.expect("Expected '|' after return location binding name".&, .@"|");
     }
     _ = parse_expression_with_precedence(context, true, 0);
-    const result = add_with_token(end_paren_tok, .function_expression);
     if(context.peek() == .@"{") {
         stmt_builder.append_list(parse_block(context), node_next.ptr());
     }
+    const result = add_with_token(end_paren_tok, .function_expression);
     node_payload.get(result).* = stmt_builder.head;
     return result;
 }
