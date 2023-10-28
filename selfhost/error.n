@@ -14,3 +14,16 @@ fn report(file_idx: u32, line: u32, column: u32, offset: u32, message: *const u8
     std.os.print.flush();
     std.os.syscalls.exit(1);
 }
+
+fn assert_fail(message: *const u8) noreturn {
+    std.os.print.str("\x1b[31;1m[ASSERT FAIL]\x1b[0m: ".&);
+    std.os.print.str(message);
+    std.os.print.flush();
+    std.os.syscalls.exit(1);
+}
+
+fn assert(b: bool, message: *const u8) inline void {
+    if(!b) {
+        assert_fail(message);
+    }
+}
