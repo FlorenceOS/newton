@@ -1012,6 +1012,23 @@ fn semaASTExpr(
                             .value_type = .pointer_int_type,
                         }});
                     },
+                    .ptr_cast => {
+                        const type_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
+                        const expr_arg = ast.expressions.getOpt(type_arg.next).?.function_argument;
+                        std.debug.assert(expr_arg.next == .none);
+
+                        const ty = try semaASTExpr(scope_idx, type_arg.value, true, .type, null);
+                        std.debug.assert(types.get(values.get(ty).type_idx).* == .pointer);
+                        const value = try semaASTExpr(scope_idx, expr_arg.value, false, null, null);
+
+                        if(force_comptime_eval) @panic("TODO: Comptime ptr_cast");
+                        break :outer values.insert(.{.runtime = .{
+                            .expr = ExpressionIndex.toOpt(expressions.insert(.{
+                                .value = value,
+                            })),
+                            .value_type = ty,
+                        }});
+                    },
                     .truncate => {
                         const type_arg = ast.expressions.getOpt(curr_ast_arg).?.function_argument;
                         const expr_arg = ast.expressions.getOpt(type_arg.next).?.function_argument;

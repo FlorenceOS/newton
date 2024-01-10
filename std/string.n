@@ -8,14 +8,14 @@ fn write_u64_decimal(value: u64) |out_buf| [21]u8 {
         length += 1;
         if(value == 0) {
             out_buf.*[length] = 0;
-            mem.reverse(u8, @int_to_ptr(*u8, @ptr_to_int(out_buf)), length);
+            mem.reverse(u8, @ptr_cast(*u8, out_buf), length);
             return;
         }
     }
 }
 
 fn write_u32_decimal(value: u32) inline |out_buf| [11]u8 {
-    @int_to_ptr(*[21]u8, @ptr_to_int(out_buf)).* = write_u64_decimal(value);
+    @ptr_cast(*[21]u8, out_buf).* = write_u64_decimal(value);
 }
 
 fn len(string: *const u8) u64 {
