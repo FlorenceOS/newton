@@ -23,7 +23,7 @@ fn char(ch: u8) void {
 
 fn unsigned_decimal(value: u64) void {
     const buf = std.string.write_u64_decimal(value);
-    str(@int_to_ptr(*const u8, @ptr_to_int(buf.&)));
+    str(@ptr_cast(*const u8, buf.&));
 }
 
 fn unsigned_hex_upper(value: u64) void {

@@ -41,15 +41,15 @@ fn set(dest: *u8, value: u8, len: u64) void {
 }
 
 fn output(comptime T: type, ptr: *const T, comptime len: u64) inline |out_buf| [len]T {
-    copy(@int_to_ptr(*u8, @ptr_to_int(out_buf)), @int_to_ptr(*const u8, @ptr_to_int(ptr)), len * @size_of(T));
+    copy(@ptr_cast(*u8, out_buf), @ptr_cast(*const u8, ptr), len * @size_of(T));
 }
 
 fn output_value(comptime T: type, ptr: *const T) inline |out_buf| T {
-    copy(@int_to_ptr(*u8, @ptr_to_int(out_buf)), @int_to_ptr(*const u8, @ptr_to_int(ptr)), @size_of(T));
+    copy(@ptr_cast(*u8, out_buf), @ptr_cast(*const u8, ptr), @size_of(T));
 }
 
 fn zeroes(comptime T: type, comptime len: u64) inline |out_buf| [len]T {
-    set(@int_to_ptr(*u8, @ptr_to_int(out_buf)), 0, len * @size_of(T));
+    set(@ptr_cast(*u8, out_buf), 0, len * @size_of(T));
 }
 
 fn equals(comptime T: type, lhs: *const T, rhs: *const T, len: u64) bool {

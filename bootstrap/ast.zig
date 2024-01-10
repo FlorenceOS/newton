@@ -95,6 +95,7 @@ pub const BuiltinFunction = enum {
     int_to_ptr,
     is_pointer,
     ptr_to_int,
+    ptr_cast,
     size_of,
     syscall,
     This,
