@@ -8,9 +8,9 @@ jobs:
         uses: actions/checkout@v3
       - name: Setup latest zig
         run: |
-          wget https://ziglang.org/builds/zig-linux-x86_64-0.11.0-dev.3970+7a8002a5c.tar.xz
-          tar xf zig-linux-x86_64-0.11.0-dev.3970+7a8002a5c.tar.xz
-          mv zig-linux-x86_64-0.11.0-dev.3970+7a8002a5c zig
+          wget https://ziglang.org/download/0.11.0/zig-linux-x86_64-0.11.0.tar.xz
+          tar xf zig-linux-x86_64-0.11.0.tar.xz
+          mv zig-linux-x86_64-0.11.0 zig
       - name: Build bootstrap compiler
         run: zig/zig build
       - name: Run the test cases
